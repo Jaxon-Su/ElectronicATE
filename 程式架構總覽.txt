@@ -1,0 +1,195 @@
+# 當前應用程式架構總覽
+
+## 整體架構流程
+
+```
+main.cpp
+    ↓
+MainWindow (View)
+    ↓
+MainWindowModel (Model) + MainWindowViewModel (ViewModel)
+    ↓
+TableWidget (UI Container)
+    ↓
+Page1/Page2/Page3 (Views)
+```
+
+## 詳細層次結構
+
+### 1. **應用程式入口**
+```cpp
+main.cpp
+├── QApplication app
+└── MainWindow window
+    └── window.show()
+```
+
+### 2. **MainWindow 層 (MVVM模式)**
+```
+MainWindow (View)
+├── MainWindowModel (Model)
+│   ├── Page1Model
+│   ├── Page2Model  
+│   └── Page3Model
+├── MainWindowViewModel (ViewModel)
+│   ├── 管理 Page1/2/3 的 ViewModels
+│   ├── 管理 TableWidget
+│   └── 處理檔案操作邏輯
+└── 負責 UI 事件 (選單、對話框)
+```
+
+### 3. **TableWidget 層 (UI容器)**
+```
+TableWidget
+├── QTabWidget (內部容器)
+├── setPage1() → 設置 Page1
+├── setPage2() → 設置 Page2  
+└── setPage3() → 設置 Page3
+```
+
+### 4. **頁面層 (各自MVVM)**
+```
+Page1 (Instruments)
+├── Page1Model
+├── Page1ViewModel
+└── Page1 UI
+
+Page2 (Conditions)  
+├── Page2Model
+├── Page2ViewModel
+└── Page2 UI
+
+Page3 (Control)
+├── Page3Model  
+├── Page3ViewModel
+└── Page3 UI
+```
+
+### 5. **跨頁面協調服務**
+```
+AppService (Singleton)
+├── setupPageConnections()
+├── saveAllToXml()
+├── loadAllFromXml()
+└── registerMetaTypes()
+```
+
+## 物件創建和生命週期
+
+### 創建順序
+1. **main()** 創建 QApplication 和 MainWindow
+2. **MainWindow** 創建 MainWindowModel 和 MainWindowViewModel
+3. **MainWindowModel** 創建 Page1Model、Page2Model、Page3Model
+4. **MainWindowViewModel** 創建各頁面的 ViewModels 和 Views
+5. **MainWindowViewModel** 創建 TableWidget 並設置頁面
+6. **AppService** 設置頁面間連接
+
+### 父子關係 (Qt記憶體管理)
+```
+MainWindow (父: nullptr)
+├── MainWindowModel (父: MainWindow)
+│   ├── Page1Model (父: MainWindowModel)
+│   ├── Page2Model (父: MainWindowModel)
+│   └── Page3Model (父: MainWindowModel)
+└── MainWindowViewModel (父: MainWindow)
+    ├── Page1ViewModel (父: MainWindowViewModel)
+    ├── Page2ViewModel (父: MainWindowViewModel) 
+    ├── Page3ViewModel (父: MainWindowViewModel)
+    ├── Page1 (父: 無，但由TableWidget管理)
+    ├── Page2 (父: 無，但由TableWidget管理)
+    ├── Page3 (父: 無，但由TableWidget管理)
+    └── TableWidget (父: 無，但為MainWindow的centralWidget)
+```
+
+## 數據流向
+
+### 用戶操作流程
+1. **用戶操作** → MainWindow (View)
+2. **MainWindow** → MainWindowViewModel (委託邏輯)  
+3. **MainWindowViewModel** → 具體Page的ViewModel
+4. **PageViewModel** → PageModel (更新數據)
+5. **PageModel** → PageView (更新UI)
+
+### 頁面間通訊 (通過AppService)
+```
+Page1ViewModel
+    ↓ (loadOutputsChanged)
+Page2ViewModel.setMaxOutput()
+
+Page2ViewModel  
+    ↓ (TitleListChanged)
+Page3ViewModel.updateTitles()
+```
+
+## 檔案操作流程
+1. **用戶點選選單** → MainWindow.onSaveConfig()
+2. **MainWindow** → MainWindowViewModel.saveConfig()
+3. **MainWindowViewModel** → AppService.saveAllToXml()
+4. **AppService** → 各Page同步UI到ViewModel → 寫入XML
+
+## 關鍵設計特點
+
+### 優勢
+- **統一MVVM模式**: MainWindow和Page1~3都遵循相同架構
+- **職責分離**: 每層都有明確職責
+- **依賴注入**: ViewModel注入到View中
+- **自動記憶體管理**: 利用Qt父子關係
+- **單例服務**: AppService處理跨模組協調
+
+### 注意事項
+- MainWindow是頂層視窗，parent=nullptr
+- TableWidget只負責UI容器，不處理邏輯
+- AppService協調跨頁面通訊
+- 所有檔案操作都通過ViewModel處理
+
+### 半自動觸發
+## 完整信號流程圖
+```
+用戶點擊按鈕
+    │
+    ├─► onTriggerSteadyToggled(true)
+    │       │
+    │       ├─► lockTriggerControls(true)  // 鎖定其他控件
+    │       │
+    │       └─► setupWorkerThread()
+    │               │
+    │               ├─ 檢查連線 ✓
+    │               ├─ 檢查控件 ✓
+    │               ├─ 清理舊執行緒 ✓
+    │               ├─ 創建新執行緒和 Worker ✓
+    │               ├─ 設置參數 ✓
+    │               ├─ 連接信號槽 ✓
+    │               └─ 啟動執行緒 ✓
+    │
+    ├─► QThread::started
+    │       │
+    │       └─► Worker::startTracking() [Worker Thread]
+    │               │
+    │               ├─ 設置起始電平
+    │               ├─ 啟動定時器 (800ms)
+    │               │
+    │               └─► QTimer::timeout (每 800ms)
+    │                       │
+    │                       └─► Worker::performAdjustment() [Worker Thread]
+    │                               │
+    │                               ├─ 計算下一步電平
+    │                               ├─ 設置觸發電平
+    │                               ├─ 檢查觸發成功
+    │                               │
+    │                               ├─ [成功] ─► emit adjustmentProgress()
+    │                               │                 │
+    │                               │                 └─► UI 更新 [Main Thread]
+    │                               │
+    │                               ├─ [達到目標] ─► emit targetReached()
+    │                               │                      │
+    │                               │                      └─► UI 更新 [Main Thread]
+    │                               │
+    │                               ├─ [找到最大值] ─► emit actualMaximumFound()
+    │                               │                         │
+    │                               │                         └─► UI 更新 [Main Thread]
+    │                               │
+    │                               └─ [完成/錯誤] ─► emit trackingCompleted/Error()
+    │                                                         │
+    │                                                         └─► 清理執行緒 [Main Thread]
+    │
+    └─► UI 恢復正常狀態

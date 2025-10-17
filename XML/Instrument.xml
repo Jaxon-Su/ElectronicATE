@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root>
+  <instruments>
+
+    <!-- 多個 Load 儀器，共用 Load_Template -->
+    <instrument name="Load1" type="Load" ref="Load_Template"/>
+    <instrument name="Load2" type="Load" ref="Load_Template"/>
+    <instrument name="Load3" type="Load" ref="Load_Template"/>
+    <instrument name="Load4" type="Load" ref="Load_Template"/>
+    <instrument name="Load5" type="Load" ref="Load_Template"/>
+
+    <!-- 多個示波器，共用 Scope_Template -->
+    <instrument name="Oscilloscope" type="Oscilloscope" ref="Scope_Template"/>
+
+    <!-- 多個電源，共用 Source_Template -->
+    <instrument name="Source" type="InputSource" ref="Source_Template"/>
+
+
+    <!-- 多個Relay，共用 Relay_Template -->
+    <instrument name="Relay1" type="Relay" ref="Relay_Template"/>
+    <instrument name="Relay2" type="Relay" ref="Relay_Template"/>
+
+    <!-- Load 模板 -->
+    <instrument name="Load_Template" type="Template">
+          <model>
+	    <modelName>6304</modelName>
+	    <channels>1,2,3,4</channels>
+
+            <subModel name="63030">
+	    </subModel>
+	  </model>
+
+         <model>
+	    <modelName>6314</modelName>
+	    <channels>1,3,5,7</channels>
+
+            <subModel name="63103">
+	    </subModel>
+
+            <subModel name="63103A">
+	    </subModel>
+          </model>
+
+          <model>
+	    <modelName>6334A</modelName>
+	    <channels>1,3,5,7</channels>
+
+            <subModel name="63302">
+	    </subModel>
+
+            <subModel name="63303">
+	    </subModel>
+
+            <subModel name="63312">
+	    </subModel>
+          </model>-->
+	</instrument>
+
+    <!-- 示波器模板 -->
+    <instrument name="Scope_Template" type="Template">
+      <model>
+        <modelName>DPO7000</modelName>
+
+<!--        <subModel name="DPO7054">
+	</subModel>
+
+        <subModel name="DPO7104">
+        </subModel>-->
+      </model>
+
+    </instrument>
+
+    <!-- 電源模板 -->
+    <instrument name="Source_Template" type="Template">
+      <model>
+        <modelName>DE-A3000AB</modelName>
+        <!-- DE-A3000AB  -->
+<!--        <subModel name="DELTA3020">
+	</subModel>
+
+        <subModel name="DELTA3040">
+        </subModel>-->
+      </model>
+    </instrument>
+
+    <!-- Relay模板 -->
+    <instrument name="Relay_Template" type="Template">
+    <model>
+      <modelName>Relay_RTU</modelName>
+      <channels>1,2,3,4</channels>
+      <subModel name="30Vdc/10A">
+      </subModel>
+    </model>
+    </instrument>
+
+<!--    <instrument name="Relay_Template" type="Template">
+     <model>
+      <modelName>Relay</modelName>
+
+      <subModel name="default">
+      </subModel>
+
+      </model>
+    </instrument>-->
+
+  </instruments>
+</root>
