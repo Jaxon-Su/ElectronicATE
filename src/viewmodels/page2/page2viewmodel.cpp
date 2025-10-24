@@ -30,15 +30,19 @@ void Page2ViewModel::setMaxOutput(int maxOutput)
     resizeVec(meta.vo);
     resizeVec(meta.modes);
     resizeVec(meta.von);
-    resizeVec(meta.riseSlope);
-    resizeVec(meta.fallSlope);
+    resizeVec(meta.riseSlopeCCH);
+    resizeVec(meta.fallSlopeCCH);
+    resizeVec(meta.riseSlopeCCL);
+    resizeVec(meta.fallSlopeCCL);
 
     // 同步調整 Dynamic Meta 資料長度（包含 vo 欄位）
     auto& dmeta = m_model->dynamicMeta;
     resizeVec(dmeta.vo);
     resizeVec(dmeta.von);
-    resizeVec(dmeta.riseSlope);
-    resizeVec(dmeta.fallSlope);
+    resizeVec(dmeta.riseSlopeCCDH);
+    resizeVec(dmeta.fallSlopeCCDH);
+    resizeVec(dmeta.riseSlopeCCDL);
+    resizeVec(dmeta.fallSlopeCCDL);
 
     // 發出表頭變更信號
     QStringList headers{ "Output" };

@@ -9,6 +9,7 @@
 #include "acsourcefactory.h"
 #include "dcloadfactory.h"
 #include <QTimer>
+#include "oscilloscopefactory.h"
 
 
 Page3ViewModel::Page3ViewModel(Page3Model* p3, QObject *parent)
@@ -262,169 +263,6 @@ void Page3ViewModel::onInputChanged()
      handleInput(InputAction::Change);
 }
 
-void Page3ViewModel::handleInput(InputAction action)
-{
-    // this = 指向當前 Page3ViewModel 實例的指針
-    // 如果 this 對象被刪除，self 會自動變成 nullptr
-    QPointer<Page3ViewModel> self(this);
-
-    // --- 防呆 ---
-    //page1 source
-    if (m_page1Config.instruments.isEmpty()) {
-        MessageService::instance().showWarning("Error Message",
-                                               "No instrument settings have been loaded.\nPlease load the configuration first!");
-        emit forceOff(LoadKind::Input);
-        return;
-    }
-    //page3 Input ComboBox
-    qDebug() << "m_selectedInputText:" << m_selectedInputText;
-    qDebug() << "m_selectedInputIndex:" << m_selectedInputIndex;
-    // m_selectedInputText: "";
-    // m_selectedInputIndex: -1
-    if (m_selectedInputText.trimmed().isEmpty()) {
-        MessageService::instance().showWarning("Error Message",
-                                               "No input conditions.\nPlease check the input conditions.\n (example : voltage / frequency / phase)");
-        emit forceOff(LoadKind::Input);
-        return;
-    }
-
-    // --- 非同步處理 ---
-    QFuture<void> future = QtConcurrent::run([cfg = m_page1Config,
-                                              inputTxt = m_selectedInputText,
-                                              self, action = static_cast<int>(action)]() {
-        try {
-            // 使用指針前檢查是否為nullptr
-            if (!self) {
-                return;
-            }
-            //enum class InputAction { PowerOn, PowerOff, Change };
-            //InputAction::PowerOn = 0 , InputAction::PowerOff = 1 ,  InputAction::Change = 2
-            //捕獲InputAction時轉為int，再轉回InputAction type
-            //可能可直接捕獲，待確認by Jaxon
-            InputAction realAction = static_cast<InputAction>(action);
-            // qDebug() << "realAction:" << static_cast<int>(realAction);
-
-            // --- 嚴謹條件建立 AC Source ---
-            ACSource* ac_source = nullptr;
-            ICommunication* comm = nullptr;
-            bool instrumentFound = false;
-            for (const auto& ic : cfg.instruments) {
-                if (ic.name == "Source" && ic.type == "InputSource") {
-                    instrumentFound = true;
-
-                    // QMetaObject::invokeMethod(
-                    //     self,                    // 目標對象 >> 這裡是page3viewmodel
-                    //     "showWarning",          // 要調用的方法名（字符串）
-                    //     Qt::QueuedConnection,   // 連接類型（異步隊列調用）
-                    //     Q_ARG(QString, "Error Message"),        // 第1個參數
-                    //     Q_ARG(QString, "Power is not enabled...") // 第2個參數
-                    //     );
-
-                    //Qt 框架的一個重要限製：所有的 UI 相關操作（界面顯示、更新、事件處理等）都必須在主線程中進行。
-
-                    if (!ic.enabled) {
-                        QMetaObject::invokeMethod(&MessageService::instance(), "showWarning", Qt::QueuedConnection,
-                                                  Q_ARG(QString, "Error Message"),
-                                                  Q_ARG(QString, "Power is not enabled.\nPlease check the Instruments configuration!"));
-                        QMetaObject::invokeMethod(self, "forceOff", Qt::QueuedConnection, Q_ARG(LoadKind, LoadKind::Input));
-                        return;
-                    }
-
-                    if (ic.modelName.isEmpty() || ic.address.isEmpty()) {
-                        QMetaObject::invokeMethod(&MessageService::instance(), "showWarning", Qt::QueuedConnection,
-                                                  Q_ARG(QString, "Error Message"),
-                                                  Q_ARG(QString, "Instrument model or address not set.\nPlease check the Instruments configuration!"));
-                        QMetaObject::invokeMethod(self, "forceOff", Qt::QueuedConnection, Q_ARG(LoadKind, LoadKind::Input));
-                        return;
-                    }
-
-                    comm = CommunicationFactory::create(ic.address);
-                    if (!comm) {
-                        QMetaObject::invokeMethod(&MessageService::instance(), "showWarning", Qt::QueuedConnection,
-                                                  Q_ARG(QString, "Error Message"),
-                                                  Q_ARG(QString, "Communication format error.\nPlease check the Instruments configuration!"));
-                        QMetaObject::invokeMethod(self, "forceOff", Qt::QueuedConnection, Q_ARG(LoadKind, LoadKind::Input));
-                        return;
-                    }
-
-                    ac_source = ACSourceFactory::createACSource(ic.modelName, comm);
-                    if (!ac_source) {
-                        delete comm;
-                        QMetaObject::invokeMethod(&MessageService::instance(), "showWarning", Qt::QueuedConnection,
-                                                  Q_ARG(QString, "Error Message"),
-                                                  Q_ARG(QString, "AC Source creation failed!"));
-                        QMetaObject::invokeMethod(self, "forceOff", Qt::QueuedConnection, Q_ARG(LoadKind, LoadKind::Input));
-                        return;
-                    }
-                    ac_source->connect();
-                    if (!ac_source->isConnected()) {
-                        QMetaObject::invokeMethod(&MessageService::instance(), "showWarning", Qt::QueuedConnection,
-                                                  Q_ARG(QString, "Error Message"),
-                                                  Q_ARG(QString, ac_source->model() + " communication open failed!"));
-                        QMetaObject::invokeMethod(self, "forceOff", Qt::QueuedConnection, Q_ARG(LoadKind, LoadKind::Input));
-                        delete ac_source;
-                        delete comm;
-                        return;
-                    }
-                    break;
-                }
-            }
-            if (!instrumentFound) {
-                QMetaObject::invokeMethod(&MessageService::instance(), "showWarning", Qt::QueuedConnection,
-                                          Q_ARG(QString, "Error Message"),
-                                          Q_ARG(QString, "No power instruments found."));
-                QMetaObject::invokeMethod(self, "forceOff", Qt::QueuedConnection, Q_ARG(LoadKind, LoadKind::Input));
-                return;
-            }
-            if (!ac_source || !comm){
-                // qDebug() << "AC source or communication null!";
-                return;
-            }
-
-            // 解析輸入
-            QStringList list = inputTxt.split('/');
-            if (list.size() < 3) {
-                QMetaObject::invokeMethod(&MessageService::instance(), "showWarning", Qt::QueuedConnection,
-                                          Q_ARG(QString, "Error Message"),
-                                          Q_ARG(QString, "Input format error. 電壓/頻率/相位 (如: 90/60/0)"));
-                delete ac_source;
-                delete comm;
-                return;
-            }
-
-            double volt    = list.value(0).toDouble();
-            double freq    = list.value(1).toDouble();
-            double phaseOn = list.value(2).toDouble();
-
-            // --- 依 action 執行 ---
-            if (realAction == InputAction::PowerOn) {
-                ac_source->setVoltage(volt);
-                ac_source->setFrequency(freq);
-                ac_source->setPhaseOn(phaseOn);
-                ac_source->setPowerOn();
-                // qDebug() << "Set input power ON: volt=" << volt << ", freq=" << freq << ", phase=" << phaseOn;
-            } else if (realAction == InputAction::Change) {
-                ac_source->setVoltage(volt);
-                ac_source->setFrequency(freq);
-                ac_source->setPhaseOn(phaseOn);
-                // qDebug() << "Set input param changed: volt=" << volt << ", freq=" << freq << ", phase=" << phaseOn;
-            } else if (realAction == InputAction::PowerOff) {
-                ac_source->setVoltage(0);
-                ac_source->setPowerOff();
-                // qDebug() << "Set input power OFF: voltage=0, PowerOff";
-            }
-
-            delete ac_source;
-            delete comm;
-        } catch (const std::exception& ex) {
-            if (self)
-                qWarning() << "[InputPower] Exception:" << ex.what();
-        }
-    });
-
-}
-
-
 void Page3ViewModel::onLoadToggled(bool on)
 {
     // qDebug() << "[VM] Load toggled:" << on;
@@ -443,185 +281,52 @@ void Page3ViewModel::onLoadChanged()
     handleLoad(LoadAction::Change);
 }
 
-void Page3ViewModel::handleLoad(LoadAction action)
+void Page3ViewModel::applyLoadVonSetting(DCLoad* dcLoad,const int &index,const QVector<QString>& vons)
 {
-    QPointer<Page3ViewModel> self(this);
-
-    if (m_page1Config.instruments.isEmpty()) {
-        MessageService::instance().showWarning("Error Message",
-                                               "No instrument settings have been loaded.\nPlease load the configuration first!");
-        emit forceOff(LoadKind::Load);
-        return;
-    }
-
-    if (m_selectedLoadText.trimmed().isEmpty()) {
-        MessageService::instance().showWarning("Error Message",
-                                               "No load conditions selected.\nPlease select load conditions first!");
-        emit forceOff(LoadKind::Load);
-        return;
-    }
-
-    const auto& meta = m_LoadMetaData;
-    const auto& modes = meta.modes;
-    const auto& vons = meta.von;
-    const auto& riseSlope = meta.riseSlope;
-    const auto& fallSlope = meta.fallSlope;
-    const auto& outputVoltages = meta.vo; // 取得輸出電壓
-
-    QFuture<void> future = QtConcurrent::run([cfg = m_page1Config, self,
-                                              action = static_cast<int>(action),
-                                              modes, vons, riseSlope, fallSlope,
-                                              outputVoltages, this]() {
-        QVector<DCLoad*> dcLoads;
-        QMap<QString, ICommunication*> commMap;
-
-        try {
-            // 1. 建立所有合法 DCLoad 通道
-            for (const auto& ic : cfg.instruments) {
-                if (!ic.enabled || ic.type != "Load") continue;
-                if (ic.modelName.isEmpty() || ic.address.isEmpty()) continue;
-
-                ICommunication* comm = commMap.value(ic.address, nullptr);
-                if (!comm) {
-                    comm = CommunicationFactory::create(ic.address);
-                    if (!comm) continue;
-                    commMap[ic.address] = comm;
-                }
-
-                for (int i = 0; i < ic.channels.size(); ++i) {
-                    const auto& ch = ic.channels[i];
-                    if (ch.subModel.isEmpty() || ch.index <= 0) continue;
-
-                    DCLoad* dcLoad = DCLoadFactory::createDCLoad(ch.subModel, comm);
-                    if (!dcLoad) continue;
-
-                    int uiIndex = ch.index;
-                    int hwChannel = ic.channelNumbers.value(i, -1);
-
-                    dcLoad->setRealChannel(hwChannel);
-                    dcLoad->setChannelIndex(uiIndex);
-                    dcLoad->connect();
-
-                    if (!dcLoad->isConnected()) {
-                        QMetaObject::invokeMethod(&MessageService::instance(), "showWarning",
-                                                  Qt::QueuedConnection,
-                                                  Q_ARG(QString, "Error Message"),
-                                                  Q_ARG(QString, dcLoad->model() + " communication open failed!"));
-                        QMetaObject::invokeMethod(self, "forceOff", Qt::QueuedConnection,
-                                                  Q_ARG(LoadKind, LoadKind::Load));
-                        delete dcLoad;
-                        return;
-                    }
-
-                    dcLoads.append(dcLoad);
-                }
-            }
-
-            if (dcLoads.isEmpty()) {
-                QMetaObject::invokeMethod(&MessageService::instance(), "showWarning",
-                                          Qt::QueuedConnection,
-                                          Q_ARG(QString, "Error Message"),
-                                          Q_ARG(QString, "No valid DC Load channel is enabled or configured!"));
-                QMetaObject::invokeMethod(self, "forceOff", Qt::QueuedConnection,
-                                          Q_ARG(LoadKind, LoadKind::Load));
-                for (auto comm : commMap) delete comm;
-                return;
-            }
-
-            // 2. 執行 LoadAction
-            for (DCLoad* dcLoad : dcLoads) {
-                LoadAction act = static_cast<LoadAction>(action);
-                int realindex = dcLoad->realChannel();
-                int index = dcLoad->channelIndex();
-
-                if (act == LoadAction::LoadOff) {
-                    dcLoad->setChannel(realindex);
-                    dcLoad->setLoadOff();
-                    continue;
-                }
-
-                if (!self) continue;
-
-                auto it = std::find_if(self->m_LoadRowsData.begin(),
-                                       self->m_LoadRowsData.end(),
-                                       [&](const LoadDataRow& row) {
-                                           return row.label == self->m_selectedLoadText;
-                                       });
-
-                if (it == self->m_LoadRowsData.end()) continue;
-
-                const auto& values = it->values;
-                dcLoad->setChannel(realindex);
-
-                if (index <= 0 || index > values.size()) continue;
-
-                QString strValue = values[index - 1].trimmed();
-                if (strValue.isEmpty()) continue;
-
-                bool ok = false;
-                double currval = strValue.toDouble(&ok);
-                if (!ok) continue;
-
-                QString mode = (index - 1 < modes.size()) ?
-                                   modes[index - 1].trimmed().toUpper() : "CC";
-
-                // 傳入輸出電壓
-                applyLoadSettings(dcLoad, index, currval, mode,
-                                  vons, riseSlope, fallSlope, outputVoltages);
-
-                if (act == LoadAction::LoadOn)
-                    dcLoad->setLoadOn();
-            }
-
-            // 3. 清除資源
-            for (auto dcLoad : dcLoads) delete dcLoad;
-            for (auto comm : commMap) delete comm;
-
-        } catch (const std::exception& ex) {
-            for (auto dcLoad : dcLoads) delete dcLoad;
-            for (auto comm : commMap) delete comm;
-            if (self)
-                qWarning() << "[Load] Exception:" << ex.what();
-        }
-    });
-}
-
-void Page3ViewModel::applyLoadSettings(DCLoad* dcLoad,
-                                       int index,
-                                       double currval,
-                                       const QString& mode,
-                                       const QVector<QString>& vons,
-                                       const QVector<QString>& riseSlope,
-                                       const QVector<QString>& fallSlope,
-                                       const QVector<QString>& outputVoltages)
-{
-    int nSegments = dcLoad->getNumSegments();
-    dcLoad->setChannel(dcLoad->realChannel());
-
     // 設定 Von
     if (index - 1 < vons.size()) {
         bool ok = false;
         double val = vons[index - 1].toDouble(&ok);
         if (ok) dcLoad->setVon(val);
     }
+}
 
-    // 設定 Rise Slope
-    if (index - 1 < riseSlope.size()) {
-        bool ok = false;
-        double val = riseSlope[index - 1].toDouble(&ok);
-        if (ok) dcLoad->setStaticRiseSlope(val);
-    }
+void Page3ViewModel::applyLoadSlopeSetting(DCLoad* dcLoad,
+                                           int index,
+                                           const QVector<QString>& riseSlopeCCH,
+                                           const QVector<QString>& fallSlopeCCH,
+                                           const QVector<QString>& riseSlopeCCL,
+                                           const QVector<QString>& fallSlopeCCL)
+{
+    auto applySlope = [&](const QString& mode, const QVector<QString>& vec,
+                          auto setFunc) {
+        if (index - 1 < vec.size()) {
+            bool ok;
+            double val = vec[index - 1].toDouble(&ok);
+            if (ok) {
+                dcLoad->setLoadMode(mode);
+                (dcLoad->*setFunc)(val);
+            }
+        }
+    };
 
-    // 設定 Fall Slope
-    if (index - 1 < fallSlope.size()) {
-        bool ok = false;
-        double val = fallSlope[index - 1].toDouble(&ok);
-        if (ok) dcLoad->setStaticFallSlope(val);
-    }
+    applySlope("CCH", riseSlopeCCH, &DCLoad::setStaticRiseSlope);
+    applySlope("CCH", fallSlopeCCH, &DCLoad::setStaticFallSlope);
+    applySlope("CCL", riseSlopeCCL, &DCLoad::setStaticRiseSlope);
+    applySlope("CCL", fallSlopeCCL, &DCLoad::setStaticFallSlope);
+}
+
+void Page3ViewModel::applyLoadValueSettings(DCLoad* dcLoad,
+                            int index,
+                            double value,
+                            const QString& mode,
+                            const QVector<QString>& outputVoltages)
+{
+    int nSegments = dcLoad->getNumSegments();
 
     if (mode == "CC") {
         StaticCurrentParam param;
-        param.levels = QVector<double>(nSegments, currval);
+        param.levels = QVector<double>(nSegments, value);
         param.enabledMask = QVector<bool>(nSegments, true);
 
         // 從 outputVoltages 取得對應通道的電壓
@@ -632,8 +337,8 @@ void Page3ViewModel::applyLoadSettings(DCLoad* dcLoad,
 
             if (ok) {
                 qDebug() << "[Page3ViewModel] Channel" << index
-                         << "- Current:" << currval << "A, Voltage:" << voltage << "V"
-                         << "Power:" << (currval * voltage) << "W";
+                         << "- Current:" << value << "A, Voltage:" << voltage << "V"
+                         << "Power:" << (value * voltage) << "W";
             }
         } else {
             param.expectedVoltage = 0.0;
@@ -649,7 +354,7 @@ void Page3ViewModel::applyLoadSettings(DCLoad* dcLoad,
     } else {
         // 默認CC
         StaticCurrentParam param;
-        param.levels = QVector<double>(nSegments, currval);
+        param.levels = QVector<double>(nSegments, value);
         param.enabledMask = QVector<bool>(nSegments, true);
 
         if (index - 1 < outputVoltages.size()) {
@@ -662,194 +367,100 @@ void Page3ViewModel::applyLoadSettings(DCLoad* dcLoad,
 
         dcLoad->setStaticCurrent(param);
     }
+
 }
 
-void Page3ViewModel::handleDyLoad(DyLoadAction action)
+
+void Page3ViewModel::applyLoadSettings(DCLoad* dcLoad,
+                                       int index,
+                                       double value,
+                                       const QString& mode,
+                                       const QVector<QString>& vons,
+                                       const QVector<QString>& riseSlopeCCH,
+                                       const QVector<QString>& fallSlopeCCH,
+                                       const QVector<QString>& riseSlopeCCL,
+                                       const QVector<QString>& fallSlopeCCL,
+                                       const QVector<QString>& outputVoltages)
 {
-    QPointer<Page3ViewModel> self(this);
+    // int nSegments = dcLoad->getNumSegments();
+    dcLoad->setChannel(dcLoad->realChannel());
 
-    if (m_page1Config.instruments.isEmpty()) {
-        MessageService::instance().showWarning("Error Message",
-                                               "No instrument settings have been loaded.\nPlease load the configuration first!");
-        emit forceOff(LoadKind::DyLoad);
-        return;
-    }
+    // 設定 Von
+    applyLoadVonSetting(dcLoad,index,vons);
 
-    if (m_selectedDyLoadText.trimmed().isEmpty()) {
-        MessageService::instance().showWarning("Error Message",
-                                               "No dynamic load conditions selected.\nPlease select dynamic load conditions first!");
-        emit forceOff(LoadKind::DyLoad);
-        return;
-    }
+    // 設定 Slope
+    applyLoadSlopeSetting(dcLoad,index,riseSlopeCCH,fallSlopeCCH,riseSlopeCCL,fallSlopeCCL);
 
-    const auto& meta = m_DynamicMetaData;
-    const auto& vons = meta.von;
-    const auto& riseSlope = meta.riseSlope;
-    const auto& fallSlope = meta.fallSlope;
-    const auto& outputVoltages = meta.vo;
-    const auto& t1t2 = meta.t1t2;
+    // 設定 Curr
+    applyLoadValueSettings(dcLoad,index,value,mode,outputVoltages);
 
-    QFuture<void> future = QtConcurrent::run([cfg = m_page1Config, self,
-                                              action = static_cast<int>(action),
-                                              vons, riseSlope, fallSlope,
-                                              outputVoltages, t1t2, this]() {
-        QVector<DCLoad*> dcLoads;
-        QMap<QString, ICommunication*> commMap;
 
-        try {
-            // 1. 建立所有合法 DCLoad 通道 (同 handleLoad)
-            for (const auto& ic : cfg.instruments) {
-                if (!ic.enabled || ic.type != "Load") continue;
-                if (ic.modelName.isEmpty() || ic.address.isEmpty()) continue;
-
-                ICommunication* comm = commMap.value(ic.address, nullptr);
-                if (!comm) {
-                    comm = CommunicationFactory::create(ic.address);
-                    if (!comm) continue;
-                    commMap[ic.address] = comm;
-                }
-
-                for (int i = 0; i < ic.channels.size(); ++i) {
-                    const auto& ch = ic.channels[i];
-                    if (ch.subModel.isEmpty() || ch.index <= 0) continue;
-
-                    DCLoad* dcLoad = DCLoadFactory::createDCLoad(ch.subModel, comm);
-                    if (!dcLoad) continue;
-
-                    int uiIndex = ch.index;
-                    int hwChannel = ic.channelNumbers.value(i, -1);
-
-                    dcLoad->setRealChannel(hwChannel);
-                    dcLoad->setChannelIndex(uiIndex);
-                    dcLoad->connect();
-
-                    if (!dcLoad->isConnected()) {
-                        QMetaObject::invokeMethod(&MessageService::instance(), "showWarning",
-                                                  Qt::QueuedConnection,
-                                                  Q_ARG(QString, "Error Message"),
-                                                  Q_ARG(QString, dcLoad->model() + " communication open failed!"));
-                        QMetaObject::invokeMethod(self, "forceOff", Qt::QueuedConnection,
-                                                  Q_ARG(LoadKind, LoadKind::DyLoad));
-                        delete dcLoad;
-                        return;
-                    }
-
-                    dcLoads.append(dcLoad);
-                }
-            }
-
-            if (dcLoads.isEmpty()) {
-                QMetaObject::invokeMethod(&MessageService::instance(), "showWarning",
-                                          Qt::QueuedConnection,
-                                          Q_ARG(QString, "Error Message"),
-                                          Q_ARG(QString, "No valid DC Load channel is enabled or configured for dynamic load!"));
-                QMetaObject::invokeMethod(self, "forceOff", Qt::QueuedConnection,
-                                          Q_ARG(LoadKind, LoadKind::DyLoad));
-                for (auto comm : commMap) delete comm;
-                return;
-            }
-
-            // 2. 執行 DyLoadAction
-            for (DCLoad* dcLoad : dcLoads) {
-                DyLoadAction act = static_cast<DyLoadAction>(action);
-                int realindex = dcLoad->realChannel();
-                int index = dcLoad->channelIndex();
-
-                if (act == DyLoadAction::DyloadOff) {
-                    dcLoad->setChannel(realindex);
-                    dcLoad->setLoadOff();
-                    continue;
-                }
-
-                if (!self) continue;
-
-                auto it = std::find_if(self->m_DynamicRowsData.begin(),
-                                       self->m_DynamicRowsData.end(),
-                                       [&](const DynamicDataRow& row) {
-                                           return row.label == self->m_selectedDyLoadText;
-                                       });
-
-                if (it == self->m_DynamicRowsData.end()) continue;
-
-                const auto& values = it->values;
-                dcLoad->setChannel(realindex);
-
-                if (index <= 0 || index > values.size()) continue;
-
-                QString strValue = values[index - 1].trimmed();
-                if (strValue.isEmpty()) continue;
-
-                // 從 t1t2 獲取時間數據
-                // 找到當前選中的 DynamicDataRow 在所有 rows 中的索引
-                int rowIndex = std::distance(self->m_DynamicRowsData.begin(), it);
-                QString dyTime = "";
-                if (rowIndex >= 0 && rowIndex < t1t2.size()) {
-                    dyTime = t1t2[rowIndex].trimmed();
-                }
-
-                QString mode = "CCDL";
-
-                // 傳入輸出電壓和時間
-                applyDyLoadSettings(dcLoad, index, strValue, dyTime, mode,
-                                    vons, riseSlope, fallSlope, outputVoltages);
-
-                if (act == DyLoadAction::DyLoadOn) {
-                    dcLoad->setLoadOn();
-                }
-            }
-
-            // 3. 清除資源
-            for (auto dcLoad : dcLoads) delete dcLoad;
-            for (auto comm : commMap) delete comm;
-
-        } catch (const std::exception& ex) {
-            for (auto dcLoad : dcLoads) delete dcLoad;
-            for (auto comm : commMap) delete comm;
-            if (self)
-                qWarning() << "[DynamicLoad] Exception:" << ex.what();
-        }
-    });
 }
 
 void Page3ViewModel::applyDyLoadSettings(DCLoad* dcLoad,
                                          int index,
-                                         const QString& currval,
+                                         const QString& value,
                                          const QString& dyTime,
-                                         const QString& mode,
                                          const QVector<QString>& vons,
-                                         const QVector<QString>& riseSlope,
-                                         const QVector<QString>& fallSlope,
+                                         const QVector<QString>& riseSlopeCCDH,
+                                         const QVector<QString>& fallSlopeCCDH,
+                                         const QVector<QString>& riseSlopeCCDL,
+                                         const QVector<QString>& fallSlopeCCDL,
                                          const QVector<QString>& outputVoltages)
 {
-    int nSegments = dcLoad->getNumSegments();
+    // int nSegments = dcLoad->getNumSegments();
     dcLoad->setChannel(dcLoad->realChannel());
 
-    // 設定 Von
-    if (index - 1 < vons.size()) {
-        bool ok = false;
-        double val = vons[index - 1].toDouble(&ok);
-        if (ok) dcLoad->setVon(val);
-    }
+   // 設定 Von
+   applyLoadVonSetting(dcLoad,index,vons);
 
-    // 設定 Rise Slope
-    if (index - 1 < riseSlope.size()) {
-        bool ok = false;
-        double val = riseSlope[index - 1].toDouble(&ok);
-        if (ok) dcLoad->setDynamicRiseSlope(val);
-    }
+    // 設定 CCDH Rise Slope
+   applyDyLoadSlopeSetting(dcLoad,index,riseSlopeCCDH,fallSlopeCCDH,riseSlopeCCDL,fallSlopeCCDL);
 
-    // 設定 Fall Slope
-    if (index - 1 < fallSlope.size()) {
-        bool ok = false;
-        double val = fallSlope[index - 1].toDouble(&ok);
-        if (ok) dcLoad->setDynamicFallSlope(val);
-    }
+  // 設定 Curr
+   applyDyLoadValueSettings(dcLoad,index,value,dyTime,outputVoltages);
+
+
+}
+
+void Page3ViewModel::applyDyLoadSlopeSetting(DCLoad* dcLoad,
+                                             int index,
+                                             const QVector<QString>& riseSlopeCCDH,
+                                             const QVector<QString>& fallSlopeCCDH,
+                                             const QVector<QString>& riseSlopeCCDL,
+                                             const QVector<QString>& fallSlopeCCDL)
+{
+    auto applySlope = [&](const QString& mode, const QVector<QString>& vec,
+                          auto setFunc) {
+        if (index - 1 < vec.size()) {
+            bool ok;
+            double val = vec[index - 1].toDouble(&ok);
+            if (ok) {
+                dcLoad->setLoadMode(mode);
+                (dcLoad->*setFunc)(val);
+            }
+        }
+    };
+
+    applySlope("CCDH", riseSlopeCCDH, &DCLoad::setDynamicRiseSlope);
+    applySlope("CCDH", fallSlopeCCDH, &DCLoad::setDynamicFallSlope);
+    applySlope("CCDL", riseSlopeCCDL, &DCLoad::setDynamicRiseSlope);
+    applySlope("CCDL", fallSlopeCCDL, &DCLoad::setDynamicFallSlope);
+}
+
+void Page3ViewModel::applyDyLoadValueSettings(DCLoad* dcLoad,
+                              int index,
+                              const QString& value,
+                              const QString& dyTime,
+                              const QVector<QString>& outputVoltages)
+{
+    int nSegments = dcLoad->getNumSegments();
 
     // 動態模式設定
     DynamicCurrentParam param;
 
     // 解析電流值 (例如: "1.01~3.01")
-    QStringList currentParts = currval.split('~');
+    QStringList currentParts = value.split('~');
     for (const auto& part : currentParts) {
         bool ok = false;
         double value = part.trimmed().toDouble(&ok);
@@ -902,6 +513,7 @@ void Page3ViewModel::applyDyLoadSettings(DCLoad* dcLoad,
     if (!param.levels.isEmpty()) {
         dcLoad->setDynamicCurrent(param);
     }
+
 }
 
 
@@ -1106,4 +718,646 @@ void Page3ViewModel::restoreUISelections()
     }
 
     // qDebug() << "[Page3ViewModel::restoreUISelections] Sent restore signals";
+}
+
+// handleInput
+void Page3ViewModel::handleInput(InputAction action)
+{
+    QPointer<Page3ViewModel> self(this);
+
+    // 驗證配置
+    if (!validateInputConfiguration()) {
+        return;
+    }
+
+    // 異步處理
+    QFuture<void> future = QtConcurrent::run([cfg = m_page1Config,
+                                              inputTxt = m_selectedInputText,
+                                              self, action]() {
+        try {
+            // 檢查對象有效性
+            if (!self) {
+                return;
+            }
+
+            // 創建 AC Source
+            auto createResult = self->createACSource(cfg, self);
+            if (!createResult.success || !createResult.source || !createResult.comm) {
+                return;
+            }
+
+            // 解析輸入參數
+            auto params = self->parseInputText(inputTxt);
+            if (!params.valid) {
+                self->cleanupACSourceResources(createResult.source, createResult.comm);
+                return;
+            }
+
+            // 執行操作
+            self->executeACSourceAction(createResult.source, action, params);
+
+            // 清理資源
+            self->cleanupACSourceResources(createResult.source, createResult.comm);
+
+        } catch (const std::exception& ex) {
+            if (self) {
+                qWarning() << "[InputPower] Exception:" << ex.what();
+            }
+        }
+    });
+}
+
+// 檢查配置和選擇狀態
+bool Page3ViewModel::validateInputConfiguration()
+{
+    if (m_page1Config.instruments.isEmpty()) {
+        MessageService::instance().showWarning("Error Message",
+                                               "No instrument settings have been loaded.\nPlease load the configuration first!");
+        emit forceOff(LoadKind::Input);
+        return false;
+    }
+
+    if (m_selectedInputText.trimmed().isEmpty()) {
+        MessageService::instance().showWarning("Error Message",
+                                               "No input conditions.\nPlease check the input conditions.\n (example : voltage / frequency / phase)");
+        emit forceOff(LoadKind::Input);
+        return false;
+    }
+
+    return true;
+}
+
+Page3ViewModel::ACSourceCreationResult Page3ViewModel::createACSource(
+    const Page1Config& cfg,
+    QPointer<Page3ViewModel> self)
+{
+    ACSourceCreationResult result;
+
+    bool instrumentFound = false;
+    for (const auto& ic : cfg.instruments) {
+        if (ic.name != "Source" || ic.type != "InputSource") {
+            continue;
+        }
+
+        instrumentFound = true;
+
+        // 檢查是否啟用
+        if (!ic.enabled) {
+            QMetaObject::invokeMethod(&MessageService::instance(), "showWarning", Qt::QueuedConnection,
+                                      Q_ARG(QString, "Error Message"),
+                                      Q_ARG(QString, "Power is not enabled.\nPlease check the Instruments configuration!"));
+            QMetaObject::invokeMethod(self, "forceOff", Qt::QueuedConnection, Q_ARG(LoadKind, LoadKind::Input));
+            return result;
+        }
+
+        // 檢查配置完整性
+        if (ic.modelName.isEmpty() || ic.address.isEmpty()) {
+            QMetaObject::invokeMethod(&MessageService::instance(), "showWarning", Qt::QueuedConnection,
+                                      Q_ARG(QString, "Error Message"),
+                                      Q_ARG(QString, "Instrument model or address not set.\nPlease check the Instruments configuration!"));
+            QMetaObject::invokeMethod(self, "forceOff", Qt::QueuedConnection, Q_ARG(LoadKind, LoadKind::Input));
+            return result;
+        }
+
+        // 創建通信對象
+        result.comm = CommunicationFactory::create(ic.address);
+        if (!result.comm) {
+            QMetaObject::invokeMethod(&MessageService::instance(), "showWarning", Qt::QueuedConnection,
+                                      Q_ARG(QString, "Error Message"),
+                                      Q_ARG(QString, "Communication format error.\nPlease check the Instruments configuration!"));
+            QMetaObject::invokeMethod(self, "forceOff", Qt::QueuedConnection, Q_ARG(LoadKind, LoadKind::Input));
+            return result;
+        }
+
+        // 創建 AC Source
+        result.source = ACSourceFactory::createACSource(ic.modelName, result.comm);
+        if (!result.source) {
+            delete result.comm;
+            result.comm = nullptr;
+            QMetaObject::invokeMethod(&MessageService::instance(), "showWarning", Qt::QueuedConnection,
+                                      Q_ARG(QString, "Error Message"),
+                                      Q_ARG(QString, "AC Source creation failed!"));
+            QMetaObject::invokeMethod(self, "forceOff", Qt::QueuedConnection, Q_ARG(LoadKind, LoadKind::Input));
+            return result;
+        }
+
+        // 連接 AC Source
+        result.source->connect();
+        if (!result.source->isConnected()) {
+            QMetaObject::invokeMethod(&MessageService::instance(), "showWarning", Qt::QueuedConnection,
+                                      Q_ARG(QString, "Error Message"),
+                                      Q_ARG(QString, result.source->model() + " communication open failed!"));
+            QMetaObject::invokeMethod(self, "forceOff", Qt::QueuedConnection, Q_ARG(LoadKind, LoadKind::Input));
+            delete result.source;
+            delete result.comm;
+            result.source = nullptr;
+            result.comm = nullptr;
+            return result;
+        }
+
+        result.success = true;
+        break;
+    }
+
+    if (!instrumentFound) {
+        QMetaObject::invokeMethod(&MessageService::instance(), "showWarning", Qt::QueuedConnection,
+                                  Q_ARG(QString, "Error Message"),
+                                  Q_ARG(QString, "No power instruments found."));
+        QMetaObject::invokeMethod(self, "forceOff", Qt::QueuedConnection, Q_ARG(LoadKind, LoadKind::Input));
+    }
+
+    return result;
+}
+
+Page3ViewModel::InputParameters Page3ViewModel::parseInputText(const QString& inputText)
+{
+    InputParameters params;
+
+    QStringList list = inputText.split('/');
+    if (list.size() < 3) {
+        QMetaObject::invokeMethod(&MessageService::instance(), "showWarning", Qt::QueuedConnection,
+                                  Q_ARG(QString, "Error Message"),
+                                  Q_ARG(QString, "Input format error. 電壓/頻率/相位 (如: 90/60/0)"));
+        return params;
+    }
+
+    params.voltage = list.value(0).toDouble();
+    params.frequency = list.value(1).toDouble();
+    params.phase = list.value(2).toDouble();
+    params.valid = true;
+
+    return params;
+}
+
+// 執行 AC Source
+void Page3ViewModel::executeACSourceAction(
+    ACSource* source,
+    InputAction action,
+    const InputParameters& params)
+{
+    switch (action) {
+    case InputAction::PowerOn:
+        source->setVoltage(params.voltage);
+        source->setFrequency(params.frequency);
+        source->setPhaseOn(params.phase);
+        source->setPowerOn();
+        break;
+
+    case InputAction::Change:
+        source->setVoltage(params.voltage);
+        source->setFrequency(params.frequency);
+        source->setPhaseOn(params.phase);
+        break;
+
+    case InputAction::PowerOff:
+        source->setVoltage(0);
+        source->setPowerOff();
+        break;
+    }
+}
+
+// Input資源清理
+void Page3ViewModel::cleanupACSourceResources(ACSource* source, ICommunication* comm)
+{
+    if (source) delete source;
+    if (comm) delete comm;
+}
+
+
+// handleLoad
+void Page3ViewModel::handleLoad(LoadAction action)
+{
+    QPointer<Page3ViewModel> self(this);
+
+    // 1. 驗證配置
+    if (!validateLoadConfiguration()) {
+        return;
+    }
+
+    // 2. 準備數據
+    const auto& meta = m_LoadMetaData;
+    const auto& modes = meta.modes;
+    const auto& vons = meta.von;
+    const auto& riseSlopeCCH = meta.riseSlopeCCH;
+    const auto& fallSlopeCCH = meta.fallSlopeCCH;
+    const auto& riseSlopeCCL = meta.riseSlopeCCL;
+    const auto& fallSlopeCCL = meta.fallSlopeCCL;
+    const auto& outputVoltages = meta.vo;
+
+    // 3. 非同步處理
+    QFuture<void> future = QtConcurrent::run([cfg = m_page1Config, self,
+                                              action,
+                                              modes, vons,
+                                              riseSlopeCCH, fallSlopeCCH,
+                                              riseSlopeCCL, fallSlopeCCL,
+                                              outputVoltages]() {
+        try {
+            // 檢查對象有效性
+            if (!self) return;
+
+            // 創建 DC Load 通道
+            auto createResult = self->createDCLoads(cfg, self, LoadKind::DyLoad);
+            if (!createResult.success || createResult.dcLoads.isEmpty()) {
+                return;
+            }
+
+            // 尋找選定的 Load 數據
+            auto dataInfo = self->findSelectedLoadData(self);
+
+            // 執行每個 DC Load 的操作
+            for (DCLoad* dcLoad : createResult.dcLoads) {
+                int index = dcLoad->channelIndex();
+
+                self->executeDCLoadAction(
+                    dcLoad, action, index, dataInfo,
+                    modes, vons,
+                    riseSlopeCCH, fallSlopeCCH,
+                    riseSlopeCCL, fallSlopeCCL,
+                    outputVoltages
+                    );
+            }
+
+            // 清理資源
+            self->cleanupDCLoadResources(createResult.dcLoads, createResult.commMap);
+
+        } catch (const std::exception& ex) {
+            if (self) {
+                qWarning() << "[Load] Exception:" << ex.what();
+            }
+        }
+    });
+}
+
+// 檢查 Load 配置和選擇狀態
+bool Page3ViewModel::validateLoadConfiguration()
+{
+    if (m_page1Config.instruments.isEmpty()) {
+        MessageService::instance().showWarning("Error Message",
+                                               "No instrument settings have been loaded.\nPlease load the configuration first!");
+        emit forceOff(LoadKind::Load);
+        return false;
+    }
+
+    if (m_selectedLoadText.trimmed().isEmpty()) {
+        MessageService::instance().showWarning("Error Message",
+                                               "No load conditions selected.\nPlease select load conditions first!");
+        emit forceOff(LoadKind::Load);
+        return false;
+    }
+
+    return true;
+}
+
+Page3ViewModel::DCLoadCreationResult Page3ViewModel::createDCLoads(
+    const Page1Config& cfg,
+    QPointer<Page3ViewModel> self,
+    LoadKind kind)  // 新增參數
+{
+    DCLoadCreationResult result;
+
+    try {
+        // 遍歷所有儀器配置
+        for (const auto& ic : cfg.instruments) {
+            // 過濾條件：必須是啟用的 Load 類型
+            if (!ic.enabled || ic.type != "Load") continue;
+            if (ic.modelName.isEmpty() || ic.address.isEmpty()) continue;
+
+            // 取得或創建通信物件
+            ICommunication* comm = result.commMap.value(ic.address, nullptr);
+            if (!comm) {
+                comm = CommunicationFactory::create(ic.address);
+                if (!comm) continue;
+                result.commMap[ic.address] = comm;
+            }
+
+            // 為每個通道創建 DC Load
+            for (int i = 0; i < ic.channels.size(); ++i) {
+                const auto& ch = ic.channels[i];
+                if (ch.subModel.isEmpty() || ch.index <= 0) continue;
+
+                DCLoad* dcLoad = DCLoadFactory::createDCLoad(ch.subModel, comm);
+                if (!dcLoad) continue;
+
+                // 設定通道參數
+                int uiIndex = ch.index;
+                int hwChannel = ic.channelNumbers.value(i, -1);
+                dcLoad->setRealChannel(hwChannel);
+                dcLoad->setChannelIndex(uiIndex);
+
+                // 連接檢查
+                dcLoad->connect();
+                if (!dcLoad->isConnected()) {
+                    QMetaObject::invokeMethod(&MessageService::instance(), "showWarning",
+                                              Qt::QueuedConnection,
+                                              Q_ARG(QString, "Error Message"),
+                                              Q_ARG(QString, dcLoad->model() + " communication open failed!"));
+
+                    QMetaObject::invokeMethod(self, "forceOff", Qt::QueuedConnection,
+                                              Q_ARG(LoadKind, kind));
+
+                    delete dcLoad;
+
+                    // 清理已創建的資源
+                    for (auto load : result.dcLoads) delete load;
+                    for (auto c : result.commMap) delete c;
+                    result.dcLoads.clear();
+                    result.commMap.clear();
+                    return result;
+                }
+
+                result.dcLoads.append(dcLoad);
+            }
+        }
+
+        // 檢查是否有有效的 DC Load
+        if (result.dcLoads.isEmpty()) {
+            QString errorMsg;
+            if (kind == LoadKind::Load) {
+                errorMsg = "No valid DC Load channel is enabled or configured!";
+            } else if (kind == LoadKind::DyLoad) {
+                errorMsg = "No valid DC Load channel is enabled or configured for dynamic load!";
+            } else {
+                errorMsg = "No valid DC Load channel is enabled or configured!";
+            }
+
+            QMetaObject::invokeMethod(&MessageService::instance(), "showWarning",
+                                      Qt::QueuedConnection,
+                                      Q_ARG(QString, "Error Message"),
+                                      Q_ARG(QString, errorMsg));
+
+            QMetaObject::invokeMethod(self, "forceOff", Qt::QueuedConnection,
+                                      Q_ARG(LoadKind, kind));
+
+            for (auto comm : result.commMap) delete comm;
+            result.commMap.clear();
+            return result;
+        }
+
+        result.success = true;
+
+    } catch (const std::exception& ex) {
+        // 異常處理：清理所有資源
+        for (auto load : result.dcLoads) delete load;
+        for (auto comm : result.commMap) delete comm;
+        result.dcLoads.clear();
+        result.commMap.clear();
+        result.success = false;
+        qWarning() << "[createDCLoads] Exception:" << ex.what();
+    }
+
+    return result;
+}
+
+Page3ViewModel::LoadDataInfo Page3ViewModel::findSelectedLoadData(
+    QPointer<Page3ViewModel> self)
+{
+    LoadDataInfo info;
+
+    if (!self) return info;
+
+    auto it = std::find_if(self->m_LoadRowsData.begin(),
+                           self->m_LoadRowsData.end(),
+                           [&](const LoadDataRow& row) {
+                               return row.label == self->m_selectedLoadText;
+                           });
+
+    if (it != self->m_LoadRowsData.end()) {
+        info.values = it->values;
+        info.found = true;
+    }
+
+    return info;
+}
+
+// 執行單個 DC Load
+void Page3ViewModel::executeDCLoadAction(
+    DCLoad* dcLoad,
+    LoadAction action,
+    int index,
+    const LoadDataInfo& dataInfo,
+    const QVector<QString>& modes,
+    const QVector<QString>& vons,
+    const QVector<QString>& riseSlopeCCH,
+    const QVector<QString>& fallSlopeCCH,
+    const QVector<QString>& riseSlopeCCL,
+    const QVector<QString>& fallSlopeCCL,
+    const QVector<QString>& outputVoltages)
+{
+    int realindex = dcLoad->realChannel();
+
+    // Load Off：直接關閉
+    if (action == LoadAction::LoadOff) {
+        dcLoad->setChannel(realindex);
+        dcLoad->setLoadOff();
+        return;
+    }
+
+    // Load On 或 Change：需要設定參數
+    if (!dataInfo.found) return;
+    if (index <= 0 || index > dataInfo.values.size()) return;
+
+    QString strValue = dataInfo.values[index - 1].trimmed();
+    if (strValue.isEmpty()) return;
+
+    bool ok = false;
+    double currval = strValue.toDouble(&ok);
+    if (!ok) return;
+
+    // 取得模式（預設為 CC）
+    QString mode = (index - 1 < modes.size()) ?
+                       modes[index - 1].trimmed().toUpper() : "CC";
+
+    // 設定通道
+    dcLoad->setChannel(realindex);
+
+    // 應用所有設定
+    applyLoadSettings(dcLoad, index, currval, mode,
+                      vons, riseSlopeCCH, fallSlopeCCH,
+                      riseSlopeCCL, fallSlopeCCL,
+                      outputVoltages);
+
+    // Load On：開啟負載
+    if (action == LoadAction::LoadOn) {
+        dcLoad->setLoadOn();
+    }
+}
+
+// 清理 DC Load 資源
+void Page3ViewModel::cleanupDCLoadResources(
+    QVector<DCLoad*>& dcLoads,
+    QMap<QString, ICommunication*>& commMap)
+{
+    for (auto dcLoad : dcLoads) {
+        if (dcLoad) delete dcLoad;
+    }
+    dcLoads.clear();
+
+    for (auto comm : commMap) {
+        if (comm) delete comm;
+    }
+    commMap.clear();
+}
+
+// handleDyLoad
+    void Page3ViewModel::handleDyLoad(DyLoadAction action)
+{
+    QPointer<Page3ViewModel> self(this);
+
+    // 1. 驗證配置
+    if (!validateDyLoadConfiguration()) {
+        return;
+    }
+
+    // 2. 準備數據
+    const auto& meta = m_DynamicMetaData;
+    const auto& vons = meta.von;
+    const auto& riseSlopeCCDH = meta.riseSlopeCCDH;
+    const auto& fallSlopeCCDH = meta.fallSlopeCCDH;
+    const auto& riseSlopeCCDL = meta.riseSlopeCCDL;
+    const auto& fallSlopeCCDL = meta.fallSlopeCCDL;
+    const auto& outputVoltages = meta.vo;
+    const auto& t1t2 = meta.t1t2;
+
+    // 3. 非同步處理
+    QFuture<void> future = QtConcurrent::run([cfg = m_page1Config, self,
+                                              action,
+                                              vons,
+                                              riseSlopeCCDH, fallSlopeCCDH,
+                                              riseSlopeCCDL, fallSlopeCCDL,
+                                              outputVoltages, t1t2]() {
+        try {
+            // 檢查對象有效性
+            if (!self) return;
+
+            // 4. 創建 DC Load 通道（重用 handleLoad 的函數）
+            auto createResult = self->createDCLoads(cfg, self, LoadKind::Load);
+            if (!createResult.success || createResult.dcLoads.isEmpty()) {
+                return;
+            }
+
+            // 5. 尋找選定的 DyLoad 數據
+            auto dataInfo = self->findSelectedDyLoadData(self, t1t2);
+
+            // 6. 執行每個 DC Load 的動態操作
+            for (DCLoad* dcLoad : createResult.dcLoads) {
+                int index = dcLoad->channelIndex();
+
+                self->executeDCDyLoadAction(
+                    dcLoad, action, index, dataInfo,
+                    vons,
+                    riseSlopeCCDH, fallSlopeCCDH,
+                    riseSlopeCCDL, fallSlopeCCDL,
+                    outputVoltages
+                    );
+            }
+
+            // 7. 清理資源（重用 handleLoad 的函數）
+            self->cleanupDCLoadResources(createResult.dcLoads, createResult.commMap);
+
+        } catch (const std::exception& ex) {
+            if (self) {
+                qWarning() << "[DynamicLoad] Exception:" << ex.what();
+            }
+        }
+    });
+}
+
+// 檢查 DyLoad 配置和選擇狀態
+bool Page3ViewModel::validateDyLoadConfiguration()
+{
+    if (m_page1Config.instruments.isEmpty()) {
+        MessageService::instance().showWarning("Error Message",
+                                               "No instrument settings have been loaded.\nPlease load the configuration first!");
+        emit forceOff(LoadKind::DyLoad);
+        return false;
+    }
+
+    if (m_selectedDyLoadText.trimmed().isEmpty()) {
+        MessageService::instance().showWarning("Error Message",
+                                               "No dynamic load conditions selected.\nPlease select dynamic load conditions first!");
+        emit forceOff(LoadKind::DyLoad);
+        return false;
+    }
+
+    return true;
+}
+
+// 尋找選定的 DyLoad 數據行
+struct DyLoadDataInfo {
+    QVector<QString> values;
+    QString t1t2;      // 時間參數
+    bool found = false;
+};
+
+Page3ViewModel::DyLoadDataInfo Page3ViewModel::findSelectedDyLoadData(
+    QPointer<Page3ViewModel> self,
+    const QVector<QString>& t1t2Vector)
+{
+    DyLoadDataInfo info;
+
+    if (!self) return info;
+
+    auto it = std::find_if(self->m_DynamicRowsData.begin(),
+                           self->m_DynamicRowsData.end(),
+                           [&](const DynamicDataRow& row) {
+                               return row.label == self->m_selectedDyLoadText;
+                           });
+
+    if (it != self->m_DynamicRowsData.end()) {
+        info.values = it->values;
+
+        // 從 t1t2 獲取時間數據
+        int rowIndex = std::distance(self->m_DynamicRowsData.begin(), it);
+        if (rowIndex >= 0 && rowIndex < t1t2Vector.size()) {
+            info.t1t2 = t1t2Vector[rowIndex].trimmed();
+        }
+
+        info.found = true;
+    }
+
+    return info;
+}
+
+// 執行單個 DC Load 的動態操作
+void Page3ViewModel::executeDCDyLoadAction(
+    DCLoad* dcLoad,
+    DyLoadAction action,
+    int index,
+    const DyLoadDataInfo& dataInfo,
+    const QVector<QString>& vons,
+    const QVector<QString>& riseSlopeCCDH,
+    const QVector<QString>& fallSlopeCCDH,
+    const QVector<QString>& riseSlopeCCDL,
+    const QVector<QString>& fallSlopeCCDL,
+    const QVector<QString>& outputVoltages)
+{
+    int realindex = dcLoad->realChannel();
+
+    // DyLoad Off：直接關閉
+    if (action == DyLoadAction::DyloadOff) {
+        dcLoad->setChannel(realindex);
+        dcLoad->setLoadOff();
+        return;
+    }
+
+    // DyLoad On 或 Change：需要設定參數
+    if (!dataInfo.found) return;
+    if (index <= 0 || index > dataInfo.values.size()) return;
+
+    QString strValue = dataInfo.values[index - 1].trimmed();
+    if (strValue.isEmpty()) return;
+
+    // 設定通道
+    dcLoad->setChannel(realindex);
+
+    // 應用所有動態負載設定
+    applyDyLoadSettings(dcLoad, index, strValue, dataInfo.t1t2,
+                        vons, riseSlopeCCDH, fallSlopeCCDH,
+                        riseSlopeCCDL, fallSlopeCCDL,
+                        outputVoltages);
+
+    // DyLoad On：開啟負載
+    if (action == DyLoadAction::DyLoadOn) {
+        dcLoad->setLoadOn();
+    }
 }

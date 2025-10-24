@@ -403,37 +403,9 @@ void DPO7000TriggerController::setupWorkerThread()
     m_worker->setStepScale(stepScale);
 
     // 設置觸發檢測參數
-    m_worker->setTriggerTimeout(3000);
-    m_worker->setMaxFailCount(3);
-    m_worker->setTriggerCheckInterval(100);
 
     connect(m_workerThread, &QThread::started,
             m_worker, &AutoTriggerWorker::startTracking);
-
-    // 實際最大值信號處理
-    connect(m_worker, &AutoTriggerWorker::actualMaximumFound,
-            this, [this](double actualMax) {
-                qDebug() << QString("[DPO7000TriggerController] Actual maximum found: %1V")
-                .arg(actualMax, 0, 'f', 3);
-
-                if (m_spinTrigLevel) {
-                    QSignalBlocker blocker(m_spinTrigLevel);
-                    m_spinTrigLevel->setValue(actualMax);
-                }
-
-                if (m_lblTrigStatus) {
-                    m_lblTrigStatus->setText(QString("MAX: %1V").arg(actualMax, 0, 'f', 1));
-                    m_lblTrigStatus->setStyleSheet(
-                        "QLabel { "
-                        "background: #ffaa00; "
-                        "color: #000000; "
-                        "border-radius: 7px; "
-                        "padding: 2px 10px; "
-                        "font-weight: bold; "
-                        "}"
-                        );
-                }
-            });
 
     connect(m_worker, &AutoTriggerWorker::targetReached,
             this, [this](double finalLevel) {

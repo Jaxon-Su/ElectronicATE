@@ -115,7 +115,7 @@ void Page1::setupLayout()
     relaySpinWidget->setLayout(relaySpinLayout);
     relaySpinWidget->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 
-    QWidget *leftContainer = new QWidget;
+    QWidget *leftContainer = new QWidget(this);
     QVBoxLayout *leftInnerLayout = new QVBoxLayout(leftContainer);
     leftInnerLayout->setSpacing(6);
     leftInnerLayout->setContentsMargins(0, 0, 0, 0);
@@ -162,6 +162,9 @@ void Page1::setupConnections()
 
 void Page1::setupTable()
 {
+    tableWidget->clear();
+    tableWidget->setRowCount(0);
+
     prepareTableStructure();
     buildConfigMap();
 

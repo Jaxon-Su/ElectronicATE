@@ -95,8 +95,10 @@ void Page2Model::XmlWriter::writeLoadTable(QXmlStreamWriter& w, const LoadMetaRo
     writeStringVector(w, "Name", meta.names);
     writeStringVector(w, "Vo", meta.vo);
     writeStringVector(w, "Von", meta.von);
-    writeStringVector(w, "RiseSlope", meta.riseSlope);
-    writeStringVector(w, "FallSlope", meta.fallSlope);
+    writeStringVector(w, "RiseSlopeCCH", meta.riseSlopeCCH);
+    writeStringVector(w, "FallSlopeCCH", meta.fallSlopeCCH);
+    writeStringVector(w, "RiseSlopeCCL", meta.riseSlopeCCL);
+    writeStringVector(w, "FallSlopeCCL", meta.fallSlopeCCL);
     w.writeEndElement(); // Meta
 
     // Rows
@@ -118,8 +120,10 @@ void Page2Model::XmlWriter::writeDynamicTable(QXmlStreamWriter& w, const Dynamic
     w.writeStartElement("Meta");
     writeStringVector(w, "Vo", meta.vo);
     writeStringVector(w, "Von", meta.von);
-    writeStringVector(w, "RiseSlope", meta.riseSlope);
-    writeStringVector(w, "FallSlope", meta.fallSlope);
+    writeStringVector(w, "RiseSlopeCCDH", meta.riseSlopeCCDH);
+    writeStringVector(w, "FallSlopeCCDH", meta.fallSlopeCCDH);
+    writeStringVector(w, "RiseSlopeCCDL", meta.riseSlopeCCDL);
+    writeStringVector(w, "FallSlopeCCDL", meta.fallSlopeCCDL);
     writeStringVector(w, "T1T2", meta.t1t2);
     w.writeEndElement(); // Meta
 
@@ -345,11 +349,17 @@ void Page2Model::XmlReader::readLoadMeta(QXmlStreamReader& r, LoadMetaRow& meta)
             else if (r.name() == "VonList") {
                 meta.von = readStringVector(r, "Von");
             }
-            else if (r.name() == "RiseSlopeList") {
-                meta.riseSlope = readStringVector(r, "RiseSlope");
+            else if (r.name() == "RiseSlopeCCHList") {
+                meta.riseSlopeCCH = readStringVector(r, "RiseSlopeCCH");
             }
-            else if (r.name() == "FallSlopeList") {
-                meta.fallSlope = readStringVector(r, "FallSlope");
+            else if (r.name() == "FallSlopeCCHList") {
+                meta.fallSlopeCCH = readStringVector(r, "FallSlopeCCH");
+            }
+            else if (r.name() == "RiseSlopeCCLList") {
+                meta.riseSlopeCCL = readStringVector(r, "RiseSlopeCCL");
+            }
+            else if (r.name() == "FallSlopeCCLList") {
+                meta.fallSlopeCCL = readStringVector(r, "FallSlopeCCL");
             }
         }
     }
@@ -371,11 +381,17 @@ void Page2Model::XmlReader::readDynamicMeta(QXmlStreamReader& r, DynamicMetaRow&
             else if (r.name() == "VonList") {
                 meta.von = readStringVector(r, "Von");
             }
-            else if (r.name() == "RiseSlopeList") {
-                meta.riseSlope = readStringVector(r, "RiseSlope");
+            else if (r.name() == "RiseSlopeCCDHList") {
+                meta.riseSlopeCCDH = readStringVector(r, "RiseSlopeCCDH");
             }
-            else if (r.name() == "FallSlopeList") {
-                meta.fallSlope = readStringVector(r, "FallSlope");
+            else if (r.name() == "FallSlopeCCDHList") {
+                meta.fallSlopeCCDH = readStringVector(r, "FallSlopeCCDH");
+            }
+            else if (r.name() == "RiseSlopeCCDLList") {
+                meta.riseSlopeCCDL = readStringVector(r, "RiseSlopeCCDL");
+            }
+            else if (r.name() == "FallSlopeCCDLList") {
+                meta.fallSlopeCCDL = readStringVector(r, "FallSlopeCCDL");
             }
             else if (r.name() == "T1T2List") {
                 meta.t1t2 = readStringVector(r, "T1T2");

@@ -108,7 +108,11 @@ if(QT_VERSION_MAJOR EQUAL 6)
     qt_finalize_executable(ElectronicATE)
 endif()
 
-# === 複製 XML 資料夾 ===============================================
+# ========================================
+# 編譯時自動複製資源（給開發用）
+# ========================================
+
+# 複製 XML 資料夾到 build 目錄（開發測試用）
 add_custom_command(TARGET ElectronicATE POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_SOURCE_DIR}/XML
@@ -116,7 +120,9 @@ add_custom_command(TARGET ElectronicATE POST_BUILD
     COMMENT "Copying XML folder to build directory"
 )
 
-# === Windows 自動部署 Qt DLL / plugins ===============================
+# ========================================
+# Windows 自動部署 Qt DLL / plugins
+# ========================================
 if(WIN32 AND NOT CMAKE_CROSSCOMPILING)
     # 尋找 windeployqt
     find_program(WINDEPLOYQT_EXECUTABLE
@@ -130,9 +136,10 @@ if(WIN32 AND NOT CMAKE_CROSSCOMPILING)
     if(WINDEPLOYQT_EXECUTABLE)
         message(STATUS "Found windeployqt: ${WINDEPLOYQT_EXECUTABLE}")
 
-        # 直接使用 POST_BUILD，不建立額外的 target
+        # 編譯後自動執行 windeployqt
         add_custom_command(TARGET ElectronicATE POST_BUILD
             COMMAND "${WINDEPLOYQT_EXECUTABLE}"
+                    --release
                     --no-translations
                     "$<TARGET_FILE:ElectronicATE>"
             WORKING_DIRECTORY "$<TARGET_FILE_DIR:ElectronicATE>"
@@ -144,3 +151,97 @@ if(WIN32 AND NOT CMAKE_CROSSCOMPILING)
         message(WARNING "After building, run: windeployqt.exe ElectronicATE.exe")
     endif()
 endif()
+
+# ========================================
+# 安裝規則（用於正式發布部署）
+# cmake --install . --prefix <目標資料夾>
+# ========================================
+
+# 1. 安裝執行檔
+install(TARGETS ElectronicATE
+    RUNTIME DESTINATION .
+    COMPONENT Application
+)
+
+# 2. 安裝 XML 資料夾（儀器設定檔）
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/XML
+    DESTINATION .
+    COMPONENT Resources
+    FILES_MATCHING PATTERN "*.xml"
+)
+
+# 3. 安裝 README 文件
+install(FILES ${CMAKE_SOURCE_DIR}/README.md
+    DESTINATION .
+    COMPONENT Documentation
+    RENAME README.txt
+)
+
+# 4. 安裝程式架構總覽（如果存在）
+install(FILES ${CMAKE_SOURCE_DIR}/程式架構總覽.txt
+    DESTINATION .
+    COMPONENT Documentation
+    OPTIONAL
+)
+
+# 5. 可選：安裝範例設定檔（如果有的話）
+# install(FILES
+#     ${CMAKE_SOURCE_DIR}/config-example.xml
+#     DESTINATION .
+#     COMPONENT Configuration
+#     OPTIONAL
+# )
+
+# 6. 可選：安裝圖片資源（如果執行時需要）
+# install(DIRECTORY ${CMAKE_SOURCE_DIR}/images
+#     DESTINATION .
+#     COMPONENT Resources
+#     FILES_MATCHING
+#     PATTERN "*.png"
+#     PATTERN "*.jpg"
+#     PATTERN "*.ico"
+# )
+
+# ========================================
+# 建立安裝後執行 windeployqt 的腳本
+# ========================================
+if(WIN32)
+    # 產生一個部署腳本
+    set(DEPLOY_SCRIPT "${CMAKE_BINARY_DIR}/deploy_qt.bat")
+    file(WRITE ${DEPLOY_SCRIPT}
+        "@echo off\n"
+        "echo Deploying Qt dependencies...\n"
+        "\"${WINDEPLOYQT_EXECUTABLE}\" --release --no-translations \"%~dp0\\ElectronicATE.exe\"\n"
+        "echo Qt deployment completed!\n"
+        "pause\n"
+    )
+
+    # 安裝部署腳本（可選）
+    install(FILES ${DEPLOY_SCRIPT}
+        DESTINATION .
+        COMPONENT Scripts
+        PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ
+        OPTIONAL
+    )
+endif()
+
+# ========================================
+# 顯示安裝資訊
+# ========================================
+message(STATUS "========================================")
+message(STATUS "ElectronicATE Build Configuration")
+message(STATUS "========================================")
+message(STATUS "Qt Version: ${QT_VERSION}")
+message(STATUS "Build Type: ${CMAKE_BUILD_TYPE}")
+message(STATUS "Source Dir: ${CMAKE_SOURCE_DIR}")
+message(STATUS "Binary Dir: ${CMAKE_BINARY_DIR}")
+message(STATUS "")
+message(STATUS "Development Build:")
+message(STATUS "  - XML folder will be copied to build directory")
+message(STATUS "  - windeployqt will run automatically after build")
+message(STATUS "")
+message(STATUS "Release Deployment:")
+message(STATUS "  1. cmake --build . --config Release")
+message(STATUS "  2. cmake --install . --prefix ../deploy")
+message(STATUS "  3. cd ../deploy && deploy_qt.bat")
+message(STATUS "========================================")

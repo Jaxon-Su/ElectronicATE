@@ -29,7 +29,7 @@ ElectronicATE 是一套用於自動化電子測試的軟體模板，支援多種
 - 預計支援多種儀器協議 (GPIB, TCP/IP, Serial)
 - 儀器組態XML設定自動保存/載入
 - 儲存設定檔案系統
-- MVVM - 主要架構模式UI資料與測試邏輯分離(View、Viewmodel、Model 與signal slot實作)
+- MVVM - 主要架構模式UI資料與測試邏輯分離(View/Viewmodel/Model與signal/slot實作)
 - OOP - 儀器架構採用物件導向繼承多型呼叫方法
 - 多執行緒 (QtConcurrent) 非阻塞儀器通訊
 - 目前支援 Chroma6310、DE-A3000AB、DPO7000設備
@@ -44,14 +44,6 @@ ElectronicATE 是一套用於自動化電子測試的軟體模板，支援多種
 2. 安裝 CMake
 3. 用 Qt Creator 或 CMake 指令建構
 4. 建議為window11系統(GUI設計風格)
-
-### 建構步驟
-```bash
-mkdir build
-cd build
-cmake ..
-cmake --build .
-```
 
 ---
 
@@ -80,7 +72,6 @@ ElectronicATE/
 - [ ] 增加更多儀器協議支援(AC Source、DC Load、Oscilloscope、Relay...etc)
 - [ ] 優化過長及嵌套程式碼
 - [ ] 完善錯誤處理機制
-- [ ] 新增測試報告匯出功能
 
 ---
 
