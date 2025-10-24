@@ -148,7 +148,7 @@ private:
     Page2ViewModel *vm = nullptr;
 
     // 常量
-    static constexpr int kMetaRowsLoad    = 6;
-    static constexpr int kMetaRowsDynamic = 4;
+    static constexpr int kMetaRowsLoad    = 8;
+    static constexpr int kMetaRowsDynamic = 6;
     static constexpr int kMetaRowsRelay   = 0;
 };

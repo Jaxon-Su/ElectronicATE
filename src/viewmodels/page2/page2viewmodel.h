@@ -92,8 +92,8 @@ signals:
 
 private:
     // Meta 行數常量
-    static constexpr int META_ROWS = 6;        // Load 表格
-    static constexpr int META_ROWS_Dy = 4;     // Dynamic 表格
+    static constexpr int META_ROWS = 8;        // Load 表格
+    static constexpr int META_ROWS_Dy = 6;     // Dynamic 表格
     static constexpr int META_ROWS_Relay = 0;  // Relay 表格
 
     int m_maxRelayOutput = 1;

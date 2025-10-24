@@ -90,8 +90,10 @@ void Page2::ensureLoadMetaRows(int maxOutput)
     createMetaHeaderLabel(tblLoad, 1, "Name");
     createMetaHeaderLabel(tblLoad, 2, "Vo");
     createMetaHeaderLabel(tblLoad, 3, "Von");
-    createMetaHeaderLabel(tblLoad, 4, "Rise Slope (A/μA)");
-    createMetaHeaderLabel(tblLoad, 5, "Fall Slope (A/μA)");
+    createMetaHeaderLabel(tblLoad, 4, "RiseSlope(CCH)");
+    createMetaHeaderLabel(tblLoad, 5, "FallSlope(CCH)");
+    createMetaHeaderLabel(tblLoad, 6, "RiseSlope(CCL)");
+    createMetaHeaderLabel(tblLoad, 7, "FallSlope(CCL)");
 
     const QStringList modes{"CC"};
 
@@ -108,7 +110,13 @@ void Page2::ensureLoadMetaRows(int maxOutput)
         for (int row = 1; row < kMetaRowsLoad; ++row) {
             if (tblLoad->cellWidget(row, col))
                 continue;
-            QChar tag = (row == 1) ? QChar() : QChar('d');
+            QChar tag;
+            if (row == 1) {
+                tag = QChar();  // Name 行無驗證器
+            }
+            else {
+                tag = 'd';  // Vo, Von, slope行使用單一數值驗證器
+            }
             makeLineEdit(tblLoad, row, col, tag, this, vm, LoadKind::Load);
         }
     }
@@ -121,13 +129,16 @@ void Page2::ensureDynamicMetaRows(int maxOutput)
 
     createMetaHeaderLabel(tblDynamic, 0, "Vo");
     createMetaHeaderLabel(tblDynamic, 1, "Von");
-    createMetaHeaderLabel(tblDynamic, 2, "Rise Slope (A/μA)");
-    createMetaHeaderLabel(tblDynamic, 3, "Fall Slope (A/μA)");
+    createMetaHeaderLabel(tblDynamic, 2, "RiseSlope(CCDH)");
+    createMetaHeaderLabel(tblDynamic, 3, "FallSlope(CCDH)");
+    createMetaHeaderLabel(tblDynamic, 4, "RiseSlope(CCDL)");
+    createMetaHeaderLabel(tblDynamic, 5, "FallSlope(CCDL)");
 
     for (int col = 1; col <= maxOutput; ++col) {
         for (int row = 0; row < kMetaRowsDynamic; ++row) {
             if (!tblDynamic->cellWidget(row, col)) {
-                makeLineEdit(tblDynamic, row, col, 'd', this, vm, LoadKind::DyLoad);
+                QChar tag= 'd';  // Vo, Von,slope 行使用單一數值驗證器
+                makeLineEdit(tblDynamic, row, col, tag, this, vm, LoadKind::DyLoad);
             }
         }
     }
@@ -386,8 +397,10 @@ void Page2::syncLoadTable()
     meta.names = extractMetaRowValues(tblLoad, 1, maxOutput);
     meta.vo = extractMetaRowValues(tblLoad, 2, maxOutput);
     meta.von = extractMetaRowValues(tblLoad, 3, maxOutput);
-    meta.riseSlope = extractMetaRowValues(tblLoad, 4, maxOutput);
-    meta.fallSlope = extractMetaRowValues(tblLoad, 5, maxOutput);
+    meta.riseSlopeCCH = extractMetaRowValues(tblLoad, 4, maxOutput);
+    meta.fallSlopeCCH = extractMetaRowValues(tblLoad, 5, maxOutput);
+    meta.riseSlopeCCL = extractMetaRowValues(tblLoad, 6, maxOutput);
+    meta.fallSlopeCCL = extractMetaRowValues(tblLoad, 7, maxOutput);
 
     emit loadMetaChanged(meta);
 
@@ -424,8 +437,10 @@ void Page2::syncDynamicTable()
     DynamicMetaRow dmeta;
     dmeta.vo = extractMetaRowValues(tblDynamic, 0, dMaxOutput);
     dmeta.von = extractMetaRowValues(tblDynamic, 1, dMaxOutput);
-    dmeta.riseSlope = extractMetaRowValues(tblDynamic, 2, dMaxOutput);
-    dmeta.fallSlope = extractMetaRowValues(tblDynamic, 3, dMaxOutput);
+    dmeta.riseSlopeCCDH = extractMetaRowValues(tblDynamic, 2, dMaxOutput);
+    dmeta.fallSlopeCCDH = extractMetaRowValues(tblDynamic, 3, dMaxOutput);
+    dmeta.riseSlopeCCDL = extractMetaRowValues(tblDynamic, 4, dMaxOutput);
+    dmeta.fallSlopeCCDL = extractMetaRowValues(tblDynamic, 5, dMaxOutput);
 
     // T1~T2 固定在最後一欄
     int t1t2Col = dMaxOutput + 1;
@@ -592,7 +607,7 @@ void Page2::ensureT1T2ColumnSetup(int t1t2Col)
 {
     // 設置欄位寬度
     tblDynamic->horizontalHeader()->setSectionResizeMode(t1t2Col, QHeaderView::Fixed);
-    tblDynamic->setColumnWidth(t1t2Col, 100);
+    tblDynamic->setColumnWidth(t1t2Col, 80);
 
     // 清理並設置 Meta 行的 T1~T2 欄位為不可編輯
     for (int row = 0; row < kMetaRowsDynamic; ++row) {
@@ -622,7 +637,7 @@ void Page2::setupTableHeaders(LoadKind kind, const QStringList &headers)
     tbl->setHorizontalHeaderLabels(headers);
 
     tbl->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
-    tbl->setColumnWidth(0, 110);
+    tbl->setColumnWidth(0, 100);
 
     for (int col = 1; col < tbl->columnCount(); ++col) {
         tbl->horizontalHeader()->setSectionResizeMode(col, QHeaderView::Fixed);
@@ -859,7 +874,7 @@ void Page2::fillLoadMetaRows(int maxOutput, int metaRows)
 {
     const auto& meta = vm->loadMeta();
     auto metaRowVals = std::vector<QVector<QString>>{
-        meta.modes, meta.names, meta.vo, meta.von, meta.riseSlope, meta.fallSlope
+        meta.modes, meta.names, meta.vo, meta.von, meta.riseSlopeCCH, meta.fallSlopeCCH, meta.riseSlopeCCL, meta.fallSlopeCCL
     };
 
     for (int row = 0; row < metaRows; ++row) {
@@ -989,7 +1004,7 @@ void Page2::fillDynamicMetaRows(int dMaxOutput)
     int dMetaRows = kMetaRowsDynamic;
     const auto& dmeta = vm->dynamicMeta();
     auto dmetaRowVals = std::vector<QVector<QString>>{
-        dmeta.vo, dmeta.von, dmeta.riseSlope, dmeta.fallSlope
+        dmeta.vo, dmeta.von, dmeta.riseSlopeCCDH, dmeta.fallSlopeCCDH, dmeta.riseSlopeCCDL, dmeta.fallSlopeCCDL
     };
 
     for (int row = 0; row < dMetaRows; ++row) {
@@ -1003,8 +1018,9 @@ void Page2::fillDynamicMetaCell(int row, int col, const QVector<QString>& values
 {
     QLineEdit* le = qobject_cast<QLineEdit*>(tblDynamic->cellWidget(row, col + 1));
     if (!le) {
+        QChar tag = 'd';  // Vo, Von 行使用單一數值驗證器
 
-        le = makeLineEdit(tblDynamic, row, col + 1, 'd', this, vm, LoadKind::DyLoad);
+        le = makeLineEdit(tblDynamic, row, col + 1, tag, this, vm, LoadKind::DyLoad);
     }
     QSignalBlocker block(le);
     le->setText(col < values.size() ? values[col] : "");

@@ -74,3 +74,30 @@ private:
     void lockTriggerControls(bool lock);
     QList<QWidget*> getTriggerControlWidgets() const;
 };
+
+// ## 實際執行流程
+
+//     ### **完整調用鏈**
+// ```
+//     1. Page1 配置改變
+//    ↓
+//     2. Page3ViewModel::onPage1ConfigChanged()
+//    → createOscilloscopes()  // 創建示波器對象
+//    ↓
+//     3. Page3::onPage1ConfigChanged()
+//    → setTriggerModel("DPO7000")
+//    → createTriggerWidget()
+//    ↓
+//     4. TriggerWidgetFactory::createTriggerWidget()
+//    → 創建 DPO7000TriggerWidget (UI)
+//    → TriggerControllerFactory::createTriggerController()
+//       → new DPO7000TriggerController()  // 具體類
+//       → 返回 AbstractTriggerController* // 基類指標
+//    ↓
+//     5. Page3 發射信號
+//    → emit triggerWidgetCreated("DPO7000", controller)
+//    ↓
+//     6. Page3ViewModel::onTriggerWidgetCreated()
+//    → m_currentTriggerController = controller;  // 保存基類指標
+// → connectTriggerController()
+//       → controller->setInstrument(oscilloscope);  // 多態調用

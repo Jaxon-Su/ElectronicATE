@@ -7,10 +7,10 @@
 #include "page1config.h"
 #include "page2config.h"
 #include "dcload.h"
+#include "acsource.h"
 #include <QXmlStreamWriter>
 #include <QXmlStreamReader>
 #include "oscilloscope.h"
-#include "oscilloscopefactory.h"
 #include "abstracttriggercontroller.h"
 
 enum class InputAction { PowerOn, PowerOff, Change };
@@ -44,21 +44,56 @@ public:
     // 負載設定方法
     void applyLoadSettings(DCLoad* dcLoad,
                            int index,
-                           double currval,
+                           double value,
                            const QString& mode,
                            const QVector<QString>& vons,
-                           const QVector<QString>& riseSlope,
-                           const QVector<QString>& fallSlope,
+                           const QVector<QString>& riseSlopeCCH,
+                           const QVector<QString>& fallSlopeCCH,
+                           const QVector<QString>& riseSlopeCCL,
+                           const QVector<QString>& fallSlopeCCL,
                            const QVector<QString>& outputVoltages);
+
+
+    void applyLoadVonSetting(DCLoad* dcLoad,
+                             const int &index,
+                             const QVector<QString>& vons);
+
+    void applyLoadSlopeSetting(DCLoad* dcLoad,
+                               int index,
+                               const QVector<QString>& riseSlopeCCH,
+                               const QVector<QString>& fallSlopeCCH,
+                               const QVector<QString>& riseSlopeCCL,
+                               const QVector<QString>& fallSlopeCCL);
+
+    void applyLoadValueSettings(DCLoad* dcLoad,
+                           int index,
+                           double value,
+                           const QString& mode,
+                           const QVector<QString>& outputVoltages);
+
 
     void applyDyLoadSettings(DCLoad* dcLoad,
                              int index,
-                             const QString& currval,
+                             const QString& value,
                              const QString& dyTime,
-                             const QString& mode,
                              const QVector<QString>& vons,
-                             const QVector<QString>& riseSlope,
-                             const QVector<QString>& fallSlope,
+                             const QVector<QString>& riseSlopeCCDH,
+                             const QVector<QString>& fallSlopeCCDH,
+                             const QVector<QString>& riseSlopeCCDL,
+                             const QVector<QString>& fallSlopeCCDL,
+                             const QVector<QString>& outputVoltages);
+
+    void applyDyLoadSlopeSetting(DCLoad* dcLoad,
+                               int index,
+                               const QVector<QString>& riseSlopeCCDH,
+                               const QVector<QString>& fallSlopeCCDH,
+                               const QVector<QString>& riseSlopeCCDL,
+                               const QVector<QString>& fallSlopeCCDL);
+
+    void applyDyLoadValueSettings(DCLoad* dcLoad,
+                             int index,
+                             const QString& value,
+                             const QString& dyTime,
                              const QVector<QString>& outputVoltages);
 
 public slots:
@@ -139,6 +174,94 @@ private:
     void cleanupOscilloscopes();
     void connectTriggerController();
     void cleanupTriggerResources();
+
+    // handleInput相關輔助函數
+    bool validateInputConfiguration();
+
+    struct ACSourceCreationResult {
+        ACSource* source = nullptr;
+        ICommunication* comm = nullptr;
+        bool success = false;
+    };
+
+    ACSourceCreationResult createACSource(const Page1Config& cfg, QPointer<Page3ViewModel> self);
+
+    struct InputParameters {
+        double voltage = 0.0;
+        double frequency = 0.0;
+        double phase = 0.0;
+        bool valid = false;
+    };
+    InputParameters parseInputText(const QString& inputText);
+
+    void executeACSourceAction(ACSource* source, InputAction action, const InputParameters& params);
+    void cleanupACSourceResources(ACSource* source, ICommunication* comm);
+
+    // handleLoad 相關輔助函數
+    bool validateLoadConfiguration();
+
+    struct LoadDataInfo {
+        QVector<QString> values;
+        bool found = false;
+    };
+
+    LoadDataInfo findSelectedLoadData(QPointer<Page3ViewModel> self);
+
+    void executeDCLoadAction(
+        DCLoad* dcLoad,
+        LoadAction action,
+        int index,
+        const LoadDataInfo& dataInfo,
+        const QVector<QString>& modes,
+        const QVector<QString>& vons,
+        const QVector<QString>& riseSlopeCCH,
+        const QVector<QString>& fallSlopeCCH,
+        const QVector<QString>& riseSlopeCCL,
+        const QVector<QString>& fallSlopeCCL,
+        const QVector<QString>& outputVoltages);
+
+
+
+    // handleDyLoad 相關輔助函數
+
+    bool validateDyLoadConfiguration();
+
+    struct DyLoadDataInfo {
+        QVector<QString> values;
+        QString t1t2;
+        bool found = false;
+    };
+    DyLoadDataInfo findSelectedDyLoadData(QPointer<Page3ViewModel> self,
+                                          const QVector<QString>& t1t2Vector);
+
+    void executeDCDyLoadAction(
+        DCLoad* dcLoad,
+        DyLoadAction action,
+        int index,
+        const DyLoadDataInfo& dataInfo,
+        const QVector<QString>& vons,
+        const QVector<QString>& riseSlopeCCDH,
+        const QVector<QString>& fallSlopeCCDH,
+        const QVector<QString>& riseSlopeCCDL,
+        const QVector<QString>& fallSlopeCCDL,
+        const QVector<QString>& outputVoltages);
+
+    // handleLoad、handleDyLoad共用
+
+    struct DCLoadCreationResult {
+        QVector<DCLoad*> dcLoads;
+        QMap<QString, ICommunication*> commMap;
+        bool success = false;
+    };
+
+    void cleanupDCLoadResources(
+        QVector<DCLoad*>& dcLoads,
+        QMap<QString, ICommunication*>& commMap);
+
+    DCLoadCreationResult createDCLoads(const Page1Config& cfg,
+                                       QPointer<Page3ViewModel> self,
+                                       LoadKind kind);
+
 
 signals:
     void headersChanged(const QStringList &hdr);

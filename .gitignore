@@ -1,4 +1,6 @@
+# ============================================================
 # 1. 編譯產生的 build 資料夾
+# ============================================================
 build/
 build/*
 build/**/*
@@ -15,14 +17,21 @@ bin/
 *.app
 *.dylib
 
+# ============================================================
 # 2. Qt 產生的自動檔案
+# ============================================================
 *.moc
 moc_*
 *.qrc.depends
 *.qrc.cpp
 *.autosave
+ui_*.h
+qrc_*.cpp
+*.qm
 
+# ============================================================
 # 3. CMake 相關
+# ============================================================
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
@@ -31,33 +40,6 @@ Makefile
 *.user.*
 *.pro.user.*
 *.qbs.user.*
-
-# 4. Visual Studio 相關（有裝VS外掛就加）
-*.sln
-*.vcxproj*
-*.ncb
-*.suo
-*.opendb
-
-# 5. Qt Creator 產生的設定
-*.pro.user
-*.pro.user.*
-*.qmake.stash
-*.qmlproject.user
-*.creator.*
-*.creator
-
-# 6. 其它
-*.log
-*.tmp
-*.bak
-*.swp
-*.DS_Store
-Thumbs.db
-
-# 7. Python, Node.js 或其它工具（有用才加）
-__pycache__/
-node_modules/
 
 # CMake / Ninja 產物
 build.ninja
@@ -72,12 +54,14 @@ Testing/
 *_autogen/
 *_autogen/*
 
-# Qt 工具產物
-ui_*.h
-qrc_*.cpp
-*.qm
-
-# 產物/中介 (Windows/MSVC/MinGW)
+# ============================================================
+# 4. Visual Studio 相關
+# ============================================================
+*.sln
+*.vcxproj*
+*.ncb
+*.suo
+*.opendb
 *.pdb
 *.ipdb
 *.iobj
@@ -86,11 +70,38 @@ qrc_*.cpp
 *.manifest
 *.rsp
 
-# 常見 IDE 設定
+# ============================================================
+# 5. Qt Creator 產生的設定
+# ============================================================
+*.pro.user
+*.pro.user.*
+*.qmake.stash
+*.qmlproject.user
+*.creator.*
+*.creator
+
+# Qt Creator build 資料夾
+**/Desktop_*/
+Desktop_*/
+**/Qt_*/
+Qt_*/
+
+# ============================================================
+# 6. IDE 設定檔
+# ============================================================
 .vscode/
 .idea/
 *.code-workspace
 
-# Qt Creator build 資料夾（任何位置）
-**/Desktop_*/
-Desktop_*/
+# ============================================================
+# 7. 其它常見檔案
+# ============================================================
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo
+*.DS_Store
+Thumbs.db
+*~
+# ============================================================

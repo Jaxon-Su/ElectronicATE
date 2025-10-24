@@ -55,8 +55,10 @@ void Page3Model::writeLoadData(QXmlStreamWriter& w) const
     writeStringList(w, "Names", "Name", m_LoadMetaData.names);
     writeStringList(w, "Vo", "Value", m_LoadMetaData.vo);
     writeStringList(w, "Von", "Value", m_LoadMetaData.von);
-    writeStringList(w, "RiseSlope", "Value", m_LoadMetaData.riseSlope);
-    writeStringList(w, "FallSlope", "Value", m_LoadMetaData.fallSlope);
+    writeStringList(w, "RiseSlopeCCH", "Value", m_LoadMetaData.riseSlopeCCH);
+    writeStringList(w, "FallSlopeCCH", "Value", m_LoadMetaData.fallSlopeCCH);
+    writeStringList(w, "RiseSlopeCCL", "Value", m_LoadMetaData.riseSlopeCCL);
+    writeStringList(w, "FallSlopeCCL", "Value", m_LoadMetaData.fallSlopeCCL);
     w.writeEndElement();
 
     // Rows
@@ -74,9 +76,12 @@ void Page3Model::writeDynamicData(QXmlStreamWriter& w) const
 {
     // Meta
     w.writeStartElement("DynamicMetaData");
+    writeStringList(w, "Vo", "Value", m_DynamicMetaData.vo);
     writeStringList(w, "Von", "Value", m_DynamicMetaData.von);
-    writeStringList(w, "RiseSlope", "Value", m_DynamicMetaData.riseSlope);
-    writeStringList(w, "FallSlope", "Value", m_DynamicMetaData.fallSlope);
+    writeStringList(w, "RiseSlopeCCDH", "Value", m_DynamicMetaData.riseSlopeCCDH);
+    writeStringList(w, "FallSlopeCCDH", "Value", m_DynamicMetaData.fallSlopeCCDH);
+    writeStringList(w, "RiseSlopeCCDL", "Value", m_DynamicMetaData.riseSlopeCCDL);
+    writeStringList(w, "FallSlopeCCDL", "Value", m_DynamicMetaData.fallSlopeCCDL);
     w.writeEndElement();
 
     // Rows
@@ -198,11 +203,17 @@ void Page3Model::readLoadMetaData(QXmlStreamReader& r)
             else if (r.name() == "Von") {
                 m_LoadMetaData.von = readStringList(r, "Von", "Value");
             }
-            else if (r.name() == "RiseSlope") {
-                m_LoadMetaData.riseSlope = readStringList(r, "RiseSlope", "Value");
+            else if (r.name() == "RiseSlopeCCH") {
+                m_LoadMetaData.riseSlopeCCH = readStringList(r, "RiseSlopeCCH", "Value");
             }
-            else if (r.name() == "FallSlope") {
-                m_LoadMetaData.fallSlope = readStringList(r, "FallSlope", "Value");
+            else if (r.name() == "FallSlopeCCH") {
+                m_LoadMetaData.fallSlopeCCH = readStringList(r, "FallSlopeCCH", "Value");
+            }
+            else if (r.name() == "RiseSlopeCCL") {
+                m_LoadMetaData.riseSlopeCCL = readStringList(r, "RiseSlopeCCL", "Value");
+            }
+            else if (r.name() == "FallSlopeCCL") {
+                m_LoadMetaData.fallSlopeCCL = readStringList(r, "FallSlopeCCL", "Value");
             }
         }
     }
@@ -242,14 +253,23 @@ void Page3Model::readDynamicMetaData(QXmlStreamReader& r)
         if (r.isEndElement() && r.name() == "DynamicMetaData") break;
 
         if (r.isStartElement()) {
+            if (r.name() == "Vo") {
+                m_DynamicMetaData.vo = readStringList(r, "Vo", "Value");
+            }
             if (r.name() == "Von") {
                 m_DynamicMetaData.von = readStringList(r, "Von", "Value");
             }
-            else if (r.name() == "RiseSlope") {
-                m_DynamicMetaData.riseSlope = readStringList(r, "RiseSlope", "Value");
+            else if (r.name() == "RiseSlopeCCDH") {
+                m_DynamicMetaData.riseSlopeCCDH = readStringList(r, "RiseSlopeCCDH", "Value");
             }
-            else if (r.name() == "FallSlope") {
-                m_DynamicMetaData.fallSlope = readStringList(r, "FallSlope", "Value");
+            else if (r.name() == "FallSlopeCCDH") {
+                m_DynamicMetaData.fallSlopeCCDH = readStringList(r, "FallSlopeCCDH", "Value");
+            }
+            else if (r.name() == "RiseSlopeCCDL") {
+                m_DynamicMetaData.riseSlopeCCDL = readStringList(r, "RiseSlopeCCDL", "Value");
+            }
+            else if (r.name() == "FallSlopeCCDL") {
+                m_DynamicMetaData.fallSlopeCCDL = readStringList(r, "FallSlopeCCDL", "Value");
             }
         }
     }
