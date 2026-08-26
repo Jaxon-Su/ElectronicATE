@@ -6,5 +6,6 @@
         <file>images/control.png</file>
         <file>images/error.png</file>
         <file>images/tasks.png</file>
+        <file>images/queue.png</file>
     </qresource>
 </RCC>

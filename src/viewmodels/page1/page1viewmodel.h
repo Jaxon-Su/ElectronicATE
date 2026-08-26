@@ -5,11 +5,12 @@
 #include <QList>
 #include "page1model.h"
 #include "page1config.h"
+#include "ixmlserializable.h"
 
 class Page1Model;
 struct Page1Config;
 
-class Page1ViewModel : public QObject {
+class Page1ViewModel : public QObject, public IXmlSerializable {
     Q_OBJECT
 public:
     explicit Page1ViewModel(Page1Model *model, QObject *parent = nullptr);
@@ -24,8 +25,9 @@ public:
     QSet<int>           channelsOfModel(const QString &modelName) const;
     bool                hasChannelInterface(const QString &instName) const;
 
-    void writeXml(QXmlStreamWriter& writer) const;
-    void loadXml(QXmlStreamReader& reader);
+    QString xmlTagName() const override { return "Page1"; }
+    void writeXml(QXmlStreamWriter& writer) const override;
+    void loadXml(QXmlStreamReader& reader) override;
 
 public slots:
     void setLoadOutputs(int value);

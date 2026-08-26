@@ -14,6 +14,7 @@ void Page3Model::writeXml(QXmlStreamWriter& writer) const
     writeCurrentSelections(writer);
     writeLoadData(writer);
     writeDynamicData(writer);
+    writeRelayData(writer);
 
     writer.writeEndElement(); // Page3
 }
@@ -52,13 +53,10 @@ void Page3Model::writeLoadData(QXmlStreamWriter& w) const
     // Meta
     w.writeStartElement("LoadMetaData");
     writeStringList(w, "Modes", "Mode", m_LoadMetaData.modes);
+    writeStringList(w, "Ranges", "Range", m_LoadMetaData.ranges);
     writeStringList(w, "Names", "Name", m_LoadMetaData.names);
     writeStringList(w, "Vo", "Value", m_LoadMetaData.vo);
     writeStringList(w, "Von", "Value", m_LoadMetaData.von);
-    writeStringList(w, "RiseSlopeCCH", "Value", m_LoadMetaData.riseSlopeCCH);
-    writeStringList(w, "FallSlopeCCH", "Value", m_LoadMetaData.fallSlopeCCH);
-    writeStringList(w, "RiseSlopeCCL", "Value", m_LoadMetaData.riseSlopeCCL);
-    writeStringList(w, "FallSlopeCCL", "Value", m_LoadMetaData.fallSlopeCCL);
     w.writeEndElement();
 
     // Rows
@@ -76,12 +74,10 @@ void Page3Model::writeDynamicData(QXmlStreamWriter& w) const
 {
     // Meta
     w.writeStartElement("DynamicMetaData");
+    writeStringList(w, "Ranges", "Range", m_DynamicMetaData.ranges);
     writeStringList(w, "Vo", "Value", m_DynamicMetaData.vo);
     writeStringList(w, "Von", "Value", m_DynamicMetaData.von);
-    writeStringList(w, "RiseSlopeCCDH", "Value", m_DynamicMetaData.riseSlopeCCDH);
-    writeStringList(w, "FallSlopeCCDH", "Value", m_DynamicMetaData.fallSlopeCCDH);
-    writeStringList(w, "RiseSlopeCCDL", "Value", m_DynamicMetaData.riseSlopeCCDL);
-    writeStringList(w, "FallSlopeCCDL", "Value", m_DynamicMetaData.fallSlopeCCDL);
+    writeStringList(w, "T1T2", "Value", m_DynamicMetaData.t1t2);
     w.writeEndElement();
 
     // Rows
@@ -124,6 +120,9 @@ void Page3Model::loadXml(QXmlStreamReader& reader)
             }
             else if (reader.name() == "DynamicRowsData") {
                 readDynamicRowsData(reader);
+            }
+            else if (reader.name() == "RelayRowsData") {
+                readRelayData(reader);
             }
         }
     }
@@ -194,6 +193,9 @@ void Page3Model::readLoadMetaData(QXmlStreamReader& r)
             if (r.name() == "Modes") {
                 m_LoadMetaData.modes = readStringList(r, "Modes", "Mode");
             }
+            else if (r.name() == "Ranges") {
+                m_LoadMetaData.ranges = readStringList(r, "Ranges", "Range");
+            }
             else if (r.name() == "Names") {
                 m_LoadMetaData.names = readStringList(r, "Names", "Name");
             }
@@ -202,18 +204,6 @@ void Page3Model::readLoadMetaData(QXmlStreamReader& r)
             }
             else if (r.name() == "Von") {
                 m_LoadMetaData.von = readStringList(r, "Von", "Value");
-            }
-            else if (r.name() == "RiseSlopeCCH") {
-                m_LoadMetaData.riseSlopeCCH = readStringList(r, "RiseSlopeCCH", "Value");
-            }
-            else if (r.name() == "FallSlopeCCH") {
-                m_LoadMetaData.fallSlopeCCH = readStringList(r, "FallSlopeCCH", "Value");
-            }
-            else if (r.name() == "RiseSlopeCCL") {
-                m_LoadMetaData.riseSlopeCCL = readStringList(r, "RiseSlopeCCL", "Value");
-            }
-            else if (r.name() == "FallSlopeCCL") {
-                m_LoadMetaData.fallSlopeCCL = readStringList(r, "FallSlopeCCL", "Value");
             }
         }
     }
@@ -253,23 +243,17 @@ void Page3Model::readDynamicMetaData(QXmlStreamReader& r)
         if (r.isEndElement() && r.name() == "DynamicMetaData") break;
 
         if (r.isStartElement()) {
+            if (r.name() == "Ranges") {
+                m_DynamicMetaData.ranges = readStringList(r, "Ranges", "Range");
+            }
             if (r.name() == "Vo") {
                 m_DynamicMetaData.vo = readStringList(r, "Vo", "Value");
             }
             if (r.name() == "Von") {
                 m_DynamicMetaData.von = readStringList(r, "Von", "Value");
             }
-            else if (r.name() == "RiseSlopeCCDH") {
-                m_DynamicMetaData.riseSlopeCCDH = readStringList(r, "RiseSlopeCCDH", "Value");
-            }
-            else if (r.name() == "FallSlopeCCDH") {
-                m_DynamicMetaData.fallSlopeCCDH = readStringList(r, "FallSlopeCCDH", "Value");
-            }
-            else if (r.name() == "RiseSlopeCCDL") {
-                m_DynamicMetaData.riseSlopeCCDL = readStringList(r, "RiseSlopeCCDL", "Value");
-            }
-            else if (r.name() == "FallSlopeCCDL") {
-                m_DynamicMetaData.fallSlopeCCDL = readStringList(r, "FallSlopeCCDL", "Value");
+            if (r.name() == "T1T2") {
+                m_DynamicMetaData.t1t2 = readStringList(r, "T1T2", "Value");
             }
         }
     }
@@ -352,4 +336,40 @@ QVector<QString> Page3Model::readStringList(QXmlStreamReader& r, const QString& 
     }
 
     return result;
+}
+
+void Page3Model::writeRelayData(QXmlStreamWriter& w) const
+{
+    w.writeStartElement("RelayRowsData");
+    for (const auto& row : m_RelayRowsData) {
+        w.writeStartElement("Row");
+        w.writeAttribute("label", row.label);
+        // 使用現有的工具函數寫入數值列表
+        writeStringList(w, "Values", "Val", row.values);
+        w.writeEndElement(); // Row
+    }
+    w.writeEndElement(); // RelayRowsData
+}
+
+void Page3Model::readRelayData(QXmlStreamReader& r)
+{
+    m_RelayRowsData.clear();
+    while (!r.atEnd()) {
+        r.readNext();
+        if (r.isEndElement() && r.name() == "RelayRowsData") break;
+
+        if (r.isStartElement() && r.name() == "Row") {
+            RelayDataRow row;
+            row.label = r.attributes().value("label").toString();
+            // 讀取內部列表
+            while(!r.atEnd()) {
+                r.readNext();
+                if(r.isStartElement() && r.name() == "Values") {
+                    row.values = readStringList(r, "Values", "Val");
+                }
+                if(r.isEndElement() && r.name() == "Row") break;
+            }
+            m_RelayRowsData.append(row);
+        }
+    }
 }

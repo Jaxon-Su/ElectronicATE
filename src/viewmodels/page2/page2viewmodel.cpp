@@ -1,4 +1,5 @@
 #include "page2viewmodel.h"
+#include "dcloadfactory.h"
 #include <QRegularExpression>
 #include <QEvent>
 #include <QLineEdit>
@@ -7,7 +8,43 @@
 #include <QFile>
 #include <QXmlStreamWriter>
 #include <QXmlStreamReader>
+#include <algorithm>
+#include <cmath>
 #include "page2model.h"
+
+namespace {
+
+bool parseNumberWithOptionalUnit(QString text, QChar unit, double& value)
+{
+    text = text.trimmed();
+    text.remove(QRegularExpression(R"(\s+)"));
+
+    if (text.endsWith(unit, Qt::CaseInsensitive))
+        text.chop(1);
+
+    bool ok = false;
+    value = text.toDouble(&ok);
+    return ok;
+}
+
+bool parseCvDataValue(const QString& text, double& voltage, double& currentLimit)
+{
+    const QStringList parts = text.split('/', Qt::SkipEmptyParts);
+    if (parts.size() != 2)
+        return false;
+
+    return parseNumberWithOptionalUnit(parts[0], 'V', voltage)
+           && parseNumberWithOptionalUnit(parts[1], 'A', currentLimit);
+}
+
+bool parseMaxCurrentInRange(const QString& text, double& value)
+{
+    const QStringList parts = text.split(QRegularExpression("[~～]"), Qt::SkipEmptyParts);
+    const QString currentText = parts.isEmpty() ? text : parts.last();
+    return parseNumberWithOptionalUnit(currentText, 'A', value);
+}
+
+} // namespace
 
 Page2ViewModel::Page2ViewModel(Page2Model* model, QObject *parent)
     : QObject(parent), m_model(model)
@@ -20,7 +57,9 @@ void Page2ViewModel::setMaxOutput(int maxOutput)
 {
     if (maxOutput <= 0) return;
 
-    // 強制調整 Load Meta 資料長度一致
+    const bool outputCountChanged = (m_maxOutput != maxOutput);
+    m_maxOutput = maxOutput;
+
     auto& meta = m_model->loadMeta;
     auto resizeVec = [maxOutput](QVector<QString>& v) {
         while (v.size() < maxOutput) v.append(QString());
@@ -29,35 +68,28 @@ void Page2ViewModel::setMaxOutput(int maxOutput)
     resizeVec(meta.names);
     resizeVec(meta.vo);
     resizeVec(meta.modes);
+    resizeVec(meta.ranges);
     resizeVec(meta.von);
-    resizeVec(meta.riseSlopeCCH);
-    resizeVec(meta.fallSlopeCCH);
-    resizeVec(meta.riseSlopeCCL);
-    resizeVec(meta.fallSlopeCCL);
 
-    // 同步調整 Dynamic Meta 資料長度（包含 vo 欄位）
     auto& dmeta = m_model->dynamicMeta;
+    resizeVec(dmeta.ranges);
     resizeVec(dmeta.vo);
     resizeVec(dmeta.von);
-    resizeVec(dmeta.riseSlopeCCDH);
-    resizeVec(dmeta.fallSlopeCCDH);
-    resizeVec(dmeta.riseSlopeCCDL);
-    resizeVec(dmeta.fallSlopeCCDL);
 
-    // 發出表頭變更信號
-    QStringList headers{ "Output" };
-    for (int i = 1; i <= maxOutput; ++i)
-        headers << QString("Index%1").arg(i);
+    QStringList headers    = TableHeaderBuilder::buildIndexHeaders(maxOutput);
+    QStringList loadHeaders = headers; loadHeaders << "Power";
+    QStringList dynHeaders  = headers; dynHeaders  << "T1~T2 (ms)" << "Power";
 
-    QStringList loadHeaders = headers;
-    loadHeaders << "Power";
-    QStringList dynHeaders = headers;
-    dynHeaders << "T1~T2 (s)";
-
-    emit headersChanged(LoadKind::Load, loadHeaders);
-    emit headersChanged(LoadKind::DyLoad, dynHeaders);
+    if (outputCountChanged) {
+        emit headersChanged(TableKind::Load, loadHeaders);
+        emit headersChanged(TableKind::DyLoad, dynHeaders);
+    }
 
     broadcastAllPowers();
+    broadcastAllDynamicPowers();
+
+    emit loadMetaStructChanged(m_model->loadMeta);
+    emit dynamicMetaStructChanged(m_model->dynamicMeta);
 }
 
 // 設置 Relay 表格的輸出數量
@@ -65,37 +97,48 @@ void Page2ViewModel::setMaxRelayOutput(int maxRelayOutput)
 {
     if (maxRelayOutput <= 0) return;
 
+    const bool outputCountChanged = (m_maxRelayOutput != maxRelayOutput);
     m_maxRelayOutput = maxRelayOutput;
 
-    QStringList relayHeaders{ "Relay" };
-    for (int i = 1; i <= maxRelayOutput; ++i)
-        relayHeaders << QString("Index%1").arg(i);
+    for (auto& row : m_model->relayRows) {
+        while (row.values.size() < maxRelayOutput)
+            row.values.append("off");
+        if (row.values.size() > maxRelayOutput)
+            row.values.resize(maxRelayOutput);
+    }
 
-    emit headersChanged(LoadKind::Relay, relayHeaders);
+    QStringList relayHeaders = TableHeaderBuilder::buildRelayHeaders(maxRelayOutput);
+
+    if (outputCountChanged)
+        emit headersChanged(TableKind::Relay, relayHeaders);
+    emit relayRowsStructChanged(m_model->relayRows);
 }
 
-// 添加行（根據表格類型生成對應的驗證器標籤）
-void Page2ViewModel::addRow(LoadKind kind)
+// 添加行
+void Page2ViewModel::addRow(TableKind kind)
 {
     QStringList tags;
 
     switch (kind) {
-    case LoadKind::Input:
-        tags << "double" << "double" << "double";
+    case TableKind::Input:
+        tags << "phaseMode" << "double" << "double" << "double";
         break;
-    case LoadKind::Relay: {
+    case TableKind::Dc:
+        tags << "d";
+        break;
+    case TableKind::Relay: {
         int relayOutputs = maxRelayOutput();
         for (int i = 0; i < relayOutputs; ++i)
             tags << "combo";
         break;
     }
-    case LoadKind::Load: {
+    case TableKind::Load: {
         int loadOutputs = maxOutput();
         for (int i = 0; i < loadOutputs; ++i)
-            tags << "d";
+            tags << "l";
         break;
     }
-    case LoadKind::DyLoad: {
+    case TableKind::DyLoad: {
         int dynOutputs = maxOutput();
         for (int i = 0; i < dynOutputs; ++i)
             tags << "r";
@@ -105,69 +148,50 @@ void Page2ViewModel::addRow(LoadKind kind)
 
     emit rowAddRequested(kind, tags);
 
-    // 通知標題列表變更（供 Page3 使用）
-    if (kind == LoadKind::Input)
-        emit TitleListChanged(LoadKind::Input, TitleList(LoadKind::Input));
-    if (kind == LoadKind::Relay)
-        emit TitleListChanged(LoadKind::Relay, TitleList(LoadKind::Relay));
-    if (kind == LoadKind::Load)
-        emit TitleListChanged(LoadKind::Load, TitleList(LoadKind::Load));
-    if (kind == LoadKind::DyLoad)
-        emit TitleListChanged(LoadKind::DyLoad, TitleList(LoadKind::DyLoad));
+    // 通知標題列表變更
+    emit titleListChanged(kind, TitleList(kind));
 }
 
-// 刪除最後一行
-void Page2ViewModel::removeRow(LoadKind kind)
+void Page2ViewModel::removeRow(TableKind kind)
 {
     emit rowRemoveRequested(kind);
-
-    // 通知標題列表變更
-    if (kind == LoadKind::Input)
-        emit TitleListChanged(LoadKind::Input, TitleList(LoadKind::Input));
-    if (kind == LoadKind::Relay)
-        emit TitleListChanged(LoadKind::Relay, TitleList(LoadKind::Relay));
-    if (kind == LoadKind::Load)
-        emit TitleListChanged(LoadKind::Load, TitleList(LoadKind::Load));
-    if (kind == LoadKind::DyLoad)
-        emit TitleListChanged(LoadKind::DyLoad, TitleList(LoadKind::DyLoad));
+    emit titleListChanged(kind, TitleList(kind));
 }
 
 // 單元格值變更處理
-void Page2ViewModel::cellValueChanged(LoadKind kind,
+void Page2ViewModel::cellValueChanged(TableKind kind,
                                       int row, int col,
                                       const QString &text)
 {
     switch (kind) {
-    case LoadKind::Input:
-        // 更新 Input 標題顯示
+    case TableKind::Input:
         emit inputTitleChanged(row, QString());
         break;
 
-    case LoadKind::Relay: {
-        // 只在數據行的 label 變動時更新標題列表
+    case TableKind::Dc:
+        emit titleListChanged(TableKind::Dc, TitleList(TableKind::Dc));
+        break;
+
+    case TableKind::Relay: {
         if (row >= META_ROWS_Relay && col == 0) {
-            emit TitleListChanged(LoadKind::Relay, TitleList(LoadKind::Relay));
+            emit titleListChanged(TableKind::Relay, TitleList(TableKind::Relay));
         }
         break;
     }
 
-    case LoadKind::Load: {
-        // row 1: Name 行
-        if (row == 1) {
-            // emit loadNameListChanged(loadNameList());
+    case TableKind::Load: {
+        if (row == 2) {
+            // Name 行
         }
-        // 數據行的 label 變動
         else if (row >= META_ROWS && col == 0) {
-            emit TitleListChanged(LoadKind::Load, TitleList(LoadKind::Load));
+            emit titleListChanged(TableKind::Load, TitleList(TableKind::Load));
         }
-        // row 2: Vo 行（影響所有 Power 計算）
-        else if (row == 2) {
+        else if (row == 0 || row == 3) {
             for (int r = 0; r < m_model->loadRows.size(); ++r) {
                 double p = calcRowPower(r);
                 emit powerUpdated(r + META_ROWS, p);
             }
         }
-        // 數據行值變動（只影響該行的 Power）
         else if (row >= META_ROWS) {
             int dataRow = row - META_ROWS;
             if (dataRow < m_model->loadRows.size()) {
@@ -178,10 +202,17 @@ void Page2ViewModel::cellValueChanged(LoadKind kind,
         break;
     }
 
-    case LoadKind::DyLoad: {
-        // 只在數據行的 label 變動時更新標題列表
+    case TableKind::DyLoad: {
         if (row >= META_ROWS_Dy && col == 0) {
-            emit TitleListChanged(LoadKind::DyLoad, TitleList(LoadKind::DyLoad));
+            emit titleListChanged(TableKind::DyLoad, TitleList(TableKind::DyLoad));
+        }
+        if (row == 1) {
+            for (int r = 0; r < m_model->dynamicRows.size(); ++r)
+                emit dynamicPowerUpdated(r + META_ROWS_Dy, calcDynamicRowPower(r));
+        } else if (row >= META_ROWS_Dy) {
+            int dataRow = row - META_ROWS_Dy;
+            if (dataRow < m_model->dynamicRows.size())
+                emit dynamicPowerUpdated(row, calcDynamicRowPower(dataRow));
         }
         break;
     }
@@ -191,34 +222,86 @@ void Page2ViewModel::cellValueChanged(LoadKind kind,
     }
 }
 
-// 計算指定數據行的功率（Power = Σ(Vo[i] * Value[i])）
+// 計算功率
 double Page2ViewModel::calcRowPower(int dataRow) const
 {
     if (dataRow < 0 || dataRow >= m_model->loadRows.size())
         return std::nan("");
 
-    const auto& vo = m_model->loadMeta.vo;
+    const auto& meta = m_model->loadMeta;
     const auto& rowVals = m_model->loadRows[dataRow].values;
-    int N = std::min(int(maxOutput()), std::min(int(vo.size()), int(rowVals.size())));
+    int N = std::min(int(maxOutput()), int(rowVals.size()));
 
-    // 檢查：如果每一組都是空的，返回 NaN
     bool allEmpty = true;
     for (int i = 0; i < N; ++i) {
-        if (!vo[i].trimmed().isEmpty() && !rowVals[i].trimmed().isEmpty()) {
+        if (!rowVals[i].trimmed().isEmpty()) {
             allEmpty = false;
             break;
         }
     }
     if (allEmpty) return std::nan("");
 
-    // 計算總功率
     double total = 0.0;
-    for (int i = 0; i < N; ++i)
-        total += vo[i].toDouble() * rowVals[i].toDouble();
+    bool hasPowerTerm = false;
+    for (int i = 0; i < N; ++i) {
+        const QString mode = (i < meta.modes.size() && !meta.modes[i].trimmed().isEmpty())
+                                 ? meta.modes[i].trimmed().toUpper()
+                                 : QStringLiteral("CC");
+
+        if (mode == "CV") {
+            double voltage = 0.0;
+            double currentLimit = 0.0;
+            if (!parseCvDataValue(rowVals[i], voltage, currentLimit))
+                continue;
+
+            total += voltage * currentLimit;
+            hasPowerTerm = true;
+        } else {
+            double value = 0.0;
+            const bool valueOk = parseNumberWithOptionalUnit(rowVals[i], 'A', value);
+            if (!valueOk) continue;
+
+            if (i >= meta.vo.size()) continue;
+            bool voOk = false;
+            const double vo = meta.vo[i].toDouble(&voOk);
+            if (!voOk) continue;
+            total += vo * value;
+            hasPowerTerm = true;
+        }
+    }
+    if (!hasPowerTerm) return std::nan("");
     return total;
 }
 
-// 廣播所有數據行的功率更新
+double Page2ViewModel::calcDynamicRowPower(int dataRow) const
+{
+    if (dataRow < 0 || dataRow >= m_model->dynamicRows.size())
+        return std::nan("");
+
+    const auto& meta = m_model->dynamicMeta;
+    const auto& rowVals = m_model->dynamicRows[dataRow].values;
+    int N = std::min(int(maxOutput()), int(rowVals.size()));
+
+    double total = 0.0;
+    bool hasPowerTerm = false;
+    for (int i = 0; i < N; ++i) {
+        double currentMax = 0.0;
+        if (!parseMaxCurrentInRange(rowVals[i], currentMax))
+            continue;
+
+        if (i >= meta.vo.size()) continue;
+        bool voOk = false;
+        const double vo = meta.vo[i].toDouble(&voOk);
+        if (!voOk) continue;
+
+        total += vo * currentMax;
+        hasPowerTerm = true;
+    }
+
+    if (!hasPowerTerm) return std::nan("");
+    return total;
+}
+
 void Page2ViewModel::broadcastAllPowers()
 {
     for (int r = 0; r < m_model->loadRows.size(); ++r) {
@@ -226,7 +309,13 @@ void Page2ViewModel::broadcastAllPowers()
     }
 }
 
-// 獲取 Load 的名稱列表
+void Page2ViewModel::broadcastAllDynamicPowers()
+{
+    for (int r = 0; r < m_model->dynamicRows.size(); ++r) {
+        emit dynamicPowerUpdated(r + META_ROWS_Dy, calcDynamicRowPower(r));
+    }
+}
+
 QStringList Page2ViewModel::loadNameList() const
 {
     QStringList result;
@@ -249,35 +338,35 @@ void Page2ViewModel::loadXml(QXmlStreamReader& reader)
     refreshUIOutputs();
 }
 
-// 刷新 UI 輸出（載入配置後調用）
 void Page2ViewModel::refreshUIOutputs()
 {
     setMaxOutput(maxOutput());
     setMaxRelayOutput(m_maxRelayOutput);
 }
 
-// 獲取指定表格的標題列表（供 Page3 ComboBox 使用）
-QStringList Page2ViewModel::TitleList(LoadKind type) const
+// 獲取標題列表
+QStringList Page2ViewModel::TitleList(TableKind type) const
 {
     QStringList titles;
     switch (type) {
-    case LoadKind::Input:
+    case TableKind::Input:
         for (const auto& row : m_model->inputRows) {
-            if (!row.vin.isEmpty() && !row.frequency.isEmpty() && !row.phase.isEmpty())
-                titles << QString("%1/%2/%3").arg(row.vin, row.frequency, row.phase);
-            else
-                titles << "";
+            titles << inputTitle(row);
         }
         break;
-    case LoadKind::Relay:
+    case TableKind::Dc:
+        for (const auto& row : m_model->dcRows)
+            titles << row.vin;
+        break;
+    case TableKind::Relay:
         for (const auto& row : m_model->relayRows)
             titles << row.label;
         break;
-    case LoadKind::Load:
+    case TableKind::Load:
         for (const auto& row : m_model->loadRows)
             titles << row.label;
         break;
-    case LoadKind::DyLoad:
+    case TableKind::DyLoad:
         for (const auto& row : m_model->dynamicRows)
             titles << row.label;
         break;
@@ -285,49 +374,140 @@ QStringList Page2ViewModel::TitleList(LoadKind type) const
     return titles;
 }
 
-// 獲取最大輸出數（取 names 和 vo 的最大值）
+QString Page2ViewModel::inputTitle(const InputRow& row)
+{
+    if (row.phaseMode.isEmpty() || row.vin.isEmpty() || row.frequency.isEmpty() || row.phase.isEmpty())
+        return {};
+
+    return QString("%1/%2/%3/%4").arg(row.phaseMode, row.vin, row.frequency, row.phase);
+}
+
 int Page2ViewModel::maxOutput() const {
-    return std::max(int(m_model->loadMeta.names.size()), int(m_model->loadMeta.vo.size()));
+    return std::max({int(m_model->loadMeta.modes.size()),
+                     int(m_model->loadMeta.ranges.size()),
+                     int(m_model->loadMeta.names.size()),
+                     int(m_model->loadMeta.vo.size()),
+                     int(m_model->loadMeta.von.size())});
+}
+
+QStringList Page2ViewModel::loadRangeOptions(int outputIndex, const QString& baseMode) const
+{
+    QStringList options{"Auto Range", "No Setting"};
+
+    if (outputIndex <= 0)
+        return options;
+
+    for (const auto& inst : m_page1Config.instruments) {
+        if (!inst.enabled || inst.type != "Load")
+            continue;
+
+        for (const auto& ch : inst.channels) {
+            if (ch.index != outputIndex || ch.subModel.trimmed().isEmpty())
+                continue;
+
+            const QStringList manualModes =
+                DCLoadFactory::supportedManualModes(ch.subModel.trimmed(), baseMode);
+            for (const auto& mode : manualModes) {
+                if (!options.contains(mode))
+                    options << mode;
+            }
+            return options;
+        }
+    }
+
+    return options;
+}
+
+QStringList Page2ViewModel::dynamicRangeOptions(int outputIndex) const
+{
+    QStringList options{"Auto Range", "No Setting"};
+
+    if (outputIndex <= 0)
+        return options;
+
+    for (const auto& inst : m_page1Config.instruments) {
+        if (!inst.enabled || inst.type != "Load")
+            continue;
+
+        for (const auto& ch : inst.channels) {
+            if (ch.index != outputIndex || ch.subModel.trimmed().isEmpty())
+                continue;
+
+            const QStringList manualModes =
+                DCLoadFactory::supportedDynamicManualModes(ch.subModel.trimmed());
+            for (const auto& mode : manualModes) {
+                if (!options.contains(mode))
+                    options << mode;
+            }
+            return options;
+        }
+    }
+
+    return options;
 }
 
 // 配置載入完成回調
 void Page2ViewModel::onConfigLoaded()
 {
     emit dataChanged();
+
+    emit inputRowsStructChanged(m_model->inputRows);
+    emit dcRowsStructChanged(m_model->dcRows);
+    emit relayRowsStructChanged(m_model->relayRows);
+    emit loadMetaStructChanged(m_model->loadMeta);
+    emit loadRowsStructChanged(m_model->loadRows);
+    emit dynamicMetaStructChanged(m_model->dynamicMeta);
+    emit dynamicRowsStructChanged(m_model->dynamicRows);
 }
 
-// ========== Model 數據設置（會發送結構變更信號）==========
+void Page2ViewModel::onPage1ConfigChanged(const Page1Config& cfg)
+{
+    m_page1Config = cfg;
+    emit dataChanged();
+}
+
+// ========== Model 數據設置 ==========
 
 void Page2ViewModel::setInputRows(const QVector<InputRow>& rows) {
     m_model->inputRows = rows;
     emit inputRowsStructChanged(rows);
-    emit TitleListChanged(LoadKind::Input, TitleList(LoadKind::Input));
+    emit titleListChanged(TableKind::Input, TitleList(TableKind::Input));
+}
+
+void Page2ViewModel::setDcRows(const QVector<DcRow>& rows) {
+    m_model->dcRows = rows;
+    emit dcRowsStructChanged(rows);
+    emit titleListChanged(TableKind::Dc, TitleList(TableKind::Dc));
 }
 
 void Page2ViewModel::setRelayRows(const QVector<RelayDataRow>& rows) {
     m_model->relayRows = rows;
     emit relayRowsStructChanged(rows);
-    emit TitleListChanged(LoadKind::Relay, TitleList(LoadKind::Relay));
+    emit titleListChanged(TableKind::Relay, TitleList(TableKind::Relay));
 }
 
 void Page2ViewModel::setLoadMeta(const LoadMetaRow& meta) {
     m_model->loadMeta = meta;
     emit loadMetaStructChanged(meta);
-    emit TitleListChanged(LoadKind::Load, TitleList(LoadKind::Load));
+    emit titleListChanged(TableKind::Load, TitleList(TableKind::Load));
 }
 
 void Page2ViewModel::setLoadRows(const QVector<LoadDataRow>& rows) {
     m_model->loadRows = rows;
     emit loadRowsStructChanged(rows);
+    emit titleListChanged(TableKind::Load, TitleList(TableKind::Load));
 }
 
 void Page2ViewModel::setDynamicMeta(const DynamicMetaRow& meta) {
     m_model->dynamicMeta = meta;
     emit dynamicMetaStructChanged(meta);
-    emit TitleListChanged(LoadKind::DyLoad, TitleList(LoadKind::DyLoad));
+    emit titleListChanged(TableKind::DyLoad, TitleList(TableKind::DyLoad));
+    broadcastAllDynamicPowers();
 }
 
 void Page2ViewModel::setDynamicRows(const QVector<DynamicDataRow>& rows) {
     m_model->dynamicRows = rows;
     emit dynamicRowsStructChanged(rows);
+    emit titleListChanged(TableKind::DyLoad, TitleList(TableKind::DyLoad));
+    broadcastAllDynamicPowers();
 }

@@ -36,7 +36,7 @@ void Page3::initializeUI()
 
     grpInput = new QGroupBox(tr("Input"));
     grpInput->setFont(QFont(font().family(), 9, QFont::Bold));
-    grpInput->setFixedWidth(168);
+    grpInput->setFixedWidth(200);
 
     // Load Group
     btnLoadOn  = createPushButton(tr("ON"));
@@ -51,7 +51,7 @@ void Page3::initializeUI()
 
     grpLoad = new QGroupBox(tr("Load"));
     grpLoad->setFont(QFont(font().family(), 9, QFont::Bold));
-    grpLoad->setFixedWidth(168);
+    grpLoad->setFixedWidth(200);
 
     // Dynamic Load Group
     btnDyloadOn  = createPushButton(tr("ON"));
@@ -60,8 +60,8 @@ void Page3::initializeUI()
     btnDyloadOn->setFixedSize(kBtnWidth, kBtnHeight);
     btnDyloadChg->setFixedSize(kBtnWidth, kBtnHeight);
 
-    chkDyload = new QCheckBox(tr("Synchronous"), this);
-    chkDyload->setObjectName("chkDyload");
+    // chkDyload = new QCheckBox(tr("Synchronous"), this);
+    // chkDyload->setObjectName("chkDyload");
 
     cmbDyload = new QComboBox(this);
     cmbDyload->setEditable(false);
@@ -69,7 +69,7 @@ void Page3::initializeUI()
 
     grpDyload = new QGroupBox(tr("Dynamic Load"));
     grpDyload->setFont(QFont(font().family(), 9, QFont::Bold));
-    grpDyload->setFixedWidth(168);
+    grpDyload->setFixedWidth(200);
 
     // Relay Group
     btnRelayOn  = createPushButton(tr("ON"));
@@ -84,17 +84,23 @@ void Page3::initializeUI()
 
     grpRelay = new QGroupBox(tr("Relay"));
     grpRelay->setFont(QFont(font().family(), 9, QFont::Bold));
-    grpRelay->setFixedWidth(168);
+    grpRelay->setFixedWidth(200);
 
     // Capture Group
-    btnPic = createPushButton(tr("Waveform"), "btnPic");
+    btnPic = createPushButton(tr("PNG"), "btnPic");
     btnCsv = createPushButton(tr("CSV"), "btnCsv");
+    btnAllCsv = createPushButton("AllCSV","btnAllCsv");
+    btnWfm = createPushButton(tr("WFM"), "btnWfm");
+
+    //btnAllCsv
     btnPic->setFixedSize(kBtnWidth, kBtnHeight);
     btnCsv->setFixedSize(kBtnWidth, kBtnHeight);
+    btnWfm->setFixedSize(kBtnWidth, kBtnHeight);
+    btnAllCsv->setFixedSize(kBtnWidth, kBtnHeight);
 
     grpCap = new QGroupBox(tr("Capture"));
     grpCap->setFont(QFont(font().family(), 9, QFont::Bold));
-    grpCap->setFixedWidth(168);
+    grpCap->setFixedWidth(200);
 
     // Table
     tblTop = new QTableWidget(this);
@@ -104,9 +110,6 @@ void Page3::initializeUI()
 
     // 控制區
     m_ctrlArea = new QWidget(this);
-    m_ctrlLay  = new QHBoxLayout(m_ctrlArea);
-    m_ctrlLay->setContentsMargins(0,0,0,0);
-    m_ctrlLay->setSpacing(0);
 }
 
 void Page3::buildLayout()
@@ -141,6 +144,8 @@ void Page3::buildLayout()
     rowCap->setSpacing(6);
     rowCap->addWidget(btnPic);
     rowCap->addWidget(btnCsv);
+    rowCap->addWidget(btnAllCsv);
+    rowCap->addWidget(btnWfm);
     layCap->addLayout(rowCap);
 
     // 左欄
@@ -173,7 +178,12 @@ void Page3::buildLayout()
     root->setContentsMargins(0,0,0,0);
     root->setSpacing(4);
     root->addWidget(leftFrame);
-    root->addWidget(rightFrame, 1);
+    root->addWidget(rightFrame, 1); /*伸展因子=1（佔據剩餘空間）*/
+
+    // 控制區
+    m_ctrlLay  = new QHBoxLayout(m_ctrlArea);
+    m_ctrlLay->setContentsMargins(0,0,0,0);
+    m_ctrlLay->setSpacing(0);
 }
 
 void Page3::setupConnections()
@@ -182,17 +192,23 @@ void Page3::setupConnections()
     connectToggleButton(btnInput, &Page3::inputToggled);
     connectToggleButton(btnLoadOn, &Page3::loadToggled);
     connectToggleButton(btnDyloadOn, &Page3::dyloadToggled);
+    connectToggleButton(btnRelayOn, &Page3::relayToggled);
 
     // ComboBox 選擇變更（使用輔助函數）
-    connectComboBox(cmbInput, LoadKind::Input);
-    connectComboBox(cmbLoad, LoadKind::Load);
-    connectComboBox(cmbDyload, LoadKind::DyLoad);
-    connectComboBox(cmbRelay, LoadKind::Relay);
+    connectComboBox(cmbInput, TableKind::Input);
+    connectComboBox(cmbLoad, TableKind::Load);
+    connectComboBox(cmbDyload, TableKind::DyLoad);
+    connectComboBox(cmbRelay, TableKind::Relay);
 
     // Change 按鈕連接（使用輔助函數）
     connectChangeButton(btnChange, &Page3::inputChanged);
     connectChangeButton(btnLoadChg, &Page3::loadChanged);
     connectChangeButton(btnDyloadChg, &Page3::dyloadChanged);
+    connectChangeButton(btnRelayChg, &Page3::relayChanged);
+    connectChangeButton(btnPic, &Page3::waveformCaptured);
+    connectChangeButton(btnCsv, &Page3::csvCaptured);
+    connectChangeButton(btnAllCsv, &Page3::allcsvCaptured);
+    connectChangeButton(btnWfm, &Page3::wfmCaptured);
 
     // Load/DyLoad 互鎖
     connect(btnLoadOn, &QPushButton::toggled, this, [this](bool) { loadLock(); });
@@ -206,17 +222,31 @@ void Page3::setupConnections()
     connect(this, &Page3::loadChanged, vm, &Page3ViewModel::onLoadChanged);
     connect(this, &Page3::dyloadToggled, vm, &Page3ViewModel::onDyloadToggled);
     connect(this, &Page3::dyloadChanged, vm, &Page3ViewModel::onDyLoadChanged);
+    connect(this, &Page3::relayToggled, vm, &Page3ViewModel::onRelayToggled);
+    connect(this, &Page3::relayChanged, vm, &Page3ViewModel::onRelayChanged);
 
     connect(vm, &Page3ViewModel::forceOff, this, &Page3::forceButtonOff);
     connect(vm, &Page3ViewModel::page1ConfigChanged, this, &Page3::onPage1ConfigChanged);
     connect(vm, &Page3ViewModel::headersChanged, this, &Page3::onHeadersChanged);
     connect(vm, &Page3ViewModel::rowLabelsChanged, this, &Page3::onRowLabelsChanged);
-    connect(vm, &Page3ViewModel::TitlesUpdated, this, &Page3::onTitlesUpdated);
+    connect(vm, &Page3ViewModel::titlesUpdated, this, &Page3::onTitlesUpdated);
     connect(vm, &Page3ViewModel::restoreSelections, this, &Page3::onRestoreSelections);
 
     // Trigger
     connect(this, &Page3::triggerWidgetCreated, vm, &Page3ViewModel::onTriggerWidgetCreated);
     connect(this, &Page3::triggerWidgetDestroyed, vm, &Page3ViewModel::onTriggerWidgetDestroyed);
+
+    // 示波器抓取相關
+    connect(this, &Page3::waveformCaptured, vm, &Page3ViewModel::OnWaveformCaptured);
+    connect(this, &Page3::csvCaptured, vm, &Page3ViewModel::OnCsvCaptured);
+    connect(this, &Page3::allcsvCaptured, vm, &Page3ViewModel::OnAllCsvCaptured);
+    connect(this, &Page3::wfmCaptured, vm, &Page3ViewModel::OnWfmCaptured);
+
+    // Sync dynamic
+    if (chkDyload) {
+        connect(chkDyload, &QCheckBox::toggled,
+                vm, &Page3ViewModel::onSyncChanged);
+    }
 }
 
 // ========== 連接輔助函數 ==========
@@ -232,11 +262,12 @@ void Page3::connectToggleButton(QPushButton* btn, void (Page3::*signal)(bool))
     connect(btn, &QPushButton::toggled, this, signal);
 }
 
-void Page3::connectComboBox(QComboBox* cmb, LoadKind kind)
+void Page3::connectComboBox(QComboBox* cmb, TableKind kind)
 {
     connect(cmb, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this, cmb, kind](int idx) {
-                emit selectedChanged(kind, idx, cmb->currentText());
+            this, [this, cmb, kind](int /*visualIdx*/) {
+                int realIdx = cmb->currentData().toInt();
+                emit selectedChanged(kind, realIdx, cmb->currentText());
             });
 }
 
@@ -360,14 +391,14 @@ void Page3::onRowLabelsChanged(const QStringList &names)
     tblTop->updateGeometry();
 }
 
-void Page3::onTitlesUpdated(LoadKind type, const QStringList& titles)
+void Page3::onTitlesUpdated(TableKind type, const QStringList& titles)
 {
     QComboBox* cmb = nullptr;
     switch (type) {
-    case LoadKind::Input:   cmb = cmbInput;   break;
-    case LoadKind::Load:    cmb = cmbLoad;    break;
-    case LoadKind::DyLoad:  cmb = cmbDyload;  break;
-    case LoadKind::Relay:   cmb = cmbRelay;   break;
+    case TableKind::Input:   cmb = cmbInput;   break;
+    case TableKind::Load:    cmb = cmbLoad;    break;
+    case TableKind::DyLoad:  cmb = cmbDyload;  break;
+    case TableKind::Relay:   cmb = cmbRelay;   break;
     default: return;
     }
     if (!cmb) return;
@@ -377,33 +408,38 @@ void Page3::onTitlesUpdated(LoadKind type, const QStringList& titles)
 
     QSignalBlocker blocker(cmb);
     cmb->clear();
-    for (const QString& t : titles) {
-        if (!t.trimmed().isEmpty())
-            cmb->addItem(t);
-    }
-
-    // 恢復選擇
-    if (currentIndex >= 0 && currentIndex < cmb->count()) {
-        cmb->setCurrentIndex(currentIndex);
-    } else if (!currentText.isEmpty()) {
-        int foundIndex = cmb->findText(currentText);
-        if (foundIndex >= 0) {
-            cmb->setCurrentIndex(foundIndex);
+    for (int i = 0; i < titles.size(); ++i) {
+        if (!titles[i].trimmed().isEmpty()) {
+            cmb->addItem(titles[i], i);  // userData = 實際 row index
         }
     }
 
+    // 恢復選擇（優先用文字比對，避免視覺位置偏移）
+    if (!currentText.isEmpty()) {
+        int foundIndex = cmb->findText(currentText);
+        if (foundIndex >= 0) {
+            cmb->setCurrentIndex(foundIndex);
+        } else if (currentIndex >= 0 && currentIndex < cmb->count()) {
+            cmb->setCurrentIndex(currentIndex);
+        }
+    } else if (currentIndex >= 0 && currentIndex < cmb->count()) {
+        cmb->setCurrentIndex(currentIndex);
+    }
+
     if (cmb->currentIndex() >= 0) {
-        emit selectedChanged(type, cmb->currentIndex(), cmb->currentText());
+        int realIdx = cmb->currentData().toInt();
+        emit selectedChanged(type, realIdx, cmb->currentText());
     }
 }
 
-void Page3::forceButtonOff(LoadKind type)
+void Page3::forceButtonOff(TableKind type)
 {
     QPushButton* btn = nullptr;
     switch (type) {
-    case LoadKind::Input:   btn = btnInput;     break;
-    case LoadKind::Load:    btn = btnLoadOn;    break;
-    case LoadKind::DyLoad:  btn = btnDyloadOn;  break;
+    case TableKind::Input:   btn = btnInput;     break;
+    case TableKind::Load:    btn = btnLoadOn;    break;
+    case TableKind::DyLoad:  btn = btnDyloadOn;  break;
+    case TableKind::Relay:   btn = btnRelayOn;  break;
     default: return;
     }
 
@@ -420,31 +456,29 @@ void Page3::forceButtonOff(LoadKind type)
 
 void Page3::setTriggerModel(const QString& modelName)
 {
-    qDebug() << "Start Page3::onPage1ConfigChanged setTriggerModel";
+    // qDebug() << "Start Page3::onPage1ConfigChanged setTriggerModel";
     if (m_currentTriggerModel != modelName) {
         m_currentTriggerModel = modelName;
     }
     createTriggerWidget();
 
-    qDebug() << "End Page3::onPage1ConfigChanged setTriggerModel";
+    // qDebug() << "End Page3::onPage1ConfigChanged setTriggerModel";
 }
 
 void Page3::createTriggerWidget()
 {
-    qDebug() << "Start Page3::onPage1ConfigChanged createTriggerWidget";
     // 移除舊的 trigger widget
     if (grpTrigger) {
-        // 先斷開信號
         if (m_triggerController) {
             m_triggerController->disconnect();
         }
 
-        // 刪除 widget（會自動刪除子控制器）
         delete grpTrigger;
         grpTrigger = nullptr;
-
-        // 清空指標（不要再次刪除）
         m_triggerController = nullptr;
+
+        //通知 ViewModel 控制器已被刪除
+        emit triggerWidgetDestroyed();
     }
 
     // 創建新的 trigger widget
@@ -458,12 +492,11 @@ void Page3::createTriggerWidget()
             }
         }
     }
-    qDebug() << "End Page3::onPage1ConfigChanged createTriggerWidget";
 }
 
 void Page3::onPage1ConfigChanged(const Page1Config &cfg)
 {
-    qDebug() << "Start Page3::onPage1ConfigChanged onPage1ConfigChanged";
+    // qDebug() << "Start Page3::onPage1ConfigChanged onPage1ConfigChanged";
     QString triggerModel;
     for (const auto& ic : cfg.instruments) {
         if (ic.type == "Oscilloscope" && ic.enabled) {
@@ -471,8 +504,8 @@ void Page3::onPage1ConfigChanged(const Page1Config &cfg)
             break;
         }
     }
-        setTriggerModel(triggerModel);
-    qDebug() << "End Page3::onPage1ConfigChanged onPage1ConfigChanged";
+    setTriggerModel(triggerModel);
+    // qDebug() << "End Page3::onPage1ConfigChanged onPage1ConfigChanged";
 }
 
 // ========== UI 同步 ==========
@@ -481,16 +514,17 @@ void Page3::syncUIToViewModel()
 {
     if (!vm) return;
 
-    auto syncCombo = [this](QComboBox* cmb, LoadKind kind) {
+    auto syncCombo = [this](QComboBox* cmb, TableKind kind) {
         if (cmb && cmb->currentIndex() >= 0 && cmb->currentIndex() < cmb->count()) {
-            emit selectedChanged(kind, cmb->currentIndex(), cmb->currentText());
+            int realIdx = cmb->currentData().toInt();
+            emit selectedChanged(kind, realIdx, cmb->currentText());
         }
     };
 
-    syncCombo(cmbInput, LoadKind::Input);
-    syncCombo(cmbLoad, LoadKind::Load);
-    syncCombo(cmbDyload, LoadKind::DyLoad);
-    syncCombo(cmbRelay, LoadKind::Relay);
+    syncCombo(cmbInput, TableKind::Input);
+    syncCombo(cmbLoad, TableKind::Load);
+    syncCombo(cmbDyload, TableKind::DyLoad);
+    syncCombo(cmbRelay, TableKind::Relay);
 }
 
 void Page3::resetUIFromViewModel()
@@ -498,21 +532,21 @@ void Page3::resetUIFromViewModel()
     if (!vm) return;
 
     QTimer::singleShot(50, this, [this]() {
-        restoreComboBoxSelection(LoadKind::Input, vm->getSelectedInputIndex(), vm->getSelectedInputText());
-        restoreComboBoxSelection(LoadKind::Load, vm->getSelectedLoadIndex(), vm->getSelectedLoadText());
-        restoreComboBoxSelection(LoadKind::DyLoad, vm->getSelectedDyLoadIndex(), vm->getSelectedDyLoadText());
-        restoreComboBoxSelection(LoadKind::Relay, vm->getSelectedRelayIndex(), vm->getSelectedRelayText());
+        restoreComboBoxSelection(TableKind::Input, vm->getSelectedInputIndex(), vm->getSelectedInputText());
+        restoreComboBoxSelection(TableKind::Load, vm->getSelectedLoadIndex(), vm->getSelectedLoadText());
+        restoreComboBoxSelection(TableKind::DyLoad, vm->getSelectedDyLoadIndex(), vm->getSelectedDyLoadText());
+        restoreComboBoxSelection(TableKind::Relay, vm->getSelectedRelayIndex(), vm->getSelectedRelayText());
     });
 }
 
-void Page3::restoreComboBoxSelection(LoadKind type, int index, const QString& text)
+void Page3::restoreComboBoxSelection(TableKind type, int index, const QString& text)
 {
     QComboBox* cmb = nullptr;
     switch (type) {
-    case LoadKind::Input:   cmb = cmbInput;   break;
-    case LoadKind::Load:    cmb = cmbLoad;    break;
-    case LoadKind::DyLoad:  cmb = cmbDyload;  break;
-    case LoadKind::Relay:   cmb = cmbRelay;   break;
+    case TableKind::Input:   cmb = cmbInput;   break;
+    case TableKind::Load:    cmb = cmbLoad;    break;
+    case TableKind::DyLoad:  cmb = cmbDyload;  break;
+    case TableKind::Relay:   cmb = cmbRelay;   break;
     default: return;
     }
 
@@ -520,13 +554,15 @@ void Page3::restoreComboBoxSelection(LoadKind type, int index, const QString& te
 
     QSignalBlocker blocker(cmb);
 
-    // 先按索引恢復
-    if (index >= 0 && index < cmb->count()) {
-        cmb->setCurrentIndex(index);
-        return;
+    // 先按 userData（真實 row index）查找
+    for (int i = 0; i < cmb->count(); ++i) {
+        if (cmb->itemData(i).toInt() == index) {
+            cmb->setCurrentIndex(i);
+            return;
+        }
     }
 
-    // 按文字查找
+    // 退而求其次，按文字查找
     if (!text.isEmpty()) {
         int foundIndex = cmb->findText(text);
         if (foundIndex >= 0) {
@@ -535,7 +571,7 @@ void Page3::restoreComboBoxSelection(LoadKind type, int index, const QString& te
     }
 }
 
-void Page3::onRestoreSelections(LoadKind type, int index, const QString& text)
+void Page3::onRestoreSelections(TableKind type, int index, const QString& text)
 {
     restoreComboBoxSelection(type, index, text);
 }

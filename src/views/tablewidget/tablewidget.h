@@ -1,10 +1,13 @@
 #pragma once
+
 #include <QWidget>
 #include <QTabWidget>
-#include "page1.h"
-#include "page2.h"
-#include "page3.h"
-#include "page4.h"
+
+class Page1;
+class Page2;
+class Page3;
+class Page4;
+class Page5;
 
 class TableWidget : public QWidget {
     Q_OBJECT
@@ -17,18 +20,27 @@ public:
     void setPage2(Page2* page);
     void setPage3(Page3* page);
     void setPage4(Page4* page);
+    void setPage5(Page5* page);
+
+    // 取得 TabWidget（如需要外部存取）
+    QTabWidget* tabWidget() const { return m_tabWidget; }
+
+    // 執行中鎖定其他 tab，只保留 keepIndex 可點擊
+    void setOtherTabsLocked(bool locked, int keepIndex);
 
 private:
-    QTabWidget* m_tabWidget;
-    Page1* m_page1;
-    Page2* m_page2;
-    Page3* m_page3;
-    Page4* m_page4;
+    QTabWidget* m_tabWidget = nullptr;
+
+    // 頁面指標
+    Page1* m_page1 = nullptr;
+    Page2* m_page2 = nullptr;
+    Page3* m_page3 = nullptr;
+    Page4* m_page4 = nullptr;
+    Page5* m_page5 = nullptr;
 
     void setupUI();
-    // void setupTabWidget();
-};
 
-// 管理 QTabWidget 的頁簽
-// 提供頁面設定介面（setPage1/2/3）
-// 處理 UI 樣式（背景色、圖示大小）
+    template<typename T>
+    void setPageInternal(T*& currentPage, T* newPage,
+                         const QString& iconPath, const QString& title);
+};

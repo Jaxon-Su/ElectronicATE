@@ -1,0 +1,7 @@
+示波器Trigger目標 : 尋找Max Min Rms Mean
+
+觸發方式: edge 正緣 負緣 正負緣
+
+Static Test、Dynamic Test >> Normal trigger直到示波器無法觸發 >> STOP。
+
+

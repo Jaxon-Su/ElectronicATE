@@ -29,10 +29,10 @@ public:
 public slots:
     void onHeadersChanged(const QStringList &hdr);
     void onRowLabelsChanged(const QStringList &lbl);
-    void onTitlesUpdated(LoadKind type, const QStringList& titles);
+    void onTitlesUpdated(TableKind type, const QStringList& titles);
     void onPage1ConfigChanged(const Page1Config &cfg);
-    void onRestoreSelections(LoadKind type, int index, const QString& text);
-    void forceButtonOff(LoadKind type);
+    void onRestoreSelections(TableKind type, int index, const QString& text);
+    void forceButtonOff(TableKind type);
 
 signals:
     // 輸入控制信號
@@ -47,12 +47,22 @@ signals:
     void dyloadToggled(bool on);
     void dyloadChanged();
 
+    // Relay控制信號
+    void relayToggled(bool on);
+    void relayChanged();
+
     // 選擇變更（統一信號）
-    void selectedChanged(LoadKind type, int index, const QString& text);
+    void selectedChanged(TableKind type, int index, const QString& text);
 
     // Trigger 相關
     void triggerWidgetCreated(const QString& modelName, QObject* triggerController);
     void triggerWidgetDestroyed();
+
+    //示波器抓取相關
+    void waveformCaptured();
+    void csvCaptured();
+    void allcsvCaptured();
+    void wfmCaptured();
 
 private:
     // 初始化
@@ -63,7 +73,7 @@ private:
 
     // 連接輔助（減少重複代碼）
     void connectToggleButton(QPushButton* btn, void (Page3::*signal)(bool));
-    void connectComboBox(QComboBox* cmb, LoadKind kind);
+    void connectComboBox(QComboBox* cmb, TableKind kind);
     void connectChangeButton(QPushButton* btn, void (Page3::*signal)());
 
     // UI 輔助
@@ -75,7 +85,7 @@ private:
     void createTriggerWidget();
 
     // ComboBox 恢復
-    void restoreComboBoxSelection(LoadKind type, int index, const QString& text);
+    void restoreComboBoxSelection(TableKind type, int index, const QString& text);
 
 private:
     Page3ViewModel *vm = nullptr;
@@ -112,7 +122,13 @@ private:
     // UI 組件 - Capture Group
     QGroupBox   *grpCap     = nullptr;
     QPushButton *btnPic     = nullptr;
+    //單組CSV
     QPushButton *btnCsv     = nullptr;
+    //多組CSV
+    QPushButton *btnAllCsv     = nullptr;
+    //單組WFM
+    QPushButton *btnWfm     = nullptr;
+
 
     // UI 組件 - Trigger & Table
     QWidget*     grpTrigger = nullptr;
@@ -121,6 +137,6 @@ private:
     QHBoxLayout  *m_ctrlLay  = nullptr;
 
     // 常量
-    static constexpr int kBtnWidth  = 75;
-    static constexpr int kBtnHeight = 25;
+    static constexpr int kBtnWidth  = 90;
+    static constexpr int kBtnHeight = 27;
 };

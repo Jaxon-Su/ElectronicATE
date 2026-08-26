@@ -210,13 +210,22 @@ void Page1Model::writeInstruments(QXmlStreamWriter& writer) const {
     writer.writeEndElement(); // Instruments
 }
 
-void Page1Model::writeInstrument(QXmlStreamWriter& writer, const InstrumentConfig& ic) const {
+void Page1Model::writeInstrument(QXmlStreamWriter& writer, const InstrumentConfig& ic) const
+{
     writer.writeStartElement("Instrument");
     writer.writeAttribute("name", ic.name);
     writer.writeAttribute("type", ic.type);
     writer.writeAttribute("enabled", ic.enabled ? "true" : "false");
     writer.writeTextElement("ModelName", ic.modelName);
+
+    // 寫入地址（向後相容）
     writer.writeTextElement("Address", ic.address);
+
+    // 新增：寫入完整的通訊配置
+    if (ic.commConfig.isValid()) {
+        ic.commConfig.writeXml(writer);
+    }
+
     writeChannels(writer, ic);
     writer.writeEndElement(); // Instrument
 }
@@ -227,6 +236,10 @@ void Page1Model::writeChannels(QXmlStreamWriter& writer, const InstrumentConfig&
         writer.writeStartElement("Channel");
         writer.writeAttribute("subModel", ch.subModel);
         writer.writeAttribute("index", QString::number(ch.index));
+        if (ch.syncType >= 0 && ch.syncType <= 2) {
+            static const char* syncTypeNames[] = {"NONE", "MASTER", "SLAVE"};
+            writer.writeAttribute("syncType", syncTypeNames[ch.syncType]);
+        }
         writer.writeEndElement(); // Channel
     }
     writer.writeEndElement(); // Channels
@@ -245,28 +258,45 @@ void Page1Model::loadInstrumentsFromXml(QXmlStreamReader& reader, Page1Config& c
     }
 }
 
-InstrumentConfig Page1Model::loadInstrumentFromXml(QXmlStreamReader& reader) {
+InstrumentConfig Page1Model::loadInstrumentFromXml(QXmlStreamReader& reader)
+{
     InstrumentConfig ic;
     ic.name = reader.attributes().value("name").toString();
     ic.type = reader.attributes().value("type").toString();
     ic.enabled = (reader.attributes().value("enabled") == "true");
 
-    while (!(reader.isEndElement() && reader.name() == "Instrument")) {
+    while (!(reader.isEndElement() && reader.name() == QString("Instrument"))) {
         reader.readNext();
 
         if (!reader.isStartElement()) {
             continue;
         }
 
-        if (reader.name() == "ModelName") {
+        QString elementName = reader.name().toString();
+
+        if (elementName == "ModelName") {
             ic.modelName = reader.readElementText();
         }
-        else if (reader.name() == "Address") {
+        else if (elementName == "Address") {
             ic.address = reader.readElementText();
         }
-        else if (reader.name() == "Channels") {
+        else if (elementName == "CommunicationConfig") {
+            // 新增：讀取完整的通訊配置
+            ic.commConfig.readXml(reader);
+        }
+        else if (elementName == "Channels") {
             loadChannelsFromXml(reader, ic);
         }
+    }
+
+    // 如果沒有 CommunicationConfig，嘗試從 address 字串解析
+    if (!ic.commConfig.isValid() && !ic.address.isEmpty()) {
+        ic.commConfig = CommunicationConfig::fromResourceString(ic.address);
+    }
+
+    // 確保 address 與 commConfig 同步
+    if (ic.commConfig.isValid() && ic.address.isEmpty()) {
+        ic.address = ic.commConfig.toResourceString();
     }
 
     return ic;
@@ -280,6 +310,13 @@ void Page1Model::loadChannelsFromXml(QXmlStreamReader& reader, InstrumentConfig&
             ChannelSetting ch;
             ch.subModel = reader.attributes().value("subModel").toString();
             ch.index = reader.attributes().value("index").toInt();
+            const QString syncType = reader.attributes().value("syncType").toString().trimmed().toUpper();
+            if (syncType == "NONE" || syncType == "0")
+                ch.syncType = 0;
+            else if (syncType == "MASTER" || syncType == "MA" || syncType == "1")
+                ch.syncType = 1;
+            else if (syncType == "SLAVE" || syncType == "SL" || syncType == "2")
+                ch.syncType = 2;
             ic.channels.append(ch);
             reader.skipCurrentElement();
         }

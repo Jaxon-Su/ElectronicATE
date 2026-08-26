@@ -15,6 +15,7 @@ public:
     void loadXml(QXmlStreamReader& reader);
 
     QVector<InputRow>        inputRows;
+    QVector<DcRow>           dcRows;       // ★ 新增 DC Table 資料
     QVector<RelayDataRow>    relayRows;
     LoadMetaRow              loadMeta;
     QVector<LoadDataRow>     loadRows;
@@ -29,6 +30,7 @@ private:
     class XmlWriter {
     public:
         static void writeInputTable(QXmlStreamWriter& w, const QVector<InputRow>& rows);
+        static void writeDcTable(QXmlStreamWriter& w, const QVector<DcRow>& rows);  // ★ 新增
         static void writeRelayTable(QXmlStreamWriter& w, const QVector<RelayDataRow>& rows);
         static void writeLoadTable(QXmlStreamWriter& w, const LoadMetaRow& meta,
                                    const QVector<LoadDataRow>& rows);
@@ -46,6 +48,7 @@ private:
     class XmlReader {
     public:
         static void readInputTable(QXmlStreamReader& r, QVector<InputRow>& rows);
+        static void readDcTable(QXmlStreamReader& r, QVector<DcRow>& rows);  // ★ 新增
         static void readRelayTable(QXmlStreamReader& r, QVector<RelayDataRow>& rows);
         static void readLoadTable(QXmlStreamReader& r, LoadMetaRow& meta,
                                   QVector<LoadDataRow>& rows);
@@ -54,6 +57,7 @@ private:
 
     private:
         static InputRow readInputRow(QXmlStreamReader& r);
+        static DcRow readDcRow(QXmlStreamReader& r);           // ★ 新增
         static RelayDataRow readRelayDataRow(QXmlStreamReader& r);
         static LoadDataRow readLoadDataRow(QXmlStreamReader& r);
         static DynamicDataRow readDynamicDataRow(QXmlStreamReader& r);

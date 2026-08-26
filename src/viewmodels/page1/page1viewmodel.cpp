@@ -75,7 +75,16 @@ void Page1ViewModel::onConfigLoaded(const Page1Config &cfg)
 {
     buildTableRows(cfg);
     buildChannelList();
+
+    QList<InstrumentConfig> enrichedConfigs = cfg.instruments;
+    enrichConfigsWithChannelNumbers(enrichedConfigs);
+    Page1Config enrichedCfg = cfg;
+    enrichedCfg.instruments = enrichedConfigs;
+    if (m_model)
+        m_model->setInstrumentConfigs(enrichedConfigs);
+
     notifyViewModelReady();
+    emit configUpdated(enrichedCfg);
 }
 
 void Page1ViewModel::buildTableRows(const Page1Config &cfg)

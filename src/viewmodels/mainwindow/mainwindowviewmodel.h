@@ -2,17 +2,15 @@
 
 #include <QObject>
 #include <QString>
-#include "tablewidget.h"
+#include <QList>
+#include "ixmlserializable.h"
 
 class MainWindowModel;
-class Page1;
-class Page2;
-class Page3;
-class Page4;
 class Page1ViewModel;
 class Page2ViewModel;
 class Page3ViewModel;
 class Page4ViewModel;
+class Page5ViewModel;
 
 class MainWindowViewModel : public QObject {
     Q_OBJECT
@@ -21,8 +19,12 @@ public:
     explicit MainWindowViewModel(MainWindowModel* model, QObject* parent = nullptr);
     ~MainWindowViewModel();
 
-    // UI Widget 存取
-    TableWidget* getMainWidget() const { return m_mainWidget; }
+    // Getter
+    Page1ViewModel* page1ViewModel() const { return m_page1ViewModel; }
+    Page2ViewModel* page2ViewModel() const { return m_page2ViewModel; }
+    Page3ViewModel* page3ViewModel() const { return m_page3ViewModel; }
+    Page4ViewModel* page4ViewModel() const { return m_page4ViewModel; }
+    Page5ViewModel* page5ViewModel() const { return m_page5ViewModel; }
 
     // 檔案操作
     void saveConfig();
@@ -40,22 +42,15 @@ public slots:
 
 private:
     MainWindowModel* m_model;
-    TableWidget* m_mainWidget;
-
-    // Pages
-    Page1* m_page1;
-    Page2* m_page2;
-    Page3* m_page3;
-    Page4* m_page4;
 
     // 子 ViewModels
     Page1ViewModel* m_page1ViewModel;
     Page2ViewModel* m_page2ViewModel;
     Page3ViewModel* m_page3ViewModel;
     Page4ViewModel* m_page4ViewModel;
+    Page5ViewModel* m_page5ViewModel;
 
-    void initializePages();
     void initializeViewModels();
-    void initializeMainWidget();
     void setupPageConnections();
+    QList<IXmlSerializable*> xmlPages() const;
 };

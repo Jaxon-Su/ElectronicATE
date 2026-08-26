@@ -13,48 +13,71 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
 # 找 Qt
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Xml Network SerialPort Concurrent)
+find_package(QT NAMES Qt6 REQUIRED COMPONENTS Widgets Xml Network SerialPort Concurrent)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Widgets Xml Network SerialPort Concurrent)
 
 # 把所有子資料夾的 header 都加進來
 include_directories(
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/communication
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/delegate
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/style
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/widget
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/instrument/acsource
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/instrument/dcload
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/instrument/oscilloscope
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/data
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/controller
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/service
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/worker
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/hardware/communication
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/hardware/instrument/acsource
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/hardware/instrument/dcload
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/hardware/instrument/dcload/dcloadspec
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/hardware/instrument/oscilloscope
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/hardware/instrument/relay
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/hardware/instrument
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/hardware/InstrumentCreator
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/hardware/controller
+
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/delegate
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/style
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/widget
+
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/data
+
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/service/validators
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/service/message
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/service/app
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/service/inputparameters
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/service/instrumentexecutor
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/service/oscilloscopestrategy
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/service/capture
+
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/infrastructure/worker
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/infrastructure/datafinder
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/infrastructure/resourcecleaner
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/infrastructure/tableutils
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/infrastructure/debounce
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/service/oscilloscope
 
   ${CMAKE_CURRENT_SOURCE_DIR}/src/models/mainwindow
   ${CMAKE_CURRENT_SOURCE_DIR}/src/models/page1
   ${CMAKE_CURRENT_SOURCE_DIR}/src/models/page2
   ${CMAKE_CURRENT_SOURCE_DIR}/src/models/page3
   ${CMAKE_CURRENT_SOURCE_DIR}/src/models/page4
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/models/page5
 
   ${CMAKE_CURRENT_SOURCE_DIR}/src/viewmodels/mainwindow
   ${CMAKE_CURRENT_SOURCE_DIR}/src/viewmodels/page1
   ${CMAKE_CURRENT_SOURCE_DIR}/src/viewmodels/page2
   ${CMAKE_CURRENT_SOURCE_DIR}/src/viewmodels/page3
   ${CMAKE_CURRENT_SOURCE_DIR}/src/viewmodels/page4
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/viewmodels/page5
 
   ${CMAKE_CURRENT_SOURCE_DIR}/src/views/mainwindow
   ${CMAKE_CURRENT_SOURCE_DIR}/src/views/page1
   ${CMAKE_CURRENT_SOURCE_DIR}/src/views/page2
   ${CMAKE_CURRENT_SOURCE_DIR}/src/views/page3
   ${CMAKE_CURRENT_SOURCE_DIR}/src/views/page4
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/page5
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/page5/dialogs/oscilloscopedialogs
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/page5/dialogs/turnonoffdialogs
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/page5/dialogs/delaydialogs
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/page5/dialogs/relaydialogs
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/page5/dialogs/stressdialogs
   ${CMAKE_CURRENT_SOURCE_DIR}/src/views/tablewidget
 )
 
 # 自動蒐集所有來源檔案
-file(GLOB_RECURSE SHARED_SRC
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/shared/**/*.h"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/shared/**/*.cpp"
-)
 file(GLOB_RECURSE MODEL_SRC
   "${CMAKE_CURRENT_SOURCE_DIR}/src/models/**/*.h"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/models/**/*.cpp"
@@ -68,13 +91,42 @@ file(GLOB_RECURSE VIEW_SRC
   "${CMAKE_CURRENT_SOURCE_DIR}/src/views/**/*.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/views/**/*.ui"
 )
+file(GLOB_RECURSE HARDWARE_SRC
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/hardware/**/*.h"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/hardware/**/*.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/hardware/**/*.ui"
+)
+file(GLOB_RECURSE DATA_SRC
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/data/**/*.h"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/data/**/*.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/data/**/*.ui"
+)
+file(GLOB_RECURSE UI_SRC
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/**/*.h"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/**/*.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/**/*.ui"
+)
+file(GLOB_RECURSE INFRASTRUCTURE_SRC
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/infrastructure/**/*.h"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/infrastructure/**/*.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/infrastructure/**/*.ui"
+)
+file(GLOB_RECURSE SERVICE_SRC CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/service/**/*.h"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/service/**/*.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/service/**/*.ui"
+)
 
 set(PROJECT_SOURCES
   main.cpp
-  ${SHARED_SRC}
+  ${HARDWARE_SRC}
   ${MODEL_SRC}
   ${VIEWMODEL_SRC}
   ${VIEW_SRC}
+  ${DATA_SRC}
+  ${UI_SRC}
+  ${INFRASTRUCTURE_SRC}
+  ${SERVICE_SRC}
   resource.qrc
 )
 
@@ -139,7 +191,7 @@ if(WIN32 AND NOT CMAKE_CROSSCOMPILING)
         # 編譯後自動執行 windeployqt
         add_custom_command(TARGET ElectronicATE POST_BUILD
             COMMAND "${WINDEPLOYQT_EXECUTABLE}"
-                    --release
+                    # --release
                     --no-translations
                     "$<TARGET_FILE:ElectronicATE>"
             WORKING_DIRECTORY "$<TARGET_FILE_DIR:ElectronicATE>"

@@ -3,7 +3,6 @@
 #include <QWidget>
 #include <QMap>
 #include <QString>
-#include "page1model.h"
 #include "page1viewmodel.h"
 
 class QTableWidget;
@@ -13,6 +12,8 @@ class QGroupBox;
 class QVBoxLayout;
 class QComboBox;
 class Page1ViewModel;
+class QLabel;
+class QPushButton;
 
 class Page1 : public QWidget {
     Q_OBJECT
@@ -28,6 +29,7 @@ signals:
 private slots:
     void onInstrumentToggled(int state);
     void resetUIFromViewModel();
+    void onConfigButtonClicked();  // 新增：配置按鈕點擊處理
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
@@ -40,6 +42,11 @@ private:
     QGroupBox    *groupBox             {nullptr};
     QVBoxLayout  *checkboxLayout       {nullptr};
     QMap<QString, QCheckBox*> instrumentCheckboxes;
+    QLabel *label1;
+    QLabel *label2;
+    QWidget *loadSpinWidget;
+    QWidget *relaySpinWidget;
+    QWidget *leftContainer;
 
     // ==================== 資料成員 ====================
     Page1ViewModel *viewModel {nullptr};
@@ -47,12 +54,17 @@ private:
     struct RowWidgets {
         QComboBox *modelCb = nullptr;
         QComboBox *addrCb = nullptr;
+        QPushButton *configBtn = nullptr;  // 新增：配置按鈕
         QList<QComboBox*> subModelCbs;
         QList<QComboBox*> indexCbs;
+        QList<QComboBox*> syncRoleCbs;
     };
     QMap<QString, RowWidgets> m_instrumentWidgets;
     QMap<QString, InstrumentConfig> m_configMap;
     QMap<QString, QString> m_instrumentTypeCache;
+
+    // 新增：儲存每個儀器的通訊配置
+    QMap<QString, CommunicationConfig> m_commConfigMap;
 
     // ==================== 初始化函式 ====================
     void initializeUI();
@@ -75,16 +87,23 @@ private:
 
     // ==================== Widget 創建函式 ====================
     QComboBox* createModelComboBox(const QStringList &candidates, const QString &saved);
-    QComboBox* createAddressComboBox(const QString &saved);
+    QComboBox* createAddressComboBox(const InstrumentConfig &ic);  // 修改：傳入完整配置
+    QPushButton* createConfigButton(const QString &instName);      // 新增：創建配置按鈕
     QComboBox* createSubModelComboBox(const InstrumentConfig &ic, int channelIdx,
                                       bool enabled, const QStringList &validSubModels);
     QComboBox* createIndexComboBox(const InstrumentConfig &ic, int channelIdx,
                                    const QString &type, bool enabled);
+    QComboBox* createSyncRoleComboBox(const InstrumentConfig &ic, int channelIdx,
+                                      const QString &type, bool enabled);
 
     // ==================== 事件處理 ====================
     void connectModelChangeHandler(int row, const TableRowInfo &rowInfo, QComboBox *modelCb);
     void updateSubModelComboBox(int row, int col, bool enable, const QStringList &subList);
     void updateIndexComboBox(int row, int col, bool enable, const QString &type);
+    void updateSyncRoleComboBox(int row, int col, bool enable, const QString &type);
+
+    // 新增：開啟通訊配置對話框
+    void openCommConfigDialog(const QString &instName);
 
     // ==================== Index 管理 ====================
     void enforceUniqueIndices();

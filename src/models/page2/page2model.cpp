@@ -12,6 +12,7 @@ void Page2Model::writeXml(QXmlStreamWriter& writer) const
     writer.writeStartElement("Page2");
 
     XmlWriter::writeInputTable(writer, inputRows);
+    XmlWriter::writeDcTable(writer, dcRows);        // ★ 新增
     XmlWriter::writeRelayTable(writer, relayRows);
     XmlWriter::writeLoadTable(writer, loadMeta, loadRows);
     XmlWriter::writeDynamicTable(writer, dynamicMeta, dynamicRows);
@@ -22,6 +23,7 @@ void Page2Model::writeXml(QXmlStreamWriter& writer) const
 void Page2Model::loadXml(QXmlStreamReader& reader)
 {
     inputRows.clear();
+    dcRows.clear();             // ★ 新增
     relayRows.clear();
     loadMeta = {};
     loadRows.clear();
@@ -38,6 +40,9 @@ void Page2Model::loadXml(QXmlStreamReader& reader)
         if (reader.isStartElement()) {
             if (reader.name() == "InputTable") {
                 XmlReader::readInputTable(reader, inputRows);
+            }
+            else if (reader.name() == "DcTable") {     // ★ 新增
+                XmlReader::readDcTable(reader, dcRows); // ★ 新增
             }
             else if (reader.name() == "RelayTable") {
                 XmlReader::readRelayTable(reader, relayRows);
@@ -62,6 +67,7 @@ void Page2Model::XmlWriter::writeInputTable(QXmlStreamWriter& w, const QVector<I
 
     for (const auto& row : rows) {
         w.writeStartElement("Row");
+        w.writeTextElement("PhaseMode", row.phaseMode.isEmpty() ? QStringLiteral("1phase") : row.phaseMode);
         w.writeTextElement("Vin", row.vin);
         w.writeTextElement("Frequency", row.frequency);
         w.writeTextElement("Phase", row.phase);
@@ -69,6 +75,20 @@ void Page2Model::XmlWriter::writeInputTable(QXmlStreamWriter& w, const QVector<I
     }
 
     w.writeEndElement(); // InputTable
+}
+
+// ★ 新增：DC Table XML 寫入
+void Page2Model::XmlWriter::writeDcTable(QXmlStreamWriter& w, const QVector<DcRow>& rows)
+{
+    w.writeStartElement("DcTable");
+
+    for (const auto& row : rows) {
+        w.writeStartElement("Row");
+        w.writeTextElement("Vin", row.vin);
+        w.writeEndElement(); // Row
+    }
+
+    w.writeEndElement(); // DcTable
 }
 
 void Page2Model::XmlWriter::writeRelayTable(QXmlStreamWriter& w, const QVector<RelayDataRow>& rows)
@@ -92,13 +112,10 @@ void Page2Model::XmlWriter::writeLoadTable(QXmlStreamWriter& w, const LoadMetaRo
     // Meta
     w.writeStartElement("Meta");
     writeStringVector(w, "Mode", meta.modes);
+    writeStringVector(w, "Range", meta.ranges);
     writeStringVector(w, "Name", meta.names);
     writeStringVector(w, "Vo", meta.vo);
     writeStringVector(w, "Von", meta.von);
-    writeStringVector(w, "RiseSlopeCCH", meta.riseSlopeCCH);
-    writeStringVector(w, "FallSlopeCCH", meta.fallSlopeCCH);
-    writeStringVector(w, "RiseSlopeCCL", meta.riseSlopeCCL);
-    writeStringVector(w, "FallSlopeCCL", meta.fallSlopeCCL);
     w.writeEndElement(); // Meta
 
     // Rows
@@ -118,12 +135,9 @@ void Page2Model::XmlWriter::writeDynamicTable(QXmlStreamWriter& w, const Dynamic
 
     // Meta
     w.writeStartElement("Meta");
+    writeStringVector(w, "Range", meta.ranges);
     writeStringVector(w, "Vo", meta.vo);
     writeStringVector(w, "Von", meta.von);
-    writeStringVector(w, "RiseSlopeCCDH", meta.riseSlopeCCDH);
-    writeStringVector(w, "FallSlopeCCDH", meta.fallSlopeCCDH);
-    writeStringVector(w, "RiseSlopeCCDL", meta.riseSlopeCCDL);
-    writeStringVector(w, "FallSlopeCCDL", meta.fallSlopeCCDL);
     writeStringVector(w, "T1T2", meta.t1t2);
     w.writeEndElement(); // Meta
 
@@ -175,6 +189,22 @@ void Page2Model::XmlReader::readInputTable(QXmlStreamReader& r, QVector<InputRow
 
         if (r.isStartElement() && r.name() == "Row") {
             rows.append(readInputRow(r));
+        }
+    }
+}
+
+// ★ 新增：DC Table XML 讀取
+void Page2Model::XmlReader::readDcTable(QXmlStreamReader& r, QVector<DcRow>& rows)
+{
+    while (!r.atEnd()) {
+        r.readNext();
+
+        if (r.isEndElement() && r.name() == "DcTable") {
+            break;
+        }
+
+        if (r.isStartElement() && r.name() == "Row") {
+            rows.append(readDcRow(r));
         }
     }
 }
@@ -250,7 +280,10 @@ InputRow Page2Model::XmlReader::readInputRow(QXmlStreamReader& r)
         }
 
         if (r.isStartElement()) {
-            if (r.name() == "Vin") {
+            if (r.name() == "PhaseMode") {
+                row.phaseMode = r.readElementText();
+            }
+            else if (r.name() == "Vin") {
                 row.vin = r.readElementText();
             }
             else if (r.name() == "Frequency") {
@@ -259,6 +292,26 @@ InputRow Page2Model::XmlReader::readInputRow(QXmlStreamReader& r)
             else if (r.name() == "Phase") {
                 row.phase = r.readElementText();
             }
+        }
+    }
+
+    return row;
+}
+
+// ★ 新增：DC Row 讀取
+DcRow Page2Model::XmlReader::readDcRow(QXmlStreamReader& r)
+{
+    DcRow row;
+
+    while (!r.atEnd()) {
+        r.readNext();
+
+        if (r.isEndElement() && r.name() == "Row") {
+            break;
+        }
+
+        if (r.isStartElement() && r.name() == "Vin") {
+            row.vin = r.readElementText();
         }
     }
 
@@ -340,6 +393,9 @@ void Page2Model::XmlReader::readLoadMeta(QXmlStreamReader& r, LoadMetaRow& meta)
             if (r.name() == "ModeList") {
                 meta.modes = readStringVector(r, "Mode");
             }
+            else if (r.name() == "RangeList") {
+                meta.ranges = readStringVector(r, "Range");
+            }
             else if (r.name() == "NameList") {
                 meta.names = readStringVector(r, "Name");
             }
@@ -348,18 +404,6 @@ void Page2Model::XmlReader::readLoadMeta(QXmlStreamReader& r, LoadMetaRow& meta)
             }
             else if (r.name() == "VonList") {
                 meta.von = readStringVector(r, "Von");
-            }
-            else if (r.name() == "RiseSlopeCCHList") {
-                meta.riseSlopeCCH = readStringVector(r, "RiseSlopeCCH");
-            }
-            else if (r.name() == "FallSlopeCCHList") {
-                meta.fallSlopeCCH = readStringVector(r, "FallSlopeCCH");
-            }
-            else if (r.name() == "RiseSlopeCCLList") {
-                meta.riseSlopeCCL = readStringVector(r, "RiseSlopeCCL");
-            }
-            else if (r.name() == "FallSlopeCCLList") {
-                meta.fallSlopeCCL = readStringVector(r, "FallSlopeCCL");
             }
         }
     }
@@ -375,23 +419,14 @@ void Page2Model::XmlReader::readDynamicMeta(QXmlStreamReader& r, DynamicMetaRow&
         }
 
         if (r.isStartElement()) {
-            if (r.name() == "VoList") {
+            if (r.name() == "RangeList") {
+                meta.ranges = readStringVector(r, "Range");
+            }
+            else if (r.name() == "VoList") {
                 meta.vo = readStringVector(r, "Vo");
             }
             else if (r.name() == "VonList") {
                 meta.von = readStringVector(r, "Von");
-            }
-            else if (r.name() == "RiseSlopeCCDHList") {
-                meta.riseSlopeCCDH = readStringVector(r, "RiseSlopeCCDH");
-            }
-            else if (r.name() == "FallSlopeCCDHList") {
-                meta.fallSlopeCCDH = readStringVector(r, "FallSlopeCCDH");
-            }
-            else if (r.name() == "RiseSlopeCCDLList") {
-                meta.riseSlopeCCDL = readStringVector(r, "RiseSlopeCCDL");
-            }
-            else if (r.name() == "FallSlopeCCDLList") {
-                meta.fallSlopeCCDL = readStringVector(r, "FallSlopeCCDL");
             }
             else if (r.name() == "T1T2List") {
                 meta.t1t2 = readStringVector(r, "T1T2");
