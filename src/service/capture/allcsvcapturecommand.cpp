@@ -7,6 +7,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QList>
+#include <QStringList>
 #include <QMessageBox>
 #include <QCoreApplication>
 #include <QtConcurrent/QtConcurrentRun>
@@ -30,21 +31,18 @@ void AllCsvCaptureCommand::execute()
         return;
     }
 
-    // 在 Main Thread 查詢所有亮起的通道（避免與背景輪詢衝突）
-    auto collectEnabled = [this](bool isMath) -> QList<int> {
+    // 在 Main Thread 查詢所有亮起的實體通道（避免與背景擷取互搶通訊）
+    auto collectEnabledChannels = [this]() -> QList<int> {
         QList<int> result;
         const int total = m_ctx.oscilloscope->getTotalChannel();
         for (int i = 1; i <= total; ++i) {
-            const bool on = isMath
-                ? m_ctx.oscilloscope->isMathChannelEnabled(i)
-                : m_ctx.oscilloscope->isChannelEnabled(i);
-            if (on) result.append(i);
+            if (m_ctx.oscilloscope->isChannelEnabled(i))
+                result.append(i);
         }
         return result;
     };
 
-    const QList<int> activeChannels     = collectEnabled(false);
-    const QList<int> activeMathChannels = collectEnabled(true);
+    const QList<int> activeChannels = collectEnabledChannels();
 
     if (activeChannels.isEmpty()) {
         MessageService::instance().showWarning(
@@ -81,7 +79,7 @@ void AllCsvCaptureCommand::execute()
     std::shared_ptr<std::atomic<bool>> captureInProgress = m_ctx.captureInProgress;
 
     QtConcurrent::run([oscilloscopePtr, captureInProgress, filePath,
-                       activeChannels, activeMathChannels]() {
+                       activeChannels]() {
         struct Guard {
             std::shared_ptr<std::atomic<bool>> flag;
             ~Guard() { if (flag) *flag = false; }
@@ -93,37 +91,49 @@ void AllCsvCaptureCommand::execute()
             const QString baseName = fi.completeBaseName();
             const QString ext      = fi.suffix().isEmpty() ? "csv" : fi.suffix();
 
-            bool anySuccess = false;
+            int successCount = 0;
+            QStringList failedChannels;
 
-            auto captureChannels = [&](const QList<int>& channels, const QString& prefix) {
-                for (int ch : channels) {
-                    const QString targetPath =
-                        dirPath + "/" + baseName +
-                        QString("_%1%2.").arg(prefix).arg(ch) + ext;
-                    if (oscilloscopePtr->captureWaveformFileToHost(ch, targetPath, "CSV", ""))
-                        anySuccess = true;
+            for (int ch : activeChannels) {
+                const QString targetPath =
+                    dirPath + "/" + baseName + QString("_CH%1.").arg(ch) + ext;
+                const QString scopeTempPath =
+                    QString("C:\\TekScope\\Waveforms\\wave_ch%1.csv").arg(ch);
+
+                if (oscilloscopePtr->captureWaveformFileToHost(
+                        ch, targetPath, "CSV", scopeTempPath)) {
+                    ++successCount;
+                } else {
+                    failedChannels << QString("CH%1").arg(ch);
                 }
-            };
+            }
 
-            captureChannels(activeChannels,     "CH");
-            captureChannels(activeMathChannels, "MCH");
-
-            if (!anySuccess) {
-                QMetaObject::invokeMethod(QCoreApplication::instance(), []() {
+            if (successCount == 0) {
+                QMetaObject::invokeMethod(QCoreApplication::instance(),
+                    [oscilloscopePtr]() {
                     MessageService::instance().showWarning(
                         QObject::tr("Capture Failed"),
-                        QObject::tr("Failed to capture CSV data."));
+                        QObject::tr("Failed to capture CSV data.\nModel %1 may not support this feature.")
+                            .arg(oscilloscopePtr->model()));
                 }, Qt::QueuedConnection);
                 return;
             }
 
             QMetaObject::invokeMethod(QCoreApplication::instance(),
-                [dirPath, baseName, ext]() {
+                [dirPath, baseName, ext, successCount, failedChannels]() {
+                    QString message = QObject::tr(
+                        "Active Channels CSV saved successfully!\n\nDirectory:\n%1\n\nSaved as:\n%2_CHx.%3\n\nSaved channels: %4")
+                            .arg(dirPath, baseName, ext)
+                            .arg(successCount);
+                    if (!failedChannels.isEmpty()) {
+                        message += QObject::tr("\nFailed channels: %1")
+                            .arg(failedChannels.join(", "));
+                    }
+
                     QMessageBox::information(
                         nullptr,
                         QObject::tr("Capture Complete"),
-                        QObject::tr("Active Channels CSV saved successfully!\n\nDirectory:\n%1\n\nSaved as:\n%2_CHx.%3")
-                            .arg(dirPath, baseName, ext));
+                        message);
                 }, Qt::QueuedConnection);
 
         } catch (const std::exception& e) {
