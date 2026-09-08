@@ -283,6 +283,26 @@ void Page3ViewModel::onRelayChanged()
     handleRelay(RelayAction::Change);
 }
 
+bool Page3ViewModel::tryBeginLoadOperation(const char* context)
+{
+    if (m_loadOperationBusy) {
+        qWarning() << "[Page3ViewModel]" << context
+                   << "ignored because a load operation is still running";
+        emit loadOperationBusyChanged(true);
+        return false;
+    }
+
+    m_loadOperationBusy = true;
+    emit loadOperationBusyChanged(true);
+    return true;
+}
+
+void Page3ViewModel::finishLoadOperation()
+{
+    m_loadOperationBusy = false;
+    emit loadOperationBusyChanged(false);
+}
+
 void Page3ViewModel::onSelected(TableKind type, int idx, const QString& txt)
 {
     m_selections[type] = { idx, txt };
@@ -496,6 +516,8 @@ void Page3ViewModel::handleLoad(LoadAction action)
         emit forceOff(TableKind::Load);
         return;
     }
+    if (!tryBeginLoadOperation("handleLoad"))
+        return;
 
     const Page1Config cfg      = m_page1Config;
     const auto        loadRows = m_LoadRowsData;
@@ -521,6 +543,12 @@ void Page3ViewModel::handleLoad(LoadAction action)
         } catch (const std::exception& ex) {
             qWarning() << "[handleLoad] Exception:" << ex.what();
         }
+        if (self) {
+            QMetaObject::invokeMethod(self.data(), [self]() {
+                if (self)
+                    self->finishLoadOperation();
+            }, Qt::QueuedConnection);
+        }
     });
 }
 
@@ -534,6 +562,8 @@ void Page3ViewModel::handleDyLoad(DyLoadAction action)
         emit forceOff(TableKind::DyLoad);
         return;
     }
+    if (!tryBeginLoadOperation("handleDyLoad"))
+        return;
 
     const bool syncEnabled = m_syncEnabled;
     const bool syncDirty   = m_syncDirty;
@@ -561,6 +591,12 @@ void Page3ViewModel::handleDyLoad(DyLoadAction action)
             }
         } catch (const std::exception& ex) {
             qWarning() << "[handleDyLoad] Exception:" << ex.what();
+        }
+        if (self) {
+            QMetaObject::invokeMethod(self.data(), [self]() {
+                if (self)
+                    self->finishLoadOperation();
+            }, Qt::QueuedConnection);
         }
     });
 }

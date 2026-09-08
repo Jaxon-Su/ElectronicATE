@@ -42,7 +42,7 @@ void Chroma61509::setPowerOff()
 // Valid range: 0.0~175.0 (LOW) / 0.0~350.0 (HIGH), unit: V
 void Chroma61509::setVoltage(double v)
 {
-    setVoltageRange(VoltageRange::Auto);
+    // setVoltageRange(VoltageRange::Auto);
     sendCommandWithLog(
         QString("SOURce:VOLTage:AC %1").arg(v, 0, 'f', 3),
         "[Chroma61509]");

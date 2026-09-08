@@ -33,6 +33,7 @@ public slots:
     void onPage1ConfigChanged(const Page1Config &cfg);
     void onRestoreSelections(TableKind type, int index, const QString& text);
     void forceButtonOff(TableKind type);
+    void setLoadOperationBusy(bool busy);
 
 signals:
     // 輸入控制信號

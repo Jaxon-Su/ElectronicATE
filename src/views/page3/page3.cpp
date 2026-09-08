@@ -231,6 +231,7 @@ void Page3::setupConnections()
     connect(vm, &Page3ViewModel::rowLabelsChanged, this, &Page3::onRowLabelsChanged);
     connect(vm, &Page3ViewModel::titlesUpdated, this, &Page3::onTitlesUpdated);
     connect(vm, &Page3ViewModel::restoreSelections, this, &Page3::onRestoreSelections);
+    connect(vm, &Page3ViewModel::loadOperationBusyChanged, this, &Page3::setLoadOperationBusy);
 
     // Trigger
     connect(this, &Page3::triggerWidgetCreated, vm, &Page3ViewModel::onTriggerWidgetCreated);
@@ -342,6 +343,23 @@ void Page3::loadLock()
     btnDyloadChg->setEnabled(!btnLoadOn->isChecked());
     btnLoadOn->setEnabled(!btnDyloadOn->isChecked());
     btnLoadChg->setEnabled(!btnDyloadOn->isChecked());
+}
+
+void Page3::setLoadOperationBusy(bool busy)
+{
+    if (busy) {
+        cmbLoad->setEnabled(false);
+        btnLoadOn->setEnabled(false);
+        btnLoadChg->setEnabled(false);
+        cmbDyload->setEnabled(false);
+        btnDyloadOn->setEnabled(false);
+        btnDyloadChg->setEnabled(false);
+        return;
+    }
+
+    cmbLoad->setEnabled(true);
+    cmbDyload->setEnabled(true);
+    loadLock();
 }
 
 // ========== Slots ==========

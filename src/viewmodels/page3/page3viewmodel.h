@@ -188,6 +188,12 @@ private:
     // 狀態保護互斥鎖
     mutable QMutex m_stateMutex;
 
+    // DC Load hardware operations must not overlap. Page3 runs them in worker
+    // threads, so a quick ON/OFF click can otherwise race two command streams.
+    bool m_loadOperationBusy = false;
+    bool tryBeginLoadOperation(const char* context);
+    void finishLoadOperation();
+
     // 防抖延遲時間 (毫秒)
     static const int configDelayTime = 500;
 
@@ -205,4 +211,5 @@ signals:
     void titlesUpdated(TableKind type, const QStringList& titles);
     void forceOff(TableKind type);
     void restoreSelections(TableKind type, int index, const QString& text);
+    void loadOperationBusyChanged(bool busy);
 };
