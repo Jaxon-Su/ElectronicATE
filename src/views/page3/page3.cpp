@@ -348,17 +348,13 @@ void Page3::loadLock()
 void Page3::setLoadOperationBusy(bool busy)
 {
     if (busy) {
-        cmbLoad->setEnabled(false);
         btnLoadOn->setEnabled(false);
         btnLoadChg->setEnabled(false);
-        cmbDyload->setEnabled(false);
         btnDyloadOn->setEnabled(false);
         btnDyloadChg->setEnabled(false);
         return;
     }
 
-    cmbLoad->setEnabled(true);
-    cmbDyload->setEnabled(true);
     loadLock();
 }
 
