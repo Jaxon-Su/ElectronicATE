@@ -1,3 +1,4 @@
+#include "conditionpower.h"
 #include "page2viewmodel.h"
 #include "dcloadfactory.h"
 #include <QRegularExpression>
@@ -12,39 +13,7 @@
 #include <cmath>
 #include "page2model.h"
 
-namespace {
 
-bool parseNumberWithOptionalUnit(QString text, QChar unit, double& value)
-{
-    text = text.trimmed();
-    text.remove(QRegularExpression(R"(\s+)"));
-
-    if (text.endsWith(unit, Qt::CaseInsensitive))
-        text.chop(1);
-
-    bool ok = false;
-    value = text.toDouble(&ok);
-    return ok;
-}
-
-bool parseCvDataValue(const QString& text, double& voltage, double& currentLimit)
-{
-    const QStringList parts = text.split('/', Qt::SkipEmptyParts);
-    if (parts.size() != 2)
-        return false;
-
-    return parseNumberWithOptionalUnit(parts[0], 'V', voltage)
-           && parseNumberWithOptionalUnit(parts[1], 'A', currentLimit);
-}
-
-bool parseMaxCurrentInRange(const QString& text, double& value)
-{
-    const QStringList parts = text.split(QRegularExpression("[~～]"), Qt::SkipEmptyParts);
-    const QString currentText = parts.isEmpty() ? text : parts.last();
-    return parseNumberWithOptionalUnit(currentText, 'A', value);
-}
-
-} // namespace
 
 Page2ViewModel::Page2ViewModel(Page2Model* model, QObject *parent)
     : QObject(parent), m_model(model)
@@ -225,81 +194,14 @@ void Page2ViewModel::cellValueChanged(TableKind kind,
 // 計算功率
 double Page2ViewModel::calcRowPower(int dataRow) const
 {
-    if (dataRow < 0 || dataRow >= m_model->loadRows.size())
-        return std::nan("");
-
-    const auto& meta = m_model->loadMeta;
-    const auto& rowVals = m_model->loadRows[dataRow].values;
-    int N = std::min(int(maxOutput()), int(rowVals.size()));
-
-    bool allEmpty = true;
-    for (int i = 0; i < N; ++i) {
-        if (!rowVals[i].trimmed().isEmpty()) {
-            allEmpty = false;
-            break;
-        }
-    }
-    if (allEmpty) return std::nan("");
-
-    double total = 0.0;
-    bool hasPowerTerm = false;
-    for (int i = 0; i < N; ++i) {
-        const QString mode = (i < meta.modes.size() && !meta.modes[i].trimmed().isEmpty())
-                                 ? meta.modes[i].trimmed().toUpper()
-                                 : QStringLiteral("CC");
-
-        if (mode == "CV") {
-            double voltage = 0.0;
-            double currentLimit = 0.0;
-            if (!parseCvDataValue(rowVals[i], voltage, currentLimit))
-                continue;
-
-            total += voltage * currentLimit;
-            hasPowerTerm = true;
-        } else {
-            double value = 0.0;
-            const bool valueOk = parseNumberWithOptionalUnit(rowVals[i], 'A', value);
-            if (!valueOk) continue;
-
-            if (i >= meta.vo.size()) continue;
-            bool voOk = false;
-            const double vo = meta.vo[i].toDouble(&voOk);
-            if (!voOk) continue;
-            total += vo * value;
-            hasPowerTerm = true;
-        }
-    }
-    if (!hasPowerTerm) return std::nan("");
-    return total;
+    if (dataRow < 0 || dataRow >= m_model->loadRows.size()) return std::nan("");
+    return ConditionPower::load(m_model->loadMeta, m_model->loadRows[dataRow].values, maxOutput());
 }
 
 double Page2ViewModel::calcDynamicRowPower(int dataRow) const
 {
-    if (dataRow < 0 || dataRow >= m_model->dynamicRows.size())
-        return std::nan("");
-
-    const auto& meta = m_model->dynamicMeta;
-    const auto& rowVals = m_model->dynamicRows[dataRow].values;
-    int N = std::min(int(maxOutput()), int(rowVals.size()));
-
-    double total = 0.0;
-    bool hasPowerTerm = false;
-    for (int i = 0; i < N; ++i) {
-        double currentMax = 0.0;
-        if (!parseMaxCurrentInRange(rowVals[i], currentMax))
-            continue;
-
-        if (i >= meta.vo.size()) continue;
-        bool voOk = false;
-        const double vo = meta.vo[i].toDouble(&voOk);
-        if (!voOk) continue;
-
-        total += vo * currentMax;
-        hasPowerTerm = true;
-    }
-
-    if (!hasPowerTerm) return std::nan("");
-    return total;
+    if (dataRow < 0 || dataRow >= m_model->dynamicRows.size()) return std::nan("");
+    return ConditionPower::dynamic(m_model->dynamicMeta, m_model->dynamicRows[dataRow].values, maxOutput());
 }
 
 void Page2ViewModel::broadcastAllPowers()

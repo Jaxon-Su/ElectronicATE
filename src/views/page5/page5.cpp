@@ -67,6 +67,11 @@ QVector<TaskPayload> Page5::collectPayloads(const QVector<RunTask>& tasks) const
         else if (t.name == "Turn off")           cfg = m_centerPanel->turnOffSettings(uid);
         else if (t.name == "Relay")              cfg = m_centerPanel->relaySettings(uid);
 
+        else if (t.name == "Static Test") cfg = m_centerPanel->staticSettings(uid);
+        else if (t.name == "Dynamic Test") cfg = m_centerPanel->dynamicSettings(uid);
+        else if (t.name == "Short then turn on") cfg = m_centerPanel->shortOnSettings(uid);
+        else if (t.name == "Turn on then short") cfg = m_centerPanel->onShortSettings(uid);
+
         const DutRowData row = m_centerPanel->dutRowForUid(uid);
         payloads.append({ t, cfg, row.ext, row.retry.toInt(), row.report });
     }
@@ -134,8 +139,11 @@ void Page5::setupConnections()
             this, [this](const QVector<RunTask>& tasks) {
                 m_centerPanel->runPanel()->resetTaskRows();
                 const QVector<TaskPayload> payloads = collectPayloads(tasks);
-                m_viewModel->startExecution(payloads);
+                if (!m_viewModel->startExecution(payloads) && !m_viewModel->isRunning())
+                    m_centerPanel->runPanel()->setExecutionRunning(false);
             });
+
+    connect(m_viewModel, &Page5ViewModel::runningChanged, rp, &Page5RunPanel::setExecutionRunning);
 
     // Stop：委託 ViewModel
     connect(rp, &Page5RunPanel::stopRequested,

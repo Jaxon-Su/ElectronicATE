@@ -97,9 +97,8 @@ void Page5RunPanel::buildToolBar(QWidget* parent, QVBoxLayout* layout)
     });
 
     connect(m_stopBtn, &QPushButton::clicked, this, [this]() {
-        m_running = false;
-        updateControlState(false);
-        m_statusLbl->setText("Stopped");
+        m_stopBtn->setEnabled(false);
+        m_statusLbl->setText("Stopping…");
         m_statusLbl->setStyleSheet(
             "color:#E67E22; font-size:11px; font-weight:bold; background:transparent; padding:2px 8px;");
         emit stopRequested();
@@ -186,22 +185,6 @@ void Page5RunPanel::setTaskStatus(int index, TaskStatus status)
         lbl->setStyleSheet(statusStyle(status));
     }
 
-    if (status == TaskStatus::Pass || status == TaskStatus::Fail) {
-        bool allDone = true;
-        for (int r = 0; r < m_table->rowCount(); ++r) {
-            auto* l = qobject_cast<QLabel*>(m_table->cellWidget(r, 3));
-            if (l && (l->text().contains("Running") || l->text() == "—"))
-                allDone = false;
-        }
-        if (allDone) {
-            m_running = false;
-            updateControlState(false);
-            m_statusLbl->setText("Done");
-            m_statusLbl->setStyleSheet(
-                "color:#27AE60; font-size:11px; font-weight:bold; background:transparent; padding:2px 8px;");
-            emit stopRequested();
-        }
-    }
 }
 
 void Page5RunPanel::resetTaskRows()
@@ -231,4 +214,12 @@ void Page5RunPanel::updateControlState(bool running)
 {
     m_runBtn->setEnabled(!running);
     m_stopBtn->setEnabled(running);
+}
+
+void Page5RunPanel::setExecutionRunning(bool running)
+{
+    m_running = running;
+    updateControlState(running);
+    if (!running)
+        m_statusLbl->setText("Idle");
 }

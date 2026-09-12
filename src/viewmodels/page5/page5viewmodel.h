@@ -42,6 +42,8 @@ public:
     void writeXml(QXmlStreamWriter& writer) const override;
     void loadXml(QXmlStreamReader& reader) override;
 
+    Page5ExecutionContext executionContext() const;
+
     bool isRunning() const { return m_isRunning; }
 
 public slots:
@@ -55,7 +57,7 @@ public slots:
     void onDutRowsChanged(const QVector<DutRowData>& rows);
 
     // ★ 執行控制：由 View 呼叫，Worker 生命週期由 ViewModel 管理
-    void startExecution(const QVector<TaskPayload>& payloads);
+    bool startExecution(const QVector<TaskPayload>& payloads);
     void stopExecution();
 
     void broadcastAllData();

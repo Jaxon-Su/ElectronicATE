@@ -5,7 +5,6 @@
 #include "page5taskpayload.h"
 #include "page5runpanel.h"
 
-class Page5ViewModel;
 class IOscilloscopeMeasureStrategy;
 
 // ══════════════════════════════════════════════════════
@@ -13,7 +12,7 @@ class IOscilloscopeMeasureStrategy;
 //
 //  執行緒模型：
 //   物件由 Page5ViewModel 建立並 moveToThread(m_workerThread)
-//   startTasks() 透過 QMetaObject::invokeMethod Queued 呼叫
+//   startTasks(payloads, context) 透過 queued lambda 接收不可變的執行資料副本
 //   UI 更新透過 signal 回到主執行緒（自動 queued connection）
 //
 //  執行流程：
@@ -25,19 +24,20 @@ class IOscilloscopeMeasureStrategy;
 //
 //  中止：
 //   stop() 設 m_stopRequested=1
-//   startTasks() 每列執行前檢查，立即中斷
+//   startTasks() 每列執行前檢查；通訊中的命令返回後依停止檢查結束
 // ══════════════════════════════════════════════════════
 class Page5TestWorker : public QObject
 {
     Q_OBJECT
 
 public:
-    explicit Page5TestWorker(Page5ViewModel* viewModel, QObject* parent = nullptr);
+    explicit Page5TestWorker(QObject* parent = nullptr);
+    void prepareRun() { m_stopRequested.storeRelease(0); }
     ~Page5TestWorker() override = default;
 
 
 public slots:
-    void startTasks(const QVector<TaskPayload>& payloads);
+    void startTasks(const QVector<TaskPayload>& payloads, const Page5ExecutionContext& context);
     void stop();
 
 signals:
@@ -59,6 +59,6 @@ private:
     bool executeTurnOnThenShort (const QVariantMap& cfg);
     bool executeShortThenTurnOn (const QVariantMap& cfg);
 
-    Page5ViewModel* m_viewModel     = nullptr;
+    Page5ExecutionContext m_context;
     QAtomicInt      m_stopRequested = 0;
 };

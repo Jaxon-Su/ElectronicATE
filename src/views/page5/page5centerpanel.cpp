@@ -1,3 +1,4 @@
+#include "page5conditionmapping.h"
 #include "page5centerpanel.h"
 #include "page5viewmodel.h"
 #include "tableutils.h"
@@ -194,8 +195,7 @@ QWidget* Page5CenterPanel::buildTabWidget()
                     QStringList inputOptions;
                     if (m_viewModel) {
                         for (const auto& r : m_viewModel->inputRows())
-                            inputOptions << QString("%1/%2/%3")
-                                                .arg(r.vin, r.frequency, r.phase);
+                            inputOptions << Page5Conditions::inputTitle(r);
                     }
                     QStringList loadOptions;
                     if (m_viewModel) {
@@ -219,10 +219,17 @@ QWidget* Page5CenterPanel::buildTabWidget()
                                                            ? TurnOnOffDialog::TurnOn
                                                            : TurnOnOffDialog::TurnOff;
 
+                    const auto originalSettings = turnCfg;
+                    const auto conditionContext = m_viewModel->executionContext();
+                    Page5Conditions::prepareDialog(turnCfg, conditionContext);
                     auto* dlg = new TurnOnOffDialog(
                         mode, inputOptions, loadOptions, relayOptions, turnCfg, row + 1, this);
-                    dlg->exec();
-                    turnCfg = dlg->config();
+                    if (dlg->exec() == QDialog::Accepted) {
+                        turnCfg = dlg->config();
+                        Page5Conditions::capture(turnCfg, conditionContext);
+                    } else {
+                        turnCfg = originalSettings;
+                    }
                     dlg->deleteLater();
                     notifyDutRowsChanged();
                     return;
@@ -233,8 +240,7 @@ QWidget* Page5CenterPanel::buildTabWidget()
                     QStringList inputOptions;
                     if (m_viewModel) {
                         for (const auto& r : m_viewModel->inputRows())
-                            inputOptions << QString("%1/%2/%3")
-                                                .arg(r.vin, r.frequency, r.phase);
+                            inputOptions << Page5Conditions::inputTitle(r);
                     }
                     QStringList loadOptions;
                     if (m_viewModel) {
@@ -258,10 +264,17 @@ QWidget* Page5CenterPanel::buildTabWidget()
                         ? ShortTestDialog::ShortThenTurnOn
                         : ShortTestDialog::TurnOnThenShort;
 
+                    const auto originalSettings = cfg;
+                    const auto conditionContext = m_viewModel->executionContext();
+                    Page5Conditions::prepareDialog(cfg, conditionContext);
                     auto* dlg = new ShortTestDialog(
                         mode, inputOptions, loadOptions, relayOptions, cfg, row + 1, this);
-                    dlg->exec();
-                    cfg = dlg->config();
+                    if (dlg->exec() == QDialog::Accepted) {
+                        cfg = dlg->config();
+                        Page5Conditions::capture(cfg, conditionContext);
+                    } else {
+                        cfg = originalSettings;
+                    }
                     dlg->deleteLater();
                     notifyDutRowsChanged();
                     return;
@@ -272,8 +285,7 @@ QWidget* Page5CenterPanel::buildTabWidget()
                     QStringList inputOptions;
                     if (m_viewModel) {
                         for (const auto& r : m_viewModel->inputRows())
-                            inputOptions << QString("%1/%2/%3")
-                                                .arg(r.vin, r.frequency, r.phase);
+                            inputOptions << Page5Conditions::inputTitle(r);
                     }
                     QStringList dyloadOptions;
                     if (m_viewModel) {
@@ -282,10 +294,17 @@ QWidget* Page5CenterPanel::buildTabWidget()
                     }
 
                     QVariantMap& dynamicCfg = m_dynamicSettings[uid];
+                    const auto originalSettings = dynamicCfg;
+                    const auto conditionContext = m_viewModel->executionContext();
+                    Page5Conditions::prepareDialog(dynamicCfg, conditionContext);
                     auto* dlg = new DynamicDialog(
                         inputOptions, dyloadOptions, dynamicCfg, row + 1, this);
-                    dlg->exec();
-                    dynamicCfg = dlg->config();
+                    if (dlg->exec() == QDialog::Accepted) {
+                        dynamicCfg = dlg->config();
+                        Page5Conditions::capture(dynamicCfg, conditionContext);
+                    } else {
+                        dynamicCfg = originalSettings;
+                    }
                     dlg->deleteLater();
                     notifyDutRowsChanged();
                     return;
@@ -296,8 +315,7 @@ QWidget* Page5CenterPanel::buildTabWidget()
                     QStringList inputOptions;
                     if (m_viewModel) {
                         for (const auto& r : m_viewModel->inputRows())
-                            inputOptions << QString("%1/%2/%3")
-                                                .arg(r.vin, r.frequency, r.phase);
+                            inputOptions << Page5Conditions::inputTitle(r);
                     }
                     QStringList loadOptions;
                     if (m_viewModel) {
@@ -306,10 +324,17 @@ QWidget* Page5CenterPanel::buildTabWidget()
                     }
 
                     QVariantMap& staticCfg = m_staticSettings[uid];
+                    const auto originalSettings = staticCfg;
+                    const auto conditionContext = m_viewModel->executionContext();
+                    Page5Conditions::prepareDialog(staticCfg, conditionContext);
                     auto* dlg = new StaticDialog(
                         inputOptions, loadOptions, staticCfg, row + 1, this);
-                    dlg->exec();
-                    staticCfg = dlg->config();
+                    if (dlg->exec() == QDialog::Accepted) {
+                        staticCfg = dlg->config();
+                        Page5Conditions::capture(staticCfg, conditionContext);
+                    } else {
+                        staticCfg = originalSettings;
+                    }
                     dlg->deleteLater();
                     notifyDutRowsChanged();
                     return;
@@ -327,9 +352,16 @@ QWidget* Page5CenterPanel::buildTabWidget()
                         }
                     }
                     QVariantMap& relayCfg = m_relaySettings[uid];
+                    const auto originalSettings = relayCfg;
+                    const auto conditionContext = m_viewModel->executionContext();
+                    Page5Conditions::prepareDialog(relayCfg, conditionContext);
                     auto* dlg = new RelayDialog(relayOptions, relayCfg, row + 1, this);
-                    dlg->exec();
-                    relayCfg = dlg->config();
+                    if (dlg->exec() == QDialog::Accepted) {
+                        relayCfg = dlg->config();
+                        Page5Conditions::capture(relayCfg, conditionContext);
+                    } else {
+                        relayCfg = originalSettings;
+                    }
                     dlg->deleteLater();
                     notifyDutRowsChanged();
                     return;

@@ -17,7 +17,7 @@
 //
 //  狀態流程：
 //   Idle ──[Run]──► Running ──[完成]──► Pass / Fail
-//                       └──[Stop]──► Idle（reset）
+//                       └──[Stop]──► Stopping ──[Worker finished]──► Idle
 // ══════════════════════════════════════════════════════
 class Page5RunPanel : public QWidget
 {
@@ -38,6 +38,7 @@ public:
 
     // 全部重置為 Idle（含控制按鈕狀態）
     void resetAll();
+    void setExecutionRunning(bool running);
 
     // 僅重置 task 列狀態為 Idle，不改變按鈕狀態
     void resetTaskRows();

@@ -1,5 +1,6 @@
+#include <exception>
 #include "page5testworker.h"
-#include "page5viewmodel.h"
+
 #include "oscilloscope.h"
 #include "instrumentexecutor.h"
 #include "ioscilloscopemeasurestrategy.h"
@@ -9,9 +10,9 @@
 #include <QDebug>
 #include <memory>
 
-Page5TestWorker::Page5TestWorker(Page5ViewModel* viewModel, QObject* parent)
+Page5TestWorker::Page5TestWorker(QObject* parent)
     : QObject(parent)
-    , m_viewModel(viewModel)
+
 {}
 
 void Page5TestWorker::stop()
@@ -22,9 +23,9 @@ void Page5TestWorker::stop()
 // ─────────────────────────────────────────────
 //  startTasks：主執行迴圈（worker thread）
 // ─────────────────────────────────────────────
-void Page5TestWorker::startTasks(const QVector<TaskPayload>& payloads)
+void Page5TestWorker::startTasks(const QVector<TaskPayload>& payloads, const Page5ExecutionContext& context)
 {
-    m_stopRequested.storeRelease(0);
+    m_context = context;
     emit logMessage("=== Test started ===");
 
     for (int i = 0; i < payloads.size(); ++i) {
@@ -44,7 +45,15 @@ void Page5TestWorker::startTasks(const QVector<TaskPayload>& payloads)
                 emit logMessage(QString("[%1] Retry %2/%3").arg(i + 1).arg(attempt).arg(p.retry));
                 emit retryCountChanged(i, attempt);
             }
-            pass = executeTask(i, p);
+            try {
+                pass = executeTask(i, p);
+            } catch (const std::exception& ex) {
+                emit logMessage(QString("Task exception: %1").arg(ex.what()));
+                pass = false;
+            } catch (...) {
+                emit logMessage("Unknown task exception");
+                pass = false;
+            }
             if (pass) break;
             if (m_stopRequested.loadAcquire()) break;
         }
@@ -104,7 +113,7 @@ bool Page5TestWorker::executeDelay(const QVariantMap& cfg)
 
 bool Page5TestWorker::executeWriteOscilloscope(const QVariantMap& cfg)
 {
-    Oscilloscope* scope = m_viewModel->oscilloscope();
+    Oscilloscope* scope = m_context.scope;
     if (!scope) {
         emit logMessage("  Write Oscilloscope: no oscilloscope connected");
         return false;
@@ -222,7 +231,7 @@ static bool doDelay(int ms, QAtomicInt& stop)
 
 bool Page5TestWorker::executeTurnOn(const QVariantMap& cfg)
 {
-    const Page1Config cfg1         = m_viewModel->page1Config();
+    const Page1Config cfg1         = m_context.page1;
     const QString     inputLbl     = cfg.value("input_label").toString();
     const int         loadIdx      = cfg.value("load_index",      -1).toInt();
     const int         dischargeIdx = cfg.value("discharge_index", -1).toInt();
@@ -231,14 +240,14 @@ bool Page5TestWorker::executeTurnOn(const QVariantMap& cfg)
     // ── ① 初始 Relay 放電（bulk cap 歸零）────────────
     if (dischargeIdx >= 0) {
         auto resOn = InstrumentExecutor::runRelay(
-            cfg1, m_viewModel->relayRows(), dischargeIdx, RelayAction::RelayOn);
+            cfg1, m_context.relays, dischargeIdx, RelayAction::RelayOn);
         if (!resOn.success) {
             emit logMessage(QString("  Turn On: discharge relay on failed — %1").arg(resOn.errorMessage));
             return false;
         }
         if (!doDelay(500, m_stopRequested)) return false;
         auto resOff = InstrumentExecutor::runRelay(
-            cfg1, m_viewModel->relayRows(), dischargeIdx, RelayAction::RelayOff);
+            cfg1, m_context.relays, dischargeIdx, RelayAction::RelayOff);
         if (!resOff.success) {
             emit logMessage(QString("  Turn On: discharge relay off failed — %1").arg(resOff.errorMessage));
             return false;
@@ -247,13 +256,13 @@ bool Page5TestWorker::executeTurnOn(const QVariantMap& cfg)
 
     // ── ② Load on（整個 ratchet 期間持續開著）────────
     auto resLoad = InstrumentExecutor::runLoad(
-        cfg1, m_viewModel->loadRows(), loadIdx, m_viewModel->loadMeta(), LoadAction::LoadOn);
+        cfg1, m_context.loads, loadIdx, m_context.loadMeta, LoadAction::LoadOn);
     if (!resLoad.success) {
         emit logMessage(QString("  Turn On: load failed — %1").arg(resLoad.errorMessage));
         return false;
     }
 
-    Oscilloscope* scope = m_viewModel->oscilloscope();
+    Oscilloscope* scope = m_context.scope;
 
     if (scope) {
         // ── ③④⑤ Ratchet 策略：含電源循環 + scope 量測 ──
@@ -261,7 +270,7 @@ bool Page5TestWorker::executeTurnOn(const QVariantMap& cfg)
         ratchetCfg.timeoutMs = timeoutMs;
         auto strategy = std::make_unique<TurnOnRatchetStrategy>(
             cfg1, inputLbl,
-            m_viewModel->relayRows(), dischargeIdx,
+            m_context.relays, dischargeIdx,
             ratchetCfg);
 
         emit logMessage(QString("  Turn On: oscilloscope → %1").arg(strategy->name()));
@@ -297,13 +306,13 @@ bool Page5TestWorker::executeTurnOn(const QVariantMap& cfg)
 
 bool Page5TestWorker::executeTurnOff(const QVariantMap& cfg)
 {
-    const Page1Config cfg1     = m_viewModel->page1Config();
+    const Page1Config cfg1     = m_context.page1;
     const QString     inputLbl = cfg.value("input_label").toString();
     const int         loadIdx  = cfg.value("load_index", -1).toInt();
     const int         delayMs  = cfg.value("delay_ms", 5000).toInt();
 
     auto resLoad = InstrumentExecutor::runLoad(
-        cfg1, m_viewModel->loadRows(), loadIdx, m_viewModel->loadMeta(), LoadAction::LoadOff);
+        cfg1, m_context.loads, loadIdx, m_context.loadMeta, LoadAction::LoadOff);
     if (!resLoad.success) {
         emit logMessage(QString("  Turn Off: load failed — %1").arg(resLoad.errorMessage));
         return false;
@@ -324,11 +333,11 @@ bool Page5TestWorker::executeTurnOff(const QVariantMap& cfg)
 
 bool Page5TestWorker::executeRelay(const QVariantMap& cfg)
 {
-    const Page1Config cfg1     = m_viewModel->page1Config();
+    const Page1Config cfg1     = m_context.page1;
     const int         relayIdx = cfg.value("relay_index", -1).toInt();
 
     auto res = InstrumentExecutor::runRelay(
-        cfg1, m_viewModel->relayRows(), relayIdx, RelayAction::RelayOn);
+        cfg1, m_context.relays, relayIdx, RelayAction::RelayOn);
     if (!res.success) {
         emit logMessage(QString("  Relay: failed - %1").arg(res.errorMessage));
         return false;
@@ -340,7 +349,7 @@ bool Page5TestWorker::executeRelay(const QVariantMap& cfg)
 
 bool Page5TestWorker::executeStaticTest(const QVariantMap& cfg)
 {
-    const Page1Config cfg1     = m_viewModel->page1Config();
+    const Page1Config cfg1     = m_context.page1;
     const QString     inputLbl = cfg.value("input_label").toString();
     const int         loadIdx  = cfg.value("load_index", -1).toInt();
     const int         delayMs  = cfg.value("delay_ms", 5000).toInt();
@@ -354,7 +363,7 @@ bool Page5TestWorker::executeStaticTest(const QVariantMap& cfg)
 
     // ── 2. 負載開啟 ───────────────────────────────────
     auto resLoad = InstrumentExecutor::runLoad(
-        cfg1, m_viewModel->loadRows(), loadIdx, m_viewModel->loadMeta(), LoadAction::LoadOn);
+        cfg1, m_context.loads, loadIdx, m_context.loadMeta, LoadAction::LoadOn);
     if (!resLoad.success) {
         emit logMessage(QString("  Static Test: load failed — %1").arg(resLoad.errorMessage));
         return false;
@@ -366,7 +375,7 @@ bool Page5TestWorker::executeStaticTest(const QVariantMap& cfg)
         return false;
 
     // ── 4. 示波器量測 ─────────────────────────────────
-    Oscilloscope* scope = m_viewModel->oscilloscope();
+    Oscilloscope* scope = m_context.scope;
     if (scope) {
         std::unique_ptr<IOscilloscopeMeasureStrategy> strategy(
             OscilloscopeStrategyFactory::create("Static Test"));
@@ -392,7 +401,7 @@ bool Page5TestWorker::executeStaticTest(const QVariantMap& cfg)
 
 bool Page5TestWorker::executeDynamicTest(const QVariantMap& cfg)
 {
-    const Page1Config cfg1      = m_viewModel->page1Config();
+    const Page1Config cfg1      = m_context.page1;
     const QString     inputLbl  = cfg.value("input_label").toString();
     const int         dyLoadIdx = cfg.value("dyload_index", -1).toInt();
     const int         delayMs   = cfg.value("delay_ms", 5000).toInt();
@@ -406,7 +415,7 @@ bool Page5TestWorker::executeDynamicTest(const QVariantMap& cfg)
 
     // ── 2. 動態負載開啟 ───────────────────────────────
     auto resDy = InstrumentExecutor::runDyLoad(
-        cfg1, m_viewModel->dynamicRows(), dyLoadIdx, m_viewModel->dynamicMeta(), DyLoadAction::DyLoadOn);
+        cfg1, m_context.dynamics, dyLoadIdx, m_context.dynamicMeta, DyLoadAction::DyLoadOn);
     if (!resDy.success) {
         emit logMessage(QString("  Dynamic Test: dyload failed — %1").arg(resDy.errorMessage));
         return false;
@@ -418,7 +427,7 @@ bool Page5TestWorker::executeDynamicTest(const QVariantMap& cfg)
         return false;
 
     // ── 4. 示波器量測 ─────────────────────────────────
-    Oscilloscope* scope = m_viewModel->oscilloscope();
+    Oscilloscope* scope = m_context.scope;
     if (scope) {
         std::unique_ptr<IOscilloscopeMeasureStrategy> strategy(
             OscilloscopeStrategyFactory::create("Dynamic Test"));
@@ -444,7 +453,7 @@ bool Page5TestWorker::executeDynamicTest(const QVariantMap& cfg)
 
 bool Page5TestWorker::executeTurnOnThenShort(const QVariantMap& cfg)
 {
-    const Page1Config cfg1     = m_viewModel->page1Config();
+    const Page1Config cfg1     = m_context.page1;
     const QString     inputLbl = cfg.value("input_label").toString();
     const int         loadIdx  = cfg.value("load_index", -1).toInt();
     const int         relayIdx = cfg.value("relay_index", -1).toInt();
@@ -454,14 +463,14 @@ bool Page5TestWorker::executeTurnOnThenShort(const QVariantMap& cfg)
     if (!resIn.success) { emit logMessage(QString("  Turn On Then Short: input failed — %1").arg(resIn.errorMessage)); return false; }
 
     auto resLoad = InstrumentExecutor::runLoad(
-        cfg1, m_viewModel->loadRows(), loadIdx, m_viewModel->loadMeta(), LoadAction::LoadOn);
+        cfg1, m_context.loads, loadIdx, m_context.loadMeta, LoadAction::LoadOn);
     if (!resLoad.success) { emit logMessage(QString("  Turn On Then Short: load failed — %1").arg(resLoad.errorMessage)); return false; }
 
     if (delayMs > 0 && !doDelay(delayMs, m_stopRequested))
         return false;
 
     auto resRelay = InstrumentExecutor::runRelay(
-        cfg1, m_viewModel->relayRows(), relayIdx, RelayAction::RelayOn);
+        cfg1, m_context.relays, relayIdx, RelayAction::RelayOn);
     if (!resRelay.success) { emit logMessage(QString("  Turn On Then Short: relay failed — %1").arg(resRelay.errorMessage)); return false; }
 
     emit logMessage("  Turn On Then Short: done");
@@ -470,21 +479,21 @@ bool Page5TestWorker::executeTurnOnThenShort(const QVariantMap& cfg)
 
 bool Page5TestWorker::executeShortThenTurnOn(const QVariantMap& cfg)
 {
-    const Page1Config cfg1     = m_viewModel->page1Config();
+    const Page1Config cfg1     = m_context.page1;
     const QString     inputLbl = cfg.value("input_label").toString();
     const int         loadIdx  = cfg.value("load_index", -1).toInt();
     const int         relayIdx = cfg.value("relay_index", -1).toInt();
     const int         delayMs  = cfg.value("delay_ms", 5000).toInt();
 
     auto resRelay = InstrumentExecutor::runRelay(
-        cfg1, m_viewModel->relayRows(), relayIdx, RelayAction::RelayOn);
+        cfg1, m_context.relays, relayIdx, RelayAction::RelayOn);
     if (!resRelay.success) { emit logMessage(QString("  Short Then Turn On: relay failed — %1").arg(resRelay.errorMessage)); return false; }
 
     auto resIn = InstrumentExecutor::runInput(cfg1, inputLbl, InputAction::PowerOn);
     if (!resIn.success) { emit logMessage(QString("  Short Then Turn On: input failed — %1").arg(resIn.errorMessage)); return false; }
 
     auto resLoad = InstrumentExecutor::runLoad(
-        cfg1, m_viewModel->loadRows(), loadIdx, m_viewModel->loadMeta(), LoadAction::LoadOn);
+        cfg1, m_context.loads, loadIdx, m_context.loadMeta, LoadAction::LoadOn);
     if (!resLoad.success) { emit logMessage(QString("  Short Then Turn On: load failed — %1").arg(resLoad.errorMessage)); return false; }
 
     if (delayMs > 0 && !doDelay(delayMs, m_stopRequested))

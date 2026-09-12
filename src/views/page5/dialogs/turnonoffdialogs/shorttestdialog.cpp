@@ -239,10 +239,10 @@ void ShortTestDialog::buildUI(const QStringList&          inputOptions,
                     return;
                 }
                 const QStringList parts = inputOptions[dataIdx].split('/');
-                if (parts.size() == 3)
+                if (parts.size() == 4)
                     inputPreview->setText(
                         QString("Vin: %1  Frequency: %2  Phase: %3")
-                            .arg(parts[0], parts[1], parts[2]));
+                            .arg(parts[1], parts[2], parts[3]));
                 else
                     inputPreview->setText(inputOptions[dataIdx]);
             });

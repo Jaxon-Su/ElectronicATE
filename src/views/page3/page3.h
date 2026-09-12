@@ -90,6 +90,7 @@ private:
 
 private:
     Page3ViewModel *vm = nullptr;
+    bool m_loadOperationBusy = false;
 
     // Trigger
     QString m_currentTriggerModel;

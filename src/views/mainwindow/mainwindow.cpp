@@ -47,14 +47,14 @@ void MainWindow::setupUI()
     auto* p2VM = m_viewModel->page2ViewModel();
     auto* p3VM = m_viewModel->page3ViewModel();
     auto* p4VM = m_viewModel->page4ViewModel();
-    // auto* p5VM = m_viewModel->page5ViewModel();
+    auto* p5VM = m_viewModel->page5ViewModel();
 
     // 建立 Pages（只在這裡創建一次）
     m_page1 = new Page1(p1VM, this);
     m_page2 = new Page2(p2VM, this);
     m_page3 = new Page3(p3VM, this);
     m_page4 = new Page4(p4VM, this);
-    // m_page5 = new Page5(p5VM, this);
+    m_page5 = new Page5(p5VM, this);
 
     // 建立 TabWidget 並設置頁面
     m_tableWidget = new TableWidget(this);
@@ -62,7 +62,7 @@ void MainWindow::setupUI()
     m_tableWidget->setPage2(m_page2);
     m_tableWidget->setPage3(m_page3);
     m_tableWidget->setPage4(m_page4);
-    // m_tableWidget->setPage5(m_page5);
+    m_tableWidget->setPage5(m_page5);
 
     setCentralWidget(m_tableWidget);
 }

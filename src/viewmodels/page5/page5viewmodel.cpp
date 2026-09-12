@@ -1,3 +1,5 @@
+#include "page5conditionmapping.h"
+#include "messageservice.h"
 #include "page5viewmodel.h"
 #include "page5model.h"
 #include "page5taskpayload.h"
@@ -18,9 +20,10 @@ Page5ViewModel::Page5ViewModel(Page5Model *model, QObject *parent)
     qRegisterMetaType<QVector<TaskPayload>>("QVector<TaskPayload>");
     qRegisterMetaType<Page5RunPanel::TaskStatus>("Page5RunPanel::TaskStatus");
 
-    m_worker       = new Page5TestWorker(this);
+    m_worker       = new Page5TestWorker;
     m_workerThread = new QThread(this);
     m_worker->moveToThread(m_workerThread);
+    connect(m_workerThread, &QThread::finished, m_worker, &QObject::deleteLater);
     m_workerThread->start();
 
     // 示波器量測策略由 AppService 注入（透過 setOscStrategy）
@@ -42,9 +45,9 @@ Page5ViewModel::~Page5ViewModel()
         m_worker->stop();
     if (m_workerThread) {
         m_workerThread->quit();
-        m_workerThread->wait(3000);
+        m_workerThread->wait();
     }
-    delete m_worker;
+
 }
 
 // ─────────────────────────────────────────────
@@ -187,12 +190,32 @@ void Page5ViewModel::onDutRowsChanged(const QVector<DutRowData>& rows)
 //  startExecution：由 View 呼叫
 //  payloads 已在主執行緒預取，直接交給 Worker
 // ─────────────────────────────────────────────
-void Page5ViewModel::startExecution(const QVector<TaskPayload>& payloads)
+Page5ExecutionContext Page5ViewModel::executionContext() const
 {
+    return {page1Config(), inputRows(), loadMeta(), loadRows(), dynamicMeta(),
+            dynamicRows(), relayRows(), oscilloscope()};
+}
+
+bool Page5ViewModel::startExecution(const QVector<TaskPayload>& payloads)
+{
+    if (m_isRunning || payloads.isEmpty()) return false;
+    const auto context = executionContext();
+    auto resolved = payloads;
+    for (auto& payload : resolved) {
+        QString error;
+        if (!Page5Conditions::validate(payload, context, error)) {
+            MessageService::instance().showWarning("Task Configuration", payload.task.name + ": " + error);
+            return false;
+        }
+    }
+    // Reset before dispatch, so an immediate Stop cannot be lost when the worker starts.
+    m_worker->prepareRun();
     setRunning(true);
-    QMetaObject::invokeMethod(m_worker, "startTasks",
-                              Qt::QueuedConnection,
-                              Q_ARG(QVector<TaskPayload>, payloads));
+    const bool queued = QMetaObject::invokeMethod(m_worker,
+        [worker = m_worker, resolved, context]() { worker->startTasks(resolved, context); },
+        Qt::QueuedConnection);
+    if (!queued) setRunning(false);
+    return queued;
 }
 
 // ─────────────────────────────────────────────
@@ -200,8 +223,8 @@ void Page5ViewModel::startExecution(const QVector<TaskPayload>& payloads)
 // ─────────────────────────────────────────────
 void Page5ViewModel::stopExecution()
 {
-    m_worker->stop();
-    setRunning(false);
+    if (m_isRunning) m_worker->stop();
+    // Keep the UI locked until the worker emits finished().
 }
 
 // ─────────────────────────────────────────────

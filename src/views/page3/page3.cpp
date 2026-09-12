@@ -338,23 +338,18 @@ void Page3::applyStyles()
 
 void Page3::loadLock()
 {
-    // Load 和 DyLoad 互鎖
-    btnDyloadOn->setEnabled(!btnLoadOn->isChecked());
-    btnDyloadChg->setEnabled(!btnLoadOn->isChecked());
-    btnLoadOn->setEnabled(!btnDyloadOn->isChecked());
-    btnLoadChg->setEnabled(!btnDyloadOn->isChecked());
+    // Keep the operation lock active when toggled/forceOff refreshes the interlock.
+    const bool loadEnabled = !m_loadOperationBusy && !btnDyloadOn->isChecked();
+    const bool dyloadEnabled = !m_loadOperationBusy && !btnLoadOn->isChecked();
+    btnLoadOn->setEnabled(loadEnabled);
+    btnLoadChg->setEnabled(loadEnabled);
+    btnDyloadOn->setEnabled(dyloadEnabled);
+    btnDyloadChg->setEnabled(dyloadEnabled);
 }
 
 void Page3::setLoadOperationBusy(bool busy)
 {
-    if (busy) {
-        btnLoadOn->setEnabled(false);
-        btnLoadChg->setEnabled(false);
-        btnDyloadOn->setEnabled(false);
-        btnDyloadChg->setEnabled(false);
-        return;
-    }
-
+    m_loadOperationBusy = busy;
     loadLock();
 }
 
