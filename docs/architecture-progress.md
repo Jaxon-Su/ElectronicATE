@@ -324,3 +324,7 @@ User authorized a GitHub release. Created refactor/architecture-alpha3 from main
 - XML 批次套用抑制 ViewModel 通知，成功同步依賴後公布；失敗回復序列化快照，拒絕巢狀載入及重複段落。
 - 關閉視窗改為先停止 Page5／斷開 Page4；Page3 有輸出或背景工作時維持視窗供停止操作。
 - 26 組離線測試及 Release 建置；實機驗收未執行，依 hardware-acceptance.md 由現場確認。
+
+## 2026-09-15 Page1 跳頁回歸修正
+
+背景設定連線與實際控制狀態分開：背景連線不鎖定 Page1／Page2，也不變更目前頁籤；暫停 Page3 控制元件及 Page4／Page5 操作入口。實際控制時延後設定套用。補上重複設定更新、目前頁面保持及控制恢復的回歸測試。

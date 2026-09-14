@@ -92,7 +92,7 @@ void Page3ViewModel::applyPendingConfig()
 {
     if (!m_controlAllowed) return;
     // All queue access is on the ViewModel thread; background work owns a snapshot.
-    auto snapshot = m_configUpdates.tryStart(m_captureSession->isBusy());
+    auto snapshot = m_configUpdates.tryStart(hasActiveControl());
     if (!snapshot) {
         if (m_configUpdates.hasPending() && !m_configUpdates.isRunning()) {
             QTimer::singleShot(1000, this, [this] { m_debounce->schedule(); });
@@ -390,7 +390,7 @@ void Page3ViewModel::rejectOperation(const QString& title, const QString& messag
 // handleInput
 void Page3ViewModel::handleInput(InputAction action)
 {
-    if (!m_controlAllowed) return;
+    if (!m_controlAllowed || isConfigurationBusy()) return;
     const auto& inputSel = m_selections.value(TableKind::Input);
     auto validResult = InstrumentConfigValidator::validateInput(m_page1Config, inputSel.text);
     if (!validResult.isValid) {
@@ -414,7 +414,7 @@ void Page3ViewModel::handleInput(InputAction action)
 // handleRelay
 void Page3ViewModel::handleRelay(RelayAction action)
 {
-    if (!m_controlAllowed) return;
+    if (!m_controlAllowed || isConfigurationBusy()) return;
     const auto& relaySel = m_selections.value(TableKind::Relay);
     auto validResult = InstrumentConfigValidator::validateRelay(m_page1Config, relaySel.text);
     if (!validResult.isValid) {
@@ -435,7 +435,7 @@ void Page3ViewModel::handleRelay(RelayAction action)
 // handleLoad
 void Page3ViewModel::handleLoad(LoadAction action)
 {
-    if (!m_controlAllowed) return;
+    if (!m_controlAllowed || isConfigurationBusy()) return;
     const auto& loadSel = m_selections.value(TableKind::Load);
     auto validResult = InstrumentConfigValidator::validateLoad(m_page1Config, loadSel.text);
     if (!validResult.isValid) {
@@ -459,7 +459,7 @@ void Page3ViewModel::handleLoad(LoadAction action)
 
 void Page3ViewModel::handleDyLoad(DyLoadAction action)
 {
-    if (!m_controlAllowed) return;
+    if (!m_controlAllowed || isConfigurationBusy()) return;
     const auto& dyLoadSel = m_selections.value(TableKind::DyLoad);
     auto validResult = InstrumentConfigValidator::validateDyLoad(m_page1Config, dyLoadSel.text);
     if (!validResult.isValid) {
@@ -572,7 +572,12 @@ void Page3ViewModel::startInstrumentOperation(std::function<InstrumentOperationR
 
 bool Page3ViewModel::isControlActive() const
 {
-    if (m_pendingOperations || m_capturePreparing || m_captureSession->isBusy() || m_configUpdates.isRunning()) return true;
+    return hasActiveControl() || isConfigurationBusy();
+}
+
+bool Page3ViewModel::hasActiveControl() const
+{
+    if (m_pendingOperations || m_capturePreparing || m_captureSession->isBusy()) return true;
     for (bool on : m_outputsOn) if (on) return true;
     return false;
 }
@@ -591,7 +596,7 @@ void Page3ViewModel::updateControlActivity()
 }
 void Page3ViewModel::executeCapture(const std::function<void()>& execute)
 {
-    if (!m_controlAllowed) return;
+    if (!m_controlAllowed || isConfigurationBusy()) return;
     QPointer<Page3ViewModel> alive(this);
     ++m_capturePreparing;
     const auto finish = qScopeGuard([alive] {

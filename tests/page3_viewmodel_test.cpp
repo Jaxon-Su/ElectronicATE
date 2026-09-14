@@ -174,7 +174,10 @@ int main(int argc, char** argv)
             require(!lockVm.isControlActive() && configurations == 0, "disabled page reconnected instruments");
             lockVm.setControlAllowed(true);
             QMetaObject::invokeMethod(&lockVm, "applyPendingConfig", Qt::DirectConnection);
-            require(lockVm.isControlActive(), "scope connection did not lock other pages");
+            require(lockVm.isControlActive() && lockVm.isConfigurationBusy() && !lockVm.hasActiveControl(),
+                    "background connection was classified as manual control");
+            lockVm.handleInput(InputAction::PowerOn);
+            require(commands == 0, "manual operation raced background connection");
             finishWork();
             require(!lockVm.isControlActive() && configurations == 1, "connection completion kept lock");
             lockVm.onConditionsChanged(conditions);

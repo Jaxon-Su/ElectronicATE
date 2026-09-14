@@ -212,11 +212,11 @@ void MainWindow::updateControlPageLock()
     auto* p3 = m_viewModel->page3ViewModel();
     auto* p4 = m_viewModel->page4ViewModel();
     auto* p5 = m_viewModel->page5ViewModel();
-    const std::array<bool, 3> active{p3->isControlActive(), p4->isControlActive(), p5->isRunning()};
+    const std::array<bool, 3> active{p3->hasActiveControl(), p4->isControlActive(), p5->isRunning()};
     p3->setControlAllowed(!active[1] && !active[2]);
-    p4->setControlAllowed(!active[0] && !active[2]);
-    p5->setControlAllowed(!active[0] && !active[1]);
-    applyControlPageLock(m_tableWidget->tabWidget(), active);
+    p4->setControlAllowed(!active[0] && !active[2] && !p3->isConfigurationBusy());
+    p5->setControlAllowed(!active[0] && !active[1] && !p3->isConfigurationBusy());
+    applyControlPageLock(m_tableWidget->tabWidget(), active, p3->isConfigurationBusy());
     menuBar()->setEnabled(!active[0] && !active[1] && !active[2]);
 }
 

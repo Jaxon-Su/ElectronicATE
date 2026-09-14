@@ -50,6 +50,8 @@ public:
     }
 
     bool isControlActive() const;
+    bool hasActiveControl() const;
+    bool isConfigurationBusy() const { return m_configUpdates.isRunning(); }
     void setControlAllowed(bool allowed);
 
     // IXmlSerializable
