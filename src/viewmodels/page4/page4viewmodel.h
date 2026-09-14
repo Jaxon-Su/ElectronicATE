@@ -25,6 +25,8 @@ public:
     void connectToAddress(const QString &address);
     void disconnect();
     bool isConnected() const;
+    bool isControlActive() const;
+    void setControlAllowed(bool allowed) { m_controlAllowed = allowed; }
 
     // ==================== 指令操作 ====================
     void sendCommand(const QString &command);
@@ -53,6 +55,7 @@ public:
     Page4Model* model() const { return m_model; }
 
 signals:
+    void controlActiveChanged(bool active);
     // 連線狀態變更（帶描述訊息）
     void connectionStatusChanged(ConnectionStatus status, const QString &message);
 
@@ -83,5 +86,7 @@ private:
     CommunicationCreator m_create;
     quint64 m_connectionRevision = 0;
     bool m_commandInProgress = false;
+    bool m_controlAllowed = true;
+    bool m_connectionActive = false;
 
 };

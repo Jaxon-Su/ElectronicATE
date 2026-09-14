@@ -24,6 +24,7 @@
 #include <QPointer>
 
 #include <memory>
+#include <optional>
 #include <utility>
 
 // InputAction / LoadAction / DyLoadAction / RelayAction
@@ -47,6 +48,9 @@ public:
     {
         m_captureFileSelector = std::move(selector);
     }
+
+    bool isControlActive() const;
+    void setControlAllowed(bool allowed);
 
     // IXmlSerializable
     QString xmlTagName() const override { return "Page3"; }
@@ -127,6 +131,14 @@ private slots:
 
 private:
 
+    bool m_controlAllowed = true;
+    bool m_controlActive = false;
+    int m_pendingOperations = 0;
+    int m_capturePreparing = 0;
+    QMap<TableKind, bool> m_outputsOn;
+    void updateControlActivity();
+    void executeCapture(const std::function<void()>& execute);
+
     // UI 狀態
 
     QStringList m_inputTitles;
@@ -176,7 +188,7 @@ private:
     void finishLoadOperation();
     void rejectOperation(const QString& title, const QString& message, TableKind type);
     void startInstrumentOperation(std::function<InstrumentOperationResult()> work,
-        const QString& errorTitle, TableKind type, bool forceOffOnFailure, bool releaseLoadBusy = false);
+        const QString& errorTitle, TableKind type, bool forceOffOnFailure, bool releaseLoadBusy = false, std::optional<bool> outputOn = {});
 
     // 防抖延遲時間 (毫秒)
     static const int configDelayTime = 500;
@@ -190,11 +202,13 @@ private:
     CaptureContext buildCaptureContext() const;
 
 signals:
+    void controlActiveChanged(bool active);
     void headersChanged(const QStringList &hdr);
     void rowLabelsChanged(const QStringList &lbl);
     void page1ConfigChanged(const Page1Config &cfg);
     void titlesUpdated(TableKind type, const QStringList& titles);
     void forceOff(TableKind type);
+    void restoreOutputState(TableKind type, bool on);
     void restoreSelections(TableKind type, int index, const QString& text);
     void loadOperationBusyChanged(bool busy);
 };

@@ -235,6 +235,7 @@ void Page3::setupConnections()
     connect(this, &Page3::relayChanged, vm, &Page3ViewModel::onRelayChanged);
 
     connect(vm, &Page3ViewModel::forceOff, this, &Page3::forceButtonOff);
+    connect(vm, &Page3ViewModel::restoreOutputState, this, &Page3::setOutputButtonState);
     connect(vm, &Page3ViewModel::page1ConfigChanged, this, &Page3::onPage1ConfigChanged);
     connect(vm, &Page3ViewModel::headersChanged, this, &Page3::onHeadersChanged);
     connect(vm, &Page3ViewModel::rowLabelsChanged, this, &Page3::onRowLabelsChanged);
@@ -452,6 +453,11 @@ void Page3::onTitlesUpdated(TableKind type, const QStringList& titles)
 
 void Page3::forceButtonOff(TableKind type)
 {
+    setOutputButtonState(type, false);
+}
+
+void Page3::setOutputButtonState(TableKind type, bool on)
+{
     QPushButton* btn = nullptr;
     switch (type) {
     case TableKind::Input:   btn = btnInput;     break;
@@ -463,8 +469,7 @@ void Page3::forceButtonOff(TableKind type)
 
     if (btn) {
         QSignalBlocker blocker(btn);
-        btn->setChecked(false);
-        qDebug() << "forceButtonOff";
+        btn->setChecked(on);
         if (btn == btnLoadOn || btn == btnDyloadOn)
             loadLock();
     }

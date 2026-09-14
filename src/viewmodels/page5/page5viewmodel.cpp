@@ -197,7 +197,7 @@ Page5ExecutionContext Page5ViewModel::executionContext() const
 
 bool Page5ViewModel::startExecution(const QVector<TaskPayload>& payloads)
 {
-    if (m_isRunning || payloads.isEmpty()) return false;
+    if (!m_controlAllowed || m_isRunning || payloads.isEmpty()) return false;
     const auto context = executionContext();
     auto resolved = payloads;
     for (auto& payload : resolved) {

@@ -45,3 +45,5 @@ Additional suites: page2_model_updates verifies output resizing and atomic XML r
 instrument_operation_queue checks Page3's shared FIFO primitive: operation order, continuation after exceptions, reentrant submissions and discarding pending work on owner destruction. It does not test physical instruments or cross-page arbitration.
 
 page3_viewmodel_without_drivers links ElectronicATEManualControl with injected execution functions to test queued operations, captured condition snapshots, Load retry, callback deletion, and adopted/abandoned scope connection lifetimes. page2_widget_snapshot uses offscreen QtWidgets to verify real table-to-snapshot synchronization and output resizing; it does not show the UI or use hardware.
+
+`control_page_lock` 使用 offscreen QtWidgets 驗證 Page3／Page4／Page5 互斥停用、Page5 設定頁鎖定及解鎖彙整。Page3／Page4 測試另涵蓋輸出持續 ON、關閉失敗、延後連線、擷取取消及指令返回前不解鎖。

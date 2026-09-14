@@ -193,6 +193,28 @@ int main(int argc, char** argv)
             cleanup.connectToAddress("destructor-test");
         }
         require(failingClose->destroyed == 2, "destructor did not release throwing transport");
+        {
+            Page4Model lockModel;
+            auto lockState = std::make_shared<CommState>();
+            Page4ViewModel lockVm(&lockModel, [lockState](const QString&) {
+                return std::make_unique<ConsoleCommunication>(lockState);
+            });
+            lockVm.setControlAllowed(false);
+            lockVm.connectToAddress("offline");
+            require(!lockVm.isControlActive() && !lockVm.isConnected(), "disabled console connected");
+            lockVm.setControlAllowed(true);
+            lockVm.connectToAddress("offline");
+            require(lockVm.isControlActive(), "connected console did not own control");
+            QObject::connect(&lockVm, &Page4ViewModel::commandSent, [&] {
+                lockVm.disconnect();
+                require(lockVm.isControlActive(), "disconnect unlocked an unfinished command");
+            });
+            lockVm.sendCommand("*CLS");
+            require(!lockVm.isControlActive(), "finished disconnected console stayed locked");
+            lockState->openSuccess = false;
+            lockVm.connectToAddress("offline");
+            require(!lockVm.isControlActive(), "failed connection stayed locked");
+        }
         std::cout << "PASS: injected console communication, framing and failed write history\n";
         return 0;
     } catch (const std::exception& e) {

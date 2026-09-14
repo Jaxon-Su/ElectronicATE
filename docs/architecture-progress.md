@@ -308,3 +308,11 @@ Inventory found InstrumentCreator still read the legacy address field for AC Sou
 ## GitHub release preparation
 
 User authorized a GitHub release. Created refactor/architecture-alpha3 from main at 02f3e97; planned tag v0.2.0-alpha.3 follows the repository prerelease convention. All 24 suites passed. A fresh Windows x64 Release build and deployable archive are being prepared. No additional broad refactoring is included in this publication step; remaining architectural limitations are documented in the release notes.
+
+## 2026-09-14 控制頁互斥
+
+- MainWindow 統一彙整 Page3／Page4／Page5 控制狀態，停用其餘兩頁；保留 Page5 執行中的設定頁與選單鎖定。
+- Page3 涵蓋指令佇列、輸出 ON、擷取及示波器連線；其他頁控制時延後示波器設定套用。
+- Page4 連線期間保持控制權，斷線仍等待執行中指令結束；三頁的操作入口也檢查控制權。
+- Page3 關閉輸出失敗保留控制權及可重試的按鈕狀態。擷取取消釋放控制權。
+- 新增控制頁 offscreen 測試，擴充 Page3／Page4 的狀態及失敗回復測試；25 組 CTest 通過，實體儀器待驗證。

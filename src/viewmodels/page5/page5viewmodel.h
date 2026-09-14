@@ -20,6 +20,7 @@ class Page5ViewModel : public QObject, public IXmlSerializable
 {
     Q_OBJECT
 public:
+    void setControlAllowed(bool allowed) { m_controlAllowed = allowed; }
     explicit Page5ViewModel(Page5Model *model, QObject *parent = nullptr);
     ~Page5ViewModel() override;
 
@@ -82,6 +83,7 @@ private slots:
     void setRunning(bool running);
 
 private:
+    bool m_controlAllowed = true;
     Page5Model*                   m_model          = nullptr;
     const ITestConditionProvider* m_conditionProvider = nullptr;
     Oscilloscope*                 m_oscilloscope   = nullptr;

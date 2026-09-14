@@ -5,6 +5,7 @@
 #include <QtConcurrent/QtConcurrentRun>
 #include <QPointer>
 #include <QTimer>
+#include <QScopeGuard>
 #include "instrumentconfigvalidator.h"
 #include <QDir>
 #include "pngcapturecommand.h"
@@ -89,6 +90,7 @@ void Page3ViewModel::onPage1ConfigChanged(const Page1Config &cfg)
 
 void Page3ViewModel::applyPendingConfig()
 {
+    if (!m_controlAllowed) return;
     // All queue access is on the ViewModel thread; background work owns a snapshot.
     auto snapshot = m_configUpdates.tryStart(m_captureSession->isBusy());
     if (!snapshot) {
@@ -100,6 +102,8 @@ void Page3ViewModel::applyPendingConfig()
 
     m_page1Config = *snapshot;
     QPointer<Page3ViewModel> alive(this);
+    updateControlActivity();
+    if (!alive) return;
     emit page1ConfigChanged(m_page1Config);
     if (!alive) return;
     cleanupAllInstruments();
@@ -124,6 +128,8 @@ void Page3ViewModel::applyPendingConfig()
         if (!alive) return;
         watcher->deleteLater();
         m_configUpdates.complete();
+        updateControlActivity();
+        if (!alive) return;
         if (m_configUpdates.hasPending()) m_debounce->schedule();
         if (!error.isEmpty())
             MessageService::instance().showWarning(tr("Connection Failed"), error);
@@ -378,11 +384,13 @@ void Page3ViewModel::rejectOperation(const QString& title, const QString& messag
     QPointer<Page3ViewModel> alive(this);
     MessageService::instance().showWarning(title, message);
     if (alive) emit forceOff(type);
+    if (alive) emit restoreOutputState(type, m_outputsOn.value(type));
 }
 
 // handleInput
 void Page3ViewModel::handleInput(InputAction action)
 {
+    if (!m_controlAllowed) return;
     const auto& inputSel = m_selections.value(TableKind::Input);
     auto validResult = InstrumentConfigValidator::validateInput(m_page1Config, inputSel.text);
     if (!validResult.isValid) {
@@ -399,12 +407,14 @@ void Page3ViewModel::handleInput(InputAction action)
     const InputRow inputRow = m_conditions.inputRows.at(inputSel.index);
     startInstrumentOperation([cfg, inputRow, action, run = m_operations.input] {
         return run(cfg, inputRow, action);
-    }, "Input Configuration Error", TableKind::Input, action == InputAction::PowerOn);
+    }, "Input Configuration Error", TableKind::Input, action == InputAction::PowerOn, false,
+        action == InputAction::Change ? std::nullopt : std::optional<bool>(action == InputAction::PowerOn));
 }
 
 // handleRelay
 void Page3ViewModel::handleRelay(RelayAction action)
 {
+    if (!m_controlAllowed) return;
     const auto& relaySel = m_selections.value(TableKind::Relay);
     auto validResult = InstrumentConfigValidator::validateRelay(m_page1Config, relaySel.text);
     if (!validResult.isValid) {
@@ -417,13 +427,15 @@ void Page3ViewModel::handleRelay(RelayAction action)
     const int         condIdx   = relaySel.index;
     startInstrumentOperation([cfg, relayRows, condIdx, action, run = m_operations.relay] {
         return run(cfg, relayRows, condIdx, action);
-    }, "Relay Communication Error", TableKind::Relay, action == RelayAction::RelayOn);
+    }, "Relay Communication Error", TableKind::Relay, action == RelayAction::RelayOn, false,
+        action == RelayAction::Change ? std::nullopt : std::optional<bool>(action == RelayAction::RelayOn));
 }
 
 
 // handleLoad
 void Page3ViewModel::handleLoad(LoadAction action)
 {
+    if (!m_controlAllowed) return;
     const auto& loadSel = m_selections.value(TableKind::Load);
     auto validResult = InstrumentConfigValidator::validateLoad(m_page1Config, loadSel.text);
     if (!validResult.isValid) {
@@ -440,12 +452,14 @@ void Page3ViewModel::handleLoad(LoadAction action)
     const bool        syncEnabled = m_syncEnabled;
     startInstrumentOperation([cfg, loadRows, condIdx, meta, action, syncEnabled, run = m_operations.load] {
         return run(cfg, loadRows, condIdx, meta, action, syncEnabled);
-    }, "Load Configuration Error", TableKind::Load, action == LoadAction::LoadOn, true);
+    }, "Load Configuration Error", TableKind::Load, action == LoadAction::LoadOn, true,
+        action == LoadAction::Change ? std::nullopt : std::optional<bool>(action == LoadAction::LoadOn));
 }
 
 
 void Page3ViewModel::handleDyLoad(DyLoadAction action)
 {
+    if (!m_controlAllowed) return;
     const auto& dyLoadSel = m_selections.value(TableKind::DyLoad);
     auto validResult = InstrumentConfigValidator::validateDyLoad(m_page1Config, dyLoadSel.text);
     if (!validResult.isValid) {
@@ -465,31 +479,32 @@ void Page3ViewModel::handleDyLoad(DyLoadAction action)
     const auto        meta   = m_conditions.dynamicMeta;
     startInstrumentOperation([cfg, dyRows, condIdx, meta, action, syncEnabled, syncDirty, run = m_operations.dynamic] {
         return run(cfg, dyRows, condIdx, meta, action, syncEnabled, syncDirty);
-    }, "Dynamic Load Configuration Error", TableKind::DyLoad, action == DyLoadAction::DyLoadOn, true);
+    }, "Dynamic Load Configuration Error", TableKind::DyLoad, action == DyLoadAction::DyLoadOn, true,
+        action == DyLoadAction::Change ? std::nullopt : std::optional<bool>(action == DyLoadAction::DyLoadOn));
 }
 
 void Page3ViewModel::OnWaveformCaptured()
 {
     PngCaptureCommand cmd(buildCaptureContext());
-    cmd.execute();
+    executeCapture([&cmd] { cmd.execute(); });
 }
 
 void Page3ViewModel::OnCsvCaptured()
 {
     CsvCaptureCommand cmd(buildCaptureContext());
-    cmd.execute();
+    executeCapture([&cmd] { cmd.execute(); });
 }
 
 void Page3ViewModel::OnAllCsvCaptured()
 {
     AllCsvCaptureCommand cmd(buildCaptureContext());
-    cmd.execute();
+    executeCapture([&cmd] { cmd.execute(); });
 }
 
 void Page3ViewModel::OnWfmCaptured()
 {
     WfmCaptureCommand cmd(buildCaptureContext());
-    cmd.execute();
+    executeCapture([&cmd] { cmd.execute(); });
 }
 
 CaptureContext Page3ViewModel::buildCaptureContext() const
@@ -528,17 +543,72 @@ void Page3ViewModel::validateXml(QXmlStreamReader& reader) const
 }
 
 void Page3ViewModel::startInstrumentOperation(std::function<InstrumentOperationResult()> work,
-    const QString& errorTitle, TableKind type, bool forceOffOnFailure, bool releaseLoadBusy)
+    const QString& errorTitle, TableKind type, bool forceOffOnFailure, bool releaseLoadBusy, std::optional<bool> outputOn)
 {
+    QPointer<Page3ViewModel> guard(this);
+    ++m_pendingOperations;
+    updateControlActivity();
+    if (!guard) return;
     m_operationQueue.submit(std::move(work),
-        [this, errorTitle, type, forceOffOnFailure, releaseLoadBusy](const InstrumentOperationResult& result) {
+        [this, errorTitle, type, forceOffOnFailure, releaseLoadBusy, outputOn](const InstrumentOperationResult& result) {
             QPointer<Page3ViewModel> alive(this);
             if (!result.success) {
                 if (!result.errorMessage.isEmpty())
                     MessageService::instance().showWarning(errorTitle, result.errorMessage);
                 if (!alive) return;
                 if (forceOffOnFailure) emit forceOff(type);
+                if (alive && outputOn) emit restoreOutputState(type, m_outputsOn.value(type));
             }
             if (alive && releaseLoadBusy) finishLoadOperation();
+            if (!alive) return;
+            if (result.success && outputOn) m_outputsOn[type] = *outputOn;
+            --m_pendingOperations;
+            updateControlActivity();
         });
+}
+
+bool Page3ViewModel::isControlActive() const
+{
+    if (m_pendingOperations || m_capturePreparing || m_captureSession->isBusy() || m_configUpdates.isRunning()) return true;
+    for (bool on : m_outputsOn) if (on) return true;
+    return false;
+}
+void Page3ViewModel::setControlAllowed(bool allowed)
+{
+    if (m_controlAllowed == allowed) return;
+    m_controlAllowed = allowed;
+    if (allowed && m_configUpdates.hasPending()) m_debounce->schedule();
+}
+void Page3ViewModel::updateControlActivity()
+{
+    const bool active = isControlActive();
+    if (m_controlActive == active) return;
+    m_controlActive = active;
+    emit controlActiveChanged(active);
+}
+void Page3ViewModel::executeCapture(const std::function<void()>& execute)
+{
+    if (!m_controlAllowed) return;
+    QPointer<Page3ViewModel> alive(this);
+    ++m_capturePreparing;
+    const auto finish = qScopeGuard([alive] {
+        if (!alive) return;
+        --alive->m_capturePreparing;
+        // The capture lease ends on a worker thread. Observe it on the UI thread
+        // only while capture is active; do not call a destroyed QObject from a worker.
+        auto* timer = new QTimer(alive);
+        timer->setInterval(50);
+        QObject::connect(timer, &QTimer::timeout, alive, [alive, timer] {
+            if (!alive->m_captureSession->isBusy()) {
+                timer->stop();
+                timer->deleteLater();
+                alive->updateControlActivity();
+            }
+        });
+        if (alive->m_captureSession->isBusy()) timer->start();
+        else timer->deleteLater();
+        alive->updateControlActivity();
+    });
+    updateControlActivity();
+    if (alive) execute();
 }

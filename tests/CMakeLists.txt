@@ -122,3 +122,9 @@ target_include_directories(page2_widget_test PRIVATE ../src/views/page2 ../src/u
 target_link_libraries(page2_widget_test PRIVATE ElectronicATEConditions Qt6::Widgets)
 add_test(NAME page2_widget_snapshot COMMAND page2_widget_test)
 set_tests_properties(page2_widget_snapshot PROPERTIES TIMEOUT 20 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(control_page_lock_test control_page_lock_test.cpp)
+target_include_directories(control_page_lock_test PRIVATE ../src/ui)
+target_link_libraries(control_page_lock_test PRIVATE Qt6::Widgets)
+add_test(NAME control_page_lock COMMAND control_page_lock_test)
+set_tests_properties(control_page_lock PROPERTIES TIMEOUT 10 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

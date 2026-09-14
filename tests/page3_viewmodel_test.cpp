@@ -2,6 +2,9 @@
 #include <QCoreApplication>
 #include <QThreadPool>
 #include <QSemaphore>
+#include <QEventLoop>
+#include <QTimer>
+#include <QTemporaryDir>
 #include <iostream>
 #include <stdexcept>
 
@@ -20,7 +23,8 @@ class PendingScope : public Oscilloscope {
 public:
     QString model() const override { return "pending"; }
     QString vendor() const override { return "offline"; }
-    QByteArray captureScreenshot(const QString&, const QString&) override { return {}; }
+    QByteArray captureScreenshot(const QString&, const QString&) override { return capture ? capture() : QByteArray{}; }
+    std::function<QByteArray()> capture;
     bool isConnected() const override { return connected; }
     void disconnect() override { connected = false; ++disconnects; }
     bool connected = true;
@@ -148,6 +152,91 @@ int main(int argc, char** argv)
             finishWork();
         }
         require(connectionAttempts == 2, "failed connection stranded pending-config runner");
+        // Control ownership spans the whole FIFO and successful output ON state.
+        {
+            Page3Model lockModel;
+            Page3Operations lockOps;
+            int commands = 0, configurations = 0;
+            bool failOff = false;
+            bool restoredOn = false;
+            lockOps.connectScopes = [&](const Page1Config&) {
+                ++configurations;
+                return OscilloscopeManager::OscMap{};
+            };
+            lockOps.input = [&](const Page1Config&, const InputRow&, InputAction action) {
+                ++commands;
+                return InstrumentOperationResult{!(failOff && action == InputAction::PowerOff), {}};
+            };
+            Page3ViewModel lockVm(&lockModel, lockOps);
+            lockVm.setControlAllowed(false);
+            lockVm.onPage1ConfigChanged(config);
+            QMetaObject::invokeMethod(&lockVm, "applyPendingConfig", Qt::DirectConnection);
+            require(!lockVm.isControlActive() && configurations == 0, "disabled page reconnected instruments");
+            lockVm.setControlAllowed(true);
+            QMetaObject::invokeMethod(&lockVm, "applyPendingConfig", Qt::DirectConnection);
+            require(lockVm.isControlActive(), "scope connection did not lock other pages");
+            finishWork();
+            require(!lockVm.isControlActive() && configurations == 1, "connection completion kept lock");
+            lockVm.onConditionsChanged(conditions);
+            lockVm.onSelected(TableKind::Input, 0, "input");
+            QObject::connect(&lockVm, &Page3ViewModel::restoreOutputState, [&](TableKind, bool on) { restoredOn = on; });
+            QVector<bool> activity;
+            QObject::connect(&lockVm, &Page3ViewModel::controlActiveChanged, [&](bool on) { activity.append(on); });
+            lockVm.handleInput(InputAction::PowerOn);
+            require(lockVm.isControlActive(), "accepted command did not lock immediately");
+            finishWork();
+            require(lockVm.isControlActive(), "output ON released ownership");
+            failOff = true;
+            lockVm.handleInput(InputAction::PowerOff);
+            finishWork();
+            require(lockVm.isControlActive() && restoredOn, "failed output OFF released ownership or lost retry button");
+            failOff = false;
+            lockVm.handleInput(InputAction::PowerOff);
+            finishWork();
+            require(!lockVm.isControlActive() && activity == QVector<bool>{true, false}, "output ownership flickered or stayed locked");
+            lockVm.setControlAllowed(false);
+            lockVm.handleInput(InputAction::PowerOn);
+            finishWork();
+            require(commands == 3 && !lockVm.isControlActive(), "disabled page accepted command");
+        }
+        {
+            Page3Model captureModel;
+            Page3Operations captureOps;
+            auto scope = std::make_shared<PendingScope>();
+            captureOps.connectScopes = [scope](const Page1Config&) {
+                return OscilloscopeManager::OscMap{{"pending", scope}};
+            };
+            Page3ViewModel captureVm(&captureModel, captureOps);
+            captureVm.onPage1ConfigChanged(config);
+            QMetaObject::invokeMethod(&captureVm, "applyPendingConfig", Qt::DirectConnection);
+            finishWork();
+            bool selected = false;
+            captureVm.setCaptureFileSelector([&](const QString&, const QString&, const QString&) {
+                selected = captureVm.isControlActive();
+                return QString{};
+            });
+            captureVm.OnWaveformCaptured();
+            require(selected && !captureVm.isControlActive(), "capture cancellation stranded lock");
+            QTemporaryDir directory;
+            QSemaphore capturing, releaseCapture;
+            scope->capture = [&] {
+                capturing.release();
+                releaseCapture.acquire();
+                return QByteArray{};
+            };
+            captureVm.setCaptureFileSelector([&](const QString&, const QString&, const QString&) {
+                return directory.filePath("capture.png");
+            });
+            captureVm.OnWaveformCaptured();
+            const bool started = capturing.tryAcquire(1, 3000);
+            const bool held = captureVm.isControlActive();
+            releaseCapture.release();
+            finishWork();
+            QEventLoop settle;
+            QTimer::singleShot(100, &settle, &QEventLoop::quit);
+            settle.exec();
+            require(started && held && !captureVm.isControlActive(), "background capture lock lifetime incorrect");
+        }
         std::cout << "PASS: Page3 injected operations, snapshots, FIFO and load recovery\n";
         return 0;
     } catch (const std::exception& error) {

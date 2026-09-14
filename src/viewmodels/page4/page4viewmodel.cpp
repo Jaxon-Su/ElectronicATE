@@ -19,6 +19,11 @@ Page4ViewModel::Page4ViewModel(Page4Model *model, CommunicationCreator create, Q
 
 {
 
+    connect(this, &Page4ViewModel::connectionStatusChanged, this, [this](ConnectionStatus status) {
+        m_connectionActive = status == ConnectionStatus::Connecting || status == ConnectionStatus::Connected;
+        emit controlActiveChanged(isControlActive());
+    });
+
     // 監聽 Model 變化，轉發給 View
     connect(m_model, &Page4Model::addressHistoryChanged,
             this, &Page4ViewModel::historyUpdated);
@@ -35,6 +40,7 @@ Page4ViewModel::~Page4ViewModel()
 
 void Page4ViewModel::connectToAddress(const QString &address)
 {
+    if (!m_controlAllowed) return;
     QString trimmedAddr = address.trimmed();
 
     if (trimmedAddr.isEmpty()) {
@@ -105,6 +111,7 @@ bool Page4ViewModel::isConnected() const
 
 void Page4ViewModel::sendCommand(const QString &command)
 {
+    if (!m_controlAllowed) return;
     QPointer<Page4ViewModel> alive(this);
     if (m_commandInProgress) {
         emit errorOccurred(tr("指令仍在執行中，請稍後再試"));
@@ -112,8 +119,13 @@ void Page4ViewModel::sendCommand(const QString &command)
     }
     m_commandInProgress = true;
     const auto releaseCommand = qScopeGuard([alive] {
-        if (alive) alive->m_commandInProgress = false;
+        if (alive) {
+            alive->m_commandInProgress = false;
+            emit alive->controlActiveChanged(alive->isControlActive());
+        }
     });
+    emit controlActiveChanged(true);
+    if (!alive) return;
     QString cmd = command.trimmed();
 
     if (cmd.isEmpty()) {
@@ -266,4 +278,9 @@ void Page4ViewModel::validateXml(QXmlStreamReader& reader) const
 {
     Page4Model candidate;
     candidate.loadXml(reader);
+}
+
+bool Page4ViewModel::isControlActive() const
+{
+    return m_connectionActive || m_commandInProgress;
 }

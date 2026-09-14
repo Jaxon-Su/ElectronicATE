@@ -48,6 +48,7 @@ private:
     Page4* m_page4 = nullptr;
     Page5* m_page5 = nullptr;
 
+    void updateControlPageLock();
     void setupUI();
     void setupMenuBar();
     void setupConnections();

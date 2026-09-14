@@ -9,6 +9,9 @@
 #include "page4.h"
 #include "page5.h"
 #include "page5viewmodel.h"
+#include "page3viewmodel.h"
+#include "page4viewmodel.h"
+#include "../../ui/controlpagelock.h"
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QDir>
@@ -102,18 +105,13 @@ void MainWindow::setupConnections()
     connect(m_viewModel, &MainWindowViewModel::showMessage,
             this, &MainWindow::onShowMessage);
 
-    // ── Page5 執行中 → 鎖定其他所有 tab ─────────────────
-    // Page5 是第 5 個 tab（index 4），鎖定時只保留它可點擊
-    if (auto* p5vm = m_viewModel->page5ViewModel()) {
-        connect(p5vm, &Page5ViewModel::runningChanged,
-                this, [this](bool running) {
-                    constexpr int PAGE5_TAB_INDEX = 4;
-                    if (m_tableWidget)
-                        m_tableWidget->setOtherTabsLocked(running, PAGE5_TAB_INDEX);
-                    // MenuBar 鎖定：執行中禁止開啟檔案/儲存等操作
-                    menuBar()->setEnabled(!running);
-                });
-    }
+    connect(m_viewModel->page3ViewModel(), &Page3ViewModel::controlActiveChanged,
+            this, &MainWindow::updateControlPageLock);
+    connect(m_viewModel->page4ViewModel(), &Page4ViewModel::controlActiveChanged,
+            this, &MainWindow::updateControlPageLock);
+    connect(m_viewModel->page5ViewModel(), &Page5ViewModel::runningChanged,
+            this, &MainWindow::updateControlPageLock);
+    updateControlPageLock();
 }
 
 void MainWindow::setupMessageService()
@@ -205,4 +203,17 @@ void MainWindow::onShowMessage(const QString& title, const QString& message, int
         QMessageBox::information(this, title, message);
         break;
     }
+}
+
+void MainWindow::updateControlPageLock()
+{
+    auto* p3 = m_viewModel->page3ViewModel();
+    auto* p4 = m_viewModel->page4ViewModel();
+    auto* p5 = m_viewModel->page5ViewModel();
+    const std::array<bool, 3> active{p3->isControlActive(), p4->isControlActive(), p5->isRunning()};
+    p3->setControlAllowed(!active[1] && !active[2]);
+    p4->setControlAllowed(!active[0] && !active[2]);
+    p5->setControlAllowed(!active[0] && !active[1]);
+    applyControlPageLock(m_tableWidget->tabWidget(), active);
+    menuBar()->setEnabled(!active[2]);
 }
