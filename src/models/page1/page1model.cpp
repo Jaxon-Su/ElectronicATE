@@ -47,9 +47,13 @@ void Page1Model::writeXml(QXmlStreamWriter& writer) const {
 }
 
 void Page1Model::loadXml(QXmlStreamReader& reader) {
+    if (!reader.isStartElement() || reader.name() != QStringLiteral("Page1")) {
+        reader.raiseError(QStringLiteral("Expected Page1 element"));
+        return;
+    }
     Page1Config config;
 
-    while (!(reader.isEndElement() && reader.name() == "Page1")) {
+    while (!reader.atEnd() && !(reader.isEndElement() && reader.name() == "Page1")) {
         reader.readNext();
 
         if (!reader.isStartElement()) {
@@ -66,6 +70,8 @@ void Page1Model::loadXml(QXmlStreamReader& reader) {
             loadInstrumentsFromXml(reader, config);
         }
     }
+
+    if (reader.hasError()) return;
 
     m_config = config;
     emit configLoaded(m_config);
@@ -248,7 +254,7 @@ void Page1Model::writeChannels(QXmlStreamWriter& writer, const InstrumentConfig&
 // ========== Private Helper Methods for loadXml ==========
 
 void Page1Model::loadInstrumentsFromXml(QXmlStreamReader& reader, Page1Config& config) {
-    while (!(reader.isEndElement() && reader.name() == "Instruments")) {
+    while (!reader.atEnd() && !(reader.isEndElement() && reader.name() == "Instruments")) {
         reader.readNext();
 
         if (reader.isStartElement() && reader.name() == "Instrument") {
@@ -265,7 +271,7 @@ InstrumentConfig Page1Model::loadInstrumentFromXml(QXmlStreamReader& reader)
     ic.type = reader.attributes().value("type").toString();
     ic.enabled = (reader.attributes().value("enabled") == "true");
 
-    while (!(reader.isEndElement() && reader.name() == QString("Instrument"))) {
+    while (!reader.atEnd() && !(reader.isEndElement() && reader.name() == QString("Instrument"))) {
         reader.readNext();
 
         if (!reader.isStartElement()) {
@@ -303,7 +309,7 @@ InstrumentConfig Page1Model::loadInstrumentFromXml(QXmlStreamReader& reader)
 }
 
 void Page1Model::loadChannelsFromXml(QXmlStreamReader& reader, InstrumentConfig& ic) {
-    while (!(reader.isEndElement() && reader.name() == "Channels")) {
+    while (!reader.atEnd() && !(reader.isEndElement() && reader.name() == "Channels")) {
         reader.readNext();
 
         if (reader.isStartElement() && reader.name() == "Channel") {

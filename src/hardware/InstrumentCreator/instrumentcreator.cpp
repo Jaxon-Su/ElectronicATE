@@ -26,6 +26,7 @@ InstrumentCreator::createACSource(
     bool instrumentFound = false;
 
     for (const auto& ic : config.instruments) {
+        const QString resource = ic.getResourceString();
         // 只處理 Source 類型的儀器
         if (ic.name != "ACSource" || ic.type != "InputSource") {
             continue;
@@ -46,7 +47,7 @@ InstrumentCreator::createACSource(
         }
 
         // ===== 檢查 2: 配置完整性 =====
-        if (ic.modelName.isEmpty() || ic.address.isEmpty()) {
+        if (ic.modelName.isEmpty() || resource.isEmpty()) {
             QMetaObject::invokeMethod(&MessageService::instance(), "showWarning",
                                       Qt::QueuedConnection,
                                       Q_ARG(QString, "Error Message"),
@@ -58,7 +59,7 @@ InstrumentCreator::createACSource(
         }
 
         // ===== 步驟 1: 創建通信對象 =====
-        result.comm = CommunicationFactory::create(ic.address);
+        result.comm = CommunicationFactory::create(resource);
         if (!result.comm) {
             QMetaObject::invokeMethod(&MessageService::instance(), "showWarning",
                                       Qt::QueuedConnection,
@@ -137,16 +138,17 @@ InstrumentCreator::createDCLoads(
     try {
         // ===== 遍歷所有儀器配置 =====
         for (const auto& ic : config.instruments) {
+        const QString resource = ic.getResourceString();
             // 過濾條件：必須是啟用的 Load 類型
             if (!ic.enabled || ic.type != "Load") continue;
-            if (ic.modelName.isEmpty() || ic.address.isEmpty()) continue;
+            if (ic.modelName.isEmpty() || resource.isEmpty()) continue;
 
             // ===== 獲取或創建通信對象 =====
-            ICommunication* comm = result.commMap.value(ic.address, nullptr);
+            ICommunication* comm = result.commMap.value(resource, nullptr);
             if (!comm) {
-                comm = CommunicationFactory::create(ic.address);
+                comm = CommunicationFactory::create(resource);
                 if (!comm) continue;
-                result.commMap[ic.address] = comm;
+                result.commMap[resource] = comm;
             }
 
             // ===== 為每個通道創建 DC Load =====
@@ -164,7 +166,7 @@ InstrumentCreator::createDCLoads(
                 int hwChannel = ic.channelNumbers.value(i, -1);
                 dcLoad->setRealChannel(hwChannel);
                 dcLoad->setChannelIndex(uiIndex);
-                dcLoad->setAddress(ic.address);
+                dcLoad->setAddress(resource);
                 dcLoad->setConfiguredSyncType(ch.syncType);
 
                 qDebug() << "[InstrumentCreator] DCLoad created:"
@@ -265,32 +267,33 @@ InstrumentCreator::createRelays(
     try {
         // ===== 遍歷所有 Relay 儀器 =====
         for (const auto& inst : config.instruments) {
+            const QString resource = inst.getResourceString();
             // 只處理啟用的 Relay
             if (inst.type != "Relay" || !inst.enabled) {
                 continue;
             }
 
             // address 為空則靜默跳過，不影響其他 relay
-            if (inst.address.isEmpty()) {
+            if (resource.isEmpty()) {
                 continue;
             }
 
             // ===== 步驟 1: 創建或獲取通信對象 =====
-            ICommunication* comm = commMap.value(inst.address, nullptr);
+            ICommunication* comm = commMap.value(resource, nullptr);
 
             if (!comm) {
-                comm = CommunicationFactory::create(inst.address);
+                comm = CommunicationFactory::create(resource);
 
                 if (!comm) {
                     QString error = QString("Failed to create communication for %1 (%2)")
                     .arg(inst.name)
-                        .arg(inst.address);
+                        .arg(resource);
                     communicationErrors << error;
                     qWarning() << "[InstrumentCreator][Relay]" << error;
                     continue;
                 }
 
-                commMap.insert(inst.address, comm);
+                commMap.insert(resource, comm);
             }
 
             // ===== 步驟 2: 打開通信連接 =====
@@ -298,7 +301,7 @@ InstrumentCreator::createRelays(
                 if (!comm->open()) {
                     QString error = QString("Failed to open connection for %1 (%2)\nError: %3")
                     .arg(inst.name)
-                        .arg(inst.address)
+                        .arg(resource)
                         .arg(comm->lastError());
                     communicationErrors << error;
                     qWarning() << "[InstrumentCreator][Relay]" << error;
@@ -311,7 +314,7 @@ InstrumentCreator::createRelays(
             quint8 slaveAddr = 0x01;
             static const QRegularExpression slaveRx("SLAVE:(\\d+)",
                                                     QRegularExpression::CaseInsensitiveOption);
-            auto slaveMatch = slaveRx.match(inst.address);
+            auto slaveMatch = slaveRx.match(resource);
             if (slaveMatch.hasMatch()) {
                 int id = slaveMatch.captured(1).toInt();
                 if (id >= 1 && id <= 255)
@@ -338,7 +341,7 @@ InstrumentCreator::createRelays(
                 if (!relay->isConnected()) {
                     QString error = QString("Failed to connect relay %1 (%2)")
                     .arg(inst.name)
-                        .arg(inst.address);
+                        .arg(resource);
                     communicationErrors << error;
                     qWarning() << "[InstrumentCreator][Relay]" << error;
                     // 不 continue，保留 relay 對象以便稍後清理

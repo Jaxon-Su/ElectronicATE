@@ -4,7 +4,7 @@
 #include "page5model.h"
 #include "page5taskpayload.h"
 #include "page5testworker.h"
-#include "page2viewmodel.h"
+#include "itestconditionprovider.h"
 #include <QThread>
 #include <QMetaObject>
 #include <QDebug>
@@ -18,7 +18,7 @@ Page5ViewModel::Page5ViewModel(Page5Model *model, QObject *parent)
 
     // ── 建立 Worker 與執行緒 ──────────────────────────────
     qRegisterMetaType<QVector<TaskPayload>>("QVector<TaskPayload>");
-    qRegisterMetaType<Page5RunPanel::TaskStatus>("Page5RunPanel::TaskStatus");
+    qRegisterMetaType<TaskStatus>("TaskStatus");
 
     m_worker       = new Page5TestWorker;
     m_workerThread = new QThread(this);
@@ -26,7 +26,6 @@ Page5ViewModel::Page5ViewModel(Page5Model *model, QObject *parent)
     connect(m_workerThread, &QThread::finished, m_worker, &QObject::deleteLater);
     m_workerThread->start();
 
-    // 示波器量測策略由 AppService 注入（透過 setOscStrategy）
 
     // Worker 輸出 → ViewModel signal 轉發（queued，自動跨執行緒）
     connect(m_worker, &Page5TestWorker::taskStatusChanged,
@@ -51,9 +50,9 @@ Page5ViewModel::~Page5ViewModel()
 }
 
 // ─────────────────────────────────────────────
-//  資料存取：委託到 Page2ViewModel
-//  m_page2ViewModel 有效 → 直接讀（即時、無副本）
-//  m_page2ViewModel 無效 → fallback 到 Page5Model（XML 還原路徑）
+//  資料存取：委託到 ITestConditionProvider
+//  m_conditionProvider 有效 → 直接讀（即時、無副本）
+//  m_conditionProvider 無效 → fallback 到 Page5Model（XML 還原路徑）
 // ─────────────────────────────────────────────
 const Page1Config& Page5ViewModel::page1Config() const
 {
@@ -62,37 +61,37 @@ const Page1Config& Page5ViewModel::page1Config() const
 
 const QVector<InputRow>& Page5ViewModel::inputRows() const
 {
-    return m_page2ViewModel ? m_page2ViewModel->inputRows()
+    return m_conditionProvider ? m_conditionProvider->inputRows()
                             : m_model->inputRows;
 }
 
 const LoadMetaRow& Page5ViewModel::loadMeta() const
 {
-    return m_page2ViewModel ? m_page2ViewModel->loadMeta()
+    return m_conditionProvider ? m_conditionProvider->loadMeta()
                             : m_model->loadMeta;
 }
 
 const QVector<LoadDataRow>& Page5ViewModel::loadRows() const
 {
-    return m_page2ViewModel ? m_page2ViewModel->loadRows()
+    return m_conditionProvider ? m_conditionProvider->loadRows()
                             : m_model->loadRows;
 }
 
 const DynamicMetaRow& Page5ViewModel::dynamicMeta() const
 {
-    return m_page2ViewModel ? m_page2ViewModel->dynamicMeta()
+    return m_conditionProvider ? m_conditionProvider->dynamicMeta()
                             : m_model->dynamicMeta;
 }
 
 const QVector<DynamicDataRow>& Page5ViewModel::dynamicRows() const
 {
-    return m_page2ViewModel ? m_page2ViewModel->dynamicRows()
+    return m_conditionProvider ? m_conditionProvider->dynamicRows()
                             : m_model->dynamicRows;
 }
 
 const QVector<RelayDataRow>& Page5ViewModel::relayRows() const
 {
-    return m_page2ViewModel ? m_page2ViewModel->relayRows()
+    return m_conditionProvider ? m_conditionProvider->relayRows()
                             : m_model->relayRows;
 }
 
@@ -145,7 +144,7 @@ void Page5ViewModel::onPage1ConfigChanged(const Page1Config &cfg)
 // ─────────────────────────────────────────────
 //  Slots：Page2 資料變更
 //  ★ 委託架構：不再複製資料到 Page5Model
-//     資料由 m_page2ViewModel 即時提供
+//     資料由 m_conditionProvider 即時提供
 //     這些 slot 只負責通知 UI 刷新
 // ─────────────────────────────────────────────
 void Page5ViewModel::onInputDataChanged(const QVector<InputRow>&)
@@ -236,4 +235,10 @@ void Page5ViewModel::setRunning(bool running)
     if (m_isRunning == running) return;
     m_isRunning = running;
     emit runningChanged(running);
+}
+
+void Page5ViewModel::validateXml(QXmlStreamReader& reader) const
+{
+    Page5Model candidate;
+    candidate.loadXml(reader);
 }

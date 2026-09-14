@@ -6,6 +6,7 @@
 #include <QVector>
 #include <QVBoxLayout>
 #include "page5taskpayload.h"   // RunTask
+#include "taskstatus.h"
 
 // ══════════════════════════════════════════════════════
 //  Page5RunPanel — Test Task 執行面板
@@ -24,8 +25,6 @@ class Page5RunPanel : public QWidget
     Q_OBJECT
 
 public:
-    enum class TaskStatus { Idle, Running, Pass, Fail };
-
     explicit Page5RunPanel(QWidget* parent = nullptr);
     ~Page5RunPanel() override = default;
 
@@ -70,5 +69,3 @@ private:
     QVector<RunTask> m_tasks;           // 含 dutUid
     bool             m_running = false;
 };
-
-Q_DECLARE_METATYPE(Page5RunPanel::TaskStatus)

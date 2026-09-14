@@ -1,52 +1,41 @@
 #include "page3viewmodel.h"
 #include <QDebug>
+#include <QFutureWatcher>
 #include "messageservice.h"
-#include "TriggerControllerFactory.h"
 #include <QtConcurrent/QtConcurrentRun>
-#include "communicationfactory.h"
-#include <QMessageBox>
 #include <QPointer>
 #include <QTimer>
-#include "oscilloscopefactory.h"
 #include "instrumentconfigvalidator.h"
-#include <QFileDialog>
-#include <QDateTime>
 #include <QDir>
-#include <QFile>
-#include <QFileInfo>
-#include <QCoreApplication>
-#include <QSettings>
 #include "pngcapturecommand.h"
 #include "csvcapturecommand.h"
 #include "allcsvcapturecommand.h"
 #include "wfmcapturecommand.h"
 #include "savedirpreference.h"
 #include "oscilloscopemanager.h"
+#include "instrumentoperationrunner.h"
+#include "pendingscopes.h"
 
-Page3ViewModel::Page3ViewModel(Page3Model* p3, QObject *parent)
-    : QObject(parent), m_model(p3)
-    , m_captureInProgress(std::make_shared<std::atomic<bool>>(false))
+Page3ViewModel::Page3ViewModel(Page3Model* p3, Page3Operations operations, QObject *parent)
+    : QObject(parent), m_model(p3), m_operations(std::move(operations))
+    , m_captureSession(std::make_shared<CaptureSession>())
 {
+    connect(&m_triggerBinding, &TriggerBinding::reconnectRequested,
+            this, &Page3ViewModel::reconnectOscilloscopes, Qt::QueuedConnection);
     m_debounce = new Debounce(configDelayTime, this);
     connect(m_debounce, &Debounce::fired, this, &Page3ViewModel::applyPendingConfig);
 }
 
 Page3ViewModel::~Page3ViewModel()
 {
-    // 等待非同步擷取作業完成（最多 2 秒）
-    // CaptureCommand lambda 持有 shared_ptr<atomic<bool>>，析構時會重置旗標
-    // 此處僅需等待 lambda 確實退出，不會有懸空指標問題
-    int waitMs = 0;
-    while (m_captureInProgress->load() && waitMs < 2000) {
-        QThread::msleep(10);
-        waitMs += 10;
-    }
-
+    m_operationQueue.close();
     m_debounce->cancel();
     cleanupTriggerResources();
-    cleanupAllInstruments();
+    auto scopes = m_oscManager.takeAll();
+    m_captureSession->closeWhenIdle([scopes = std::move(scopes)]() mutable {
+        OscilloscopeManager::disconnectAll(scopes);
+    });
 }
-
 void Page3ViewModel::setMaxOutput(int maxOutput)
 {
     if (maxOutput <= 0) return;
@@ -86,127 +75,92 @@ void Page3ViewModel::updateTitles(TableKind type, const QStringList& titles)
     }
 }
 
-void Page3ViewModel::createAllInstruments()
-{
-    cleanupAllInstruments();
-    auto map = OscilloscopeManager::buildFromConfig(m_page1Config);
-    m_oscManager.assign(std::move(map));
-}
-
 void Page3ViewModel::cleanupAllInstruments()
 {
-    m_oscManager.clear(m_currentTriggerController);
+    m_triggerBinding.bindInstrument(nullptr);
+    m_oscManager.clear();
 }
 
 void Page3ViewModel::onPage1ConfigChanged(const Page1Config &cfg)
 {
-    QMutexLocker locker(&m_stateMutex);
-
-    // 儲存最新配置
-    m_pendingConfig = cfg;
-
-    switch (m_updateState) {
-    case ConfigUpdateState::Idle:
-        m_updateState = ConfigUpdateState::Pending;
-        m_debounce->schedule();
-        break;
-    case ConfigUpdateState::Pending:
-        m_debounce->schedule();   // 重置倒數
-        break;
-    case ConfigUpdateState::Processing:
-        m_updateState = ConfigUpdateState::Pending;
-        m_debounce->schedule();
-        break;
-    }
+    m_configUpdates.enqueue(cfg);
+    m_debounce->schedule();
 }
 
 void Page3ViewModel::applyPendingConfig()
 {
-    // ===== 狀態檢查與轉換 =====
-    {
-        QMutexLocker locker(&m_stateMutex);
-
-        if (m_updateState != ConfigUpdateState::Pending) {
-            return;
+    // All queue access is on the ViewModel thread; background work owns a snapshot.
+    auto snapshot = m_configUpdates.tryStart(m_captureSession->isBusy());
+    if (!snapshot) {
+        if (m_configUpdates.hasPending() && !m_configUpdates.isRunning()) {
+            QTimer::singleShot(1000, this, [this] { m_debounce->schedule(); });
         }
-
-        // 切換到處理中狀態
-        m_updateState = ConfigUpdateState::Processing;
-    }
-
-    // ===== 執行配置更新 =====
-    m_page1Config = m_pendingConfig;
-
-    // 狀態先回 Idle
-    {
-        QMutexLocker locker(&m_stateMutex);
-        m_updateState = ConfigUpdateState::Idle;
-    }
-
-    // 發出配置已變更信號（UI 相關，須在主執行緒）
-    emit page1ConfigChanged(m_pendingConfig);
-
-    // 若擷取作業正在進行，延後建立連線（1 秒後重試）
-    if (m_captureInProgress->load()) {
-        qDebug() << "[Page3VM] Capture in progress, deferring oscilloscope reconnect";
-        QMutexLocker locker(&m_stateMutex);
-        m_updateState = ConfigUpdateState::Pending;
-        QTimer::singleShot(1000, this, [this]() { m_debounce->schedule(); });
         return;
     }
 
-        if (m_isConnecting) {
-        qDebug() << "[Page3VM] Connection already in progress, skipping";
-        return;
-    }
-    m_isConnecting = true;
+    m_page1Config = *snapshot;
+    QPointer<Page3ViewModel> alive(this);
+    emit page1ConfigChanged(m_page1Config);
+    if (!alive) return;
+    cleanupAllInstruments();
+    if (!alive) return;
 
-    // 取出舊 map 轉移給背景執行緒負責 disconnect
-    OscilloscopeManager::OscMap oldMap;
-    {
-        // 直接從 m_oscManager 取出舊 map，清空 manager 狀態
-        m_oscManager.clear(m_currentTriggerController);
-    }
-
-    Page1Config configSnapshot = m_page1Config;
-    QPointer<Page3ViewModel> self(this);
-
-    QtConcurrent::run([self, configSnapshot]() mutable {
-        // 建立新示波器（在背景執行緒）
-        auto newMap = OscilloscopeManager::buildFromConfig(configSnapshot);
-
-        QMetaObject::invokeMethod(self, [self, newMap = std::move(newMap)]() mutable {
-            if (!self) return;
-
-            self->m_oscManager.assign(std::move(newMap));
-            self->m_isConnecting = false;
-
-            qDebug() << "[Page3VM] Oscilloscopes ready:" << self->m_oscManager.modelNames();
-
-            if (self->m_currentTriggerController && self->m_oscManager.current()) {
-                self->connectTriggerController();
-            }
-        }, Qt::QueuedConnection);
+    // The watcher delivers completion only while this ViewModel is alive.
+    // No ViewModel pointer is accessed from the worker thread.
+    auto* watcher = new QFutureWatcher<std::shared_ptr<PendingScopes>>(this);
+    connect(watcher, &QFutureWatcher<std::shared_ptr<PendingScopes>>::finished,
+            this, [this, watcher] {
+        QPointer<Page3ViewModel> alive(this);
+        QString error;
+        try {
+            m_oscManager.assign(watcher->result()->take());
+            if (m_triggerBinding.hasController() && m_oscManager.current())
+                connectTriggerController();
+        } catch (const std::exception& e) {
+            error = QString::fromUtf8(e.what());
+        } catch (...) {
+            error = tr("Unknown oscilloscope connection error.");
+        }
+        if (!alive) return;
+        watcher->deleteLater();
+        m_configUpdates.complete();
+        if (m_configUpdates.hasPending()) m_debounce->schedule();
+        if (!error.isEmpty())
+            MessageService::instance().showWarning(tr("Connection Failed"), error);
     });
+    watcher->setFuture(QtConcurrent::run([config = std::move(*snapshot), connectScopes = m_operations.connectScopes] {
+        return std::make_shared<PendingScopes>(connectScopes(config));
+    }));
+}
+void Page3ViewModel::onInputDataChanged(const QVector<InputRow>& rows) {
+    m_conditions.inputRows = rows;
 }
 
-void Page3ViewModel::onInputDataChanged(const QVector<InputRow>& rows) {
-    m_page2InputData = rows;
+void Page3ViewModel::onConditionsChanged(const TestConditionSnapshot& snapshot)
+{
+    m_conditions = snapshot;
+    onInputDataChanged(snapshot.inputRows);
+    onLoadMetaChanged(snapshot.loadMeta);
+    onLoadRowsChanged(snapshot.loadRows);
+    onDynamicMetaChanged(snapshot.dynamicMeta);
+    onDynamicRowsChanged(snapshot.dynamicRows);
+    // This handler publishes titles; call only after all condition data is set.
+    onRelayRowsChanged(snapshot.relayRows);
 }
 
 void Page3ViewModel::onLoadMetaChanged(const LoadMetaRow& meta) {
     if (m_model) m_model->setPage2LoadMetaDataChanged(meta);
-    m_LoadMetaData = meta;
+    m_conditions.loadMeta = meta;
 }
 
 void Page3ViewModel::onLoadRowsChanged(const QVector<LoadDataRow>& rows) {
     if (m_model) m_model->setPage2LoadRowsChanged(rows);
-    m_LoadRowsData = rows;
+    m_conditions.loadRows = rows;
 }
 
 void Page3ViewModel::onRelayRowsChanged(const QVector<RelayDataRow>& rows) {
     if (m_model) m_model->setPage2RelayRowsChanged(rows);
-    m_RelayRowsData = rows;
+    m_conditions.relayRows = rows;
 
     QStringList titles;
     for(const auto& row : std::as_const(rows)) {
@@ -218,12 +172,12 @@ void Page3ViewModel::onRelayRowsChanged(const QVector<RelayDataRow>& rows) {
 
 void Page3ViewModel::onDynamicMetaChanged(const DynamicMetaRow& meta) {
     if (m_model) m_model->setPage2DynamicMetaChanged(meta);
-    m_DynamicMetaData = meta;
+    m_conditions.dynamicMeta = meta;
 }
 
 void Page3ViewModel::onDynamicRowsChanged(const QVector<DynamicDataRow>& rows) {
     if (m_model) m_model->setPage2DynamicRowsChanged(rows);
-    m_DynamicRowsData = rows;
+    m_conditions.dynamicRows = rows;
 }
 
 void Page3ViewModel::onInputToggled(bool on)
@@ -293,8 +247,9 @@ bool Page3ViewModel::tryBeginLoadOperation(const char* context)
     }
 
     m_loadOperationBusy = true;
+    QPointer<Page3ViewModel> alive(this);
     emit loadOperationBusyChanged(true);
-    return true;
+    return !alive.isNull();
 }
 
 void Page3ViewModel::finishLoadOperation()
@@ -310,21 +265,12 @@ void Page3ViewModel::onSelected(TableKind type, int idx, const QString& txt)
 
 void Page3ViewModel::onTriggerWidgetCreated(const QString& modelName, QObject* triggerController)
 {
-    cleanupTriggerResources();
-
-    if (auto* ctrl = qobject_cast<AbstractTriggerController*>(triggerController)) {
-        m_currentTriggerController = ctrl;
-        m_triggerModelName = modelName;
-
-        const bool familyMatch =
-            TriggerControllerFactory::getControllerFamily(ctrl->getSupportedModel()) ==
-            TriggerControllerFactory::getControllerFamily(modelName);
-        if (familyMatch) {
-            connectTriggerController();
-        } else {
-            qWarning() << "[Page3ViewModel] Controller model mismatch:"
-                       << ctrl->getSupportedModel() << "vs" << modelName;
-        }
+    auto* controller = qobject_cast<ITriggerController*>(triggerController);
+    if (m_triggerBinding.attach(controller, modelName)) {
+        connectTriggerController();
+    } else if (controller) {
+        qWarning() << "[Page3ViewModel] Controller model mismatch:"
+                   << controller->getSupportedModel() << "vs" << modelName;
     }
 }
 
@@ -335,27 +281,19 @@ void Page3ViewModel::onTriggerWidgetDestroyed()
 
 void Page3ViewModel::connectTriggerController()
 {
-    if (!m_currentTriggerController) {
+    if (!m_triggerBinding.hasController()) {
         qWarning() << "[Page3ViewModel] No trigger controller available";
         return;
     }
-
-    // 每次重新連線前先斷舊連線，避免重複 connect()
-    disconnect(m_currentTriggerController, &AbstractTriggerController::reconnectRequested,
-               this, &Page3ViewModel::reconnectOscilloscopes);
-    connect(m_currentTriggerController, &AbstractTriggerController::reconnectRequested,
-            this, &Page3ViewModel::reconnectOscilloscopes,
-            Qt::QueuedConnection);
-
-    auto osc = m_oscManager.get(m_triggerModelName);
+    const QString modelName = m_triggerBinding.modelName();
+    auto osc = m_oscManager.get(modelName);
     if (!osc) {
-        qWarning() << "[Page3ViewModel] Oscilloscope not found for model:" << m_triggerModelName;
-        m_currentTriggerController->setInstrument(nullptr);
+        qWarning() << "[Page3ViewModel] Oscilloscope not found for model:" << modelName;
+        m_triggerBinding.bindInstrument(nullptr);
         return;
     }
-
-    m_oscManager.setCurrent(m_triggerModelName);
-    m_currentTriggerController->setInstrument(osc.get());
+    m_oscManager.setCurrent(modelName);
+    m_triggerBinding.bindInstrument(osc.get());
 }
 
 void Page3ViewModel::reconnectOscilloscopes()
@@ -367,8 +305,7 @@ void Page3ViewModel::reconnectOscilloscopes()
 
 void Page3ViewModel::cleanupTriggerResources()
 {
-    m_currentTriggerController = nullptr;
-    m_triggerModelName.clear();
+    m_triggerBinding.detach();
 }
 
 void Page3ViewModel::writeXml(QXmlStreamWriter& writer) const
@@ -384,6 +321,7 @@ void Page3ViewModel::writeXml(QXmlStreamWriter& writer) const
 void Page3ViewModel::loadXml(QXmlStreamReader& reader)
 {
     m_model->loadXml(reader);
+    if (reader.hasError()) return;
     restoreFromModel();
     updateUIAfterLoad();
 }
@@ -397,17 +335,17 @@ void Page3ViewModel::restoreFromModel()
     m_dyloadTitles = m_model->getDyLoadTitles();
     m_relayTitles = m_model->getRelayTitles();
 
-    m_LoadMetaData = m_model->getLoadMetaData();
-    m_LoadRowsData = m_model->getLoadRowsData();
+    m_conditions.loadMeta = m_model->getLoadMetaData();
+    m_conditions.loadRows = m_model->getLoadRowsData();
     {
         auto newMeta = m_model->getDynamicMetaData();
         // 舊格式 XML 的 Page3 段落不含 T1T2，此時保留 Page2 信號已送來的值
-        if (newMeta.t1t2.isEmpty() && !m_DynamicMetaData.t1t2.isEmpty())
-            newMeta.t1t2 = m_DynamicMetaData.t1t2;
-        m_DynamicMetaData = newMeta;
+        if (newMeta.t1t2.isEmpty() && !m_conditions.dynamicMeta.t1t2.isEmpty())
+            newMeta.t1t2 = m_conditions.dynamicMeta.t1t2;
+        m_conditions.dynamicMeta = newMeta;
     }
-    m_DynamicRowsData = m_model->getDynamicRowsData();
-    m_RelayRowsData = m_model->getRelayRowsData();
+    m_conditions.dynamicRows = m_model->getDynamicRowsData();
+    m_conditions.relayRows = m_model->getRelayRowsData();
 
     m_selections[TableKind::Input]  = { m_model->getSelectedInputIndex(),   m_model->getSelectedInputText()   };
     m_selections[TableKind::Load]   = { m_model->getSelectedLoadIndex(),    m_model->getSelectedLoadText()    };
@@ -435,38 +373,33 @@ void Page3ViewModel::restoreUISelections()
     }
 }
 
+void Page3ViewModel::rejectOperation(const QString& title, const QString& message, TableKind type)
+{
+    QPointer<Page3ViewModel> alive(this);
+    MessageService::instance().showWarning(title, message);
+    if (alive) emit forceOff(type);
+}
+
 // handleInput
 void Page3ViewModel::handleInput(InputAction action)
 {
     const auto& inputSel = m_selections.value(TableKind::Input);
     auto validResult = InstrumentConfigValidator::validateInput(m_page1Config, inputSel.text);
     if (!validResult.isValid) {
-        MessageService::instance().showWarning(validResult.errorTitle, validResult.errorMessage);
-        emit forceOff(TableKind::Input);
+        rejectOperation(validResult.errorTitle, validResult.errorMessage, TableKind::Input);
         return;
     }
 
     const Page1Config cfg      = m_page1Config;
-    if (inputSel.index < 0 || inputSel.index >= m_page2InputData.size()) {
-        MessageService::instance().showWarning(
-            "Input Selection Error",
-            "Selected input row is out of range.");
-        emit forceOff(TableKind::Input);
+    if (inputSel.index < 0 || inputSel.index >= m_conditions.inputRows.size()) {
+        rejectOperation("Input Selection Error", "Selected input row is out of range.", TableKind::Input);
         return;
     }
 
-    const InputRow inputRow = m_page2InputData.at(inputSel.index);
-    QPointer<Page3ViewModel> self(this);
-
-    QtConcurrent::run([cfg, inputRow, action, self]() {
-        try {
-            auto res = InstrumentExecutor::runInput(cfg, inputRow, action);
-            if (!res.success && self && action == InputAction::PowerOn)
-                emit self->forceOff(TableKind::Input);
-        } catch (const std::exception& ex) {
-            qWarning() << "[handleInput] Exception:" << ex.what();
-        }
-    });
+    const InputRow inputRow = m_conditions.inputRows.at(inputSel.index);
+    startInstrumentOperation([cfg, inputRow, action, run = m_operations.input] {
+        return run(cfg, inputRow, action);
+    }, "Input Configuration Error", TableKind::Input, action == InputAction::PowerOn);
 }
 
 // handleRelay
@@ -475,34 +408,16 @@ void Page3ViewModel::handleRelay(RelayAction action)
     const auto& relaySel = m_selections.value(TableKind::Relay);
     auto validResult = InstrumentConfigValidator::validateRelay(m_page1Config, relaySel.text);
     if (!validResult.isValid) {
-        MessageService::instance().showWarning(validResult.errorTitle, validResult.errorMessage);
-        emit forceOff(TableKind::Relay);
+        rejectOperation(validResult.errorTitle, validResult.errorMessage, TableKind::Relay);
         return;
     }
 
     const Page1Config cfg       = m_page1Config;
-    const auto        relayRows = m_RelayRowsData;
+    const auto        relayRows = m_conditions.relayRows;
     const int         condIdx   = relaySel.index;
-    QPointer<Page3ViewModel> self(this);
-
-    QtConcurrent::run([cfg, relayRows, condIdx, action, self]() {
-        try {
-            auto res = InstrumentExecutor::runRelay(cfg, relayRows, condIdx, action);
-            if (!res.success && self) {
-                if (!res.errorMessage.isEmpty()) {
-                    QMetaObject::invokeMethod(
-                        &MessageService::instance(), "showWarning",
-                        Qt::QueuedConnection,
-                        Q_ARG(QString, "Relay Communication Error"),
-                        Q_ARG(QString, res.errorMessage));
-                }
-                if (action == RelayAction::RelayOn)
-                    emit self->forceOff(TableKind::Relay);
-            }
-        } catch (const std::exception& ex) {
-            qWarning() << "[handleRelay] Exception:" << ex.what();
-        }
-    });
+    startInstrumentOperation([cfg, relayRows, condIdx, action, run = m_operations.relay] {
+        return run(cfg, relayRows, condIdx, action);
+    }, "Relay Communication Error", TableKind::Relay, action == RelayAction::RelayOn);
 }
 
 
@@ -512,44 +427,20 @@ void Page3ViewModel::handleLoad(LoadAction action)
     const auto& loadSel = m_selections.value(TableKind::Load);
     auto validResult = InstrumentConfigValidator::validateLoad(m_page1Config, loadSel.text);
     if (!validResult.isValid) {
-        MessageService::instance().showWarning(validResult.errorTitle, validResult.errorMessage);
-        emit forceOff(TableKind::Load);
+        rejectOperation(validResult.errorTitle, validResult.errorMessage, TableKind::Load);
         return;
     }
     if (!tryBeginLoadOperation("handleLoad"))
         return;
 
     const Page1Config cfg      = m_page1Config;
-    const auto        loadRows = m_LoadRowsData;
+    const auto        loadRows = m_conditions.loadRows;
     const int         condIdx  = loadSel.index;
-    const auto        meta     = m_LoadMetaData;
+    const auto        meta     = m_conditions.loadMeta;
     const bool        syncEnabled = m_syncEnabled;
-    QPointer<Page3ViewModel> self(this);
-
-    QtConcurrent::run([cfg, loadRows, condIdx, meta, action, syncEnabled, self]() {
-        try {
-            auto res = InstrumentExecutor::runLoad(cfg, loadRows, condIdx, meta, action, syncEnabled);
-            if (!res.success && self) {
-                if (!res.errorMessage.isEmpty()) {
-                    QMetaObject::invokeMethod(
-                        &MessageService::instance(), "showWarning",
-                        Qt::QueuedConnection,
-                        Q_ARG(QString, "Load Configuration Error"),
-                        Q_ARG(QString, res.errorMessage));
-                }
-                if (action == LoadAction::LoadOn)
-                    emit self->forceOff(TableKind::Load);
-            }
-        } catch (const std::exception& ex) {
-            qWarning() << "[handleLoad] Exception:" << ex.what();
-        }
-        if (self) {
-            QMetaObject::invokeMethod(self.data(), [self]() {
-                if (self)
-                    self->finishLoadOperation();
-            }, Qt::QueuedConnection);
-        }
-    });
+    startInstrumentOperation([cfg, loadRows, condIdx, meta, action, syncEnabled, run = m_operations.load] {
+        return run(cfg, loadRows, condIdx, meta, action, syncEnabled);
+    }, "Load Configuration Error", TableKind::Load, action == LoadAction::LoadOn, true);
 }
 
 
@@ -558,8 +449,7 @@ void Page3ViewModel::handleDyLoad(DyLoadAction action)
     const auto& dyLoadSel = m_selections.value(TableKind::DyLoad);
     auto validResult = InstrumentConfigValidator::validateDyLoad(m_page1Config, dyLoadSel.text);
     if (!validResult.isValid) {
-        MessageService::instance().showWarning(validResult.errorTitle, validResult.errorMessage);
-        emit forceOff(TableKind::DyLoad);
+        rejectOperation(validResult.errorTitle, validResult.errorMessage, TableKind::DyLoad);
         return;
     }
     if (!tryBeginLoadOperation("handleDyLoad"))
@@ -570,35 +460,12 @@ void Page3ViewModel::handleDyLoad(DyLoadAction action)
     if (syncEnabled || syncDirty) m_syncDirty = false;
 
     const Page1Config cfg     = m_page1Config;
-    const auto        dyRows  = m_DynamicRowsData;
+    const auto        dyRows  = m_conditions.dynamicRows;
     const int         condIdx = dyLoadSel.index;
-    const auto        meta   = m_DynamicMetaData;
-    QPointer<Page3ViewModel> self(this);
-
-    QtConcurrent::run([cfg, dyRows, condIdx, meta, action, syncEnabled, syncDirty, self]() {
-        try {
-            auto res = InstrumentExecutor::runDyLoad(cfg, dyRows, condIdx, meta, action, syncEnabled, syncDirty);
-            if (!res.success && self) {
-                if (!res.errorMessage.isEmpty()) {
-                    QMetaObject::invokeMethod(
-                        &MessageService::instance(), "showWarning",
-                        Qt::QueuedConnection,
-                        Q_ARG(QString, "Dynamic Load Configuration Error"),
-                        Q_ARG(QString, res.errorMessage));
-                }
-                if (action == DyLoadAction::DyLoadOn)
-                    emit self->forceOff(TableKind::DyLoad);
-            }
-        } catch (const std::exception& ex) {
-            qWarning() << "[handleDyLoad] Exception:" << ex.what();
-        }
-        if (self) {
-            QMetaObject::invokeMethod(self.data(), [self]() {
-                if (self)
-                    self->finishLoadOperation();
-            }, Qt::QueuedConnection);
-        }
-    });
+    const auto        meta   = m_conditions.dynamicMeta;
+    startInstrumentOperation([cfg, dyRows, condIdx, meta, action, syncEnabled, syncDirty, run = m_operations.dynamic] {
+        return run(cfg, dyRows, condIdx, meta, action, syncEnabled, syncDirty);
+    }, "Dynamic Load Configuration Error", TableKind::DyLoad, action == DyLoadAction::DyLoadOn, true);
 }
 
 void Page3ViewModel::OnWaveformCaptured()
@@ -629,14 +496,14 @@ CaptureContext Page3ViewModel::buildCaptureContext() const
 {
     CaptureContext ctx;
     ctx.oscilloscope      = m_oscManager.current();
-    ctx.captureInProgress = m_captureInProgress;
+    ctx.captureSession = m_captureSession;
     ctx.lastSaveDir       = SaveDirPreference::load();
+    ctx.selectSaveFile    = m_captureFileSelector;
     ctx.onSaveDirChanged  = [](const QString& filePath) {
         SaveDirPreference::save(filePath);
     };
     // 直接讀 trigger widget 的 Source ComboBox，不查詢儀器
-    if (m_currentTriggerController)
-        ctx.captureChannel = m_currentTriggerController->getSelectedChannel();
+    ctx.captureChannel = m_triggerBinding.selectedChannel();
     return ctx;
 }
 
@@ -652,4 +519,26 @@ void Page3ViewModel::onSyncChanged(bool enabled)
 
     qDebug() << "[Page3VM] SyncDynamic enabled=" << enabled
              << "dirty=" << m_syncDirty;
+}
+
+void Page3ViewModel::validateXml(QXmlStreamReader& reader) const
+{
+    Page3Model candidate;
+    candidate.loadXml(reader);
+}
+
+void Page3ViewModel::startInstrumentOperation(std::function<InstrumentOperationResult()> work,
+    const QString& errorTitle, TableKind type, bool forceOffOnFailure, bool releaseLoadBusy)
+{
+    m_operationQueue.submit(std::move(work),
+        [this, errorTitle, type, forceOffOnFailure, releaseLoadBusy](const InstrumentOperationResult& result) {
+            QPointer<Page3ViewModel> alive(this);
+            if (!result.success) {
+                if (!result.errorMessage.isEmpty())
+                    MessageService::instance().showWarning(errorTitle, result.errorMessage);
+                if (!alive) return;
+                if (forceOffOnFailure) emit forceOff(type);
+            }
+            if (alive && releaseLoadBusy) finishLoadOperation();
+        });
 }

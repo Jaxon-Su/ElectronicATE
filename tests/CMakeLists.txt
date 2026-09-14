@@ -1,0 +1,124 @@
+cmake_minimum_required(VERSION 3.16)
+project(ElectronicATEOfflineTests LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_AUTOMOC ON)
+find_package(Qt6 REQUIRED COMPONENTS Core Xml Concurrent Widgets)
+enable_testing()
+add_subdirectory(../src/data "${CMAKE_CURRENT_BINARY_DIR}/data")
+add_subdirectory(../src/models "${CMAKE_CURRENT_BINARY_DIR}/models")
+include(../cmake/ElectronicATECore.cmake)
+
+add_executable(xml_persistence_test xml_persistence_test.cpp)
+target_link_libraries(xml_persistence_test PRIVATE ElectronicATEPersistence)
+add_test(NAME xml_persistence COMMAND xml_persistence_test)
+
+add_executable(taskstatus_test taskstatus_test.cpp)
+target_link_libraries(taskstatus_test PRIVATE ElectronicATEData)
+add_test(NAME taskstatus_queued_delivery COMMAND taskstatus_test)
+set_tests_properties(taskstatus_queued_delivery PROPERTIES TIMEOUT 10)
+
+add_executable(page1_xml_test page1_xml_test.cpp)
+target_link_libraries(page1_xml_test PRIVATE ElectronicATEModels)
+add_test(NAME page1_xml_error_handling COMMAND page1_xml_test)
+set_tests_properties(page1_xml_error_handling PROPERTIES TIMEOUT 10)
+
+add_executable(capture_test capture_test.cpp)
+target_link_libraries(capture_test PRIVATE ElectronicATECapture ElectronicATEInstrumentCore ElectronicATEMessages)
+add_test(NAME capture_without_widgets COMMAND capture_test)
+set_tests_properties(capture_without_widgets PROPERTIES TIMEOUT 10)
+
+add_executable(oscilloscope_manager_test oscilloscope_manager_test.cpp)
+target_link_libraries(oscilloscope_manager_test PRIVATE ElectronicATEOscilloscopeLifecycle ElectronicATEInstrumentCore)
+add_test(NAME oscilloscope_lifecycle COMMAND oscilloscope_manager_test)
+
+add_executable(model_config_test model_config_test.cpp)
+target_link_libraries(model_config_test PRIVATE ElectronicATEModels ElectronicATEPersistence)
+add_test(NAME complete_model_configuration COMMAND model_config_test)
+set_tests_properties(complete_model_configuration PROPERTIES TIMEOUT 10)
+
+add_executable(trigger_catalog_test trigger_catalog_test.cpp)
+target_link_libraries(trigger_catalog_test PRIVATE ElectronicATEData)
+add_test(NAME trigger_model_catalog COMMAND trigger_catalog_test)
+
+add_executable(trigger_binding_test trigger_binding_test.cpp)
+target_link_libraries(trigger_binding_test PRIVATE ElectronicATETriggerBinding ElectronicATEInstrumentCore)
+add_test(NAME trigger_binding_lifetime COMMAND trigger_binding_test)
+
+add_executable(waveform_capture_test waveform_capture_test.cpp)
+target_link_libraries(waveform_capture_test PRIVATE ElectronicATECapture ElectronicATEInstrumentCore ElectronicATEMessages)
+add_test(NAME waveform_capture_workflow COMMAND waveform_capture_test)
+set_tests_properties(waveform_capture_workflow PROPERTIES TIMEOUT 15)
+
+add_executable(binary_file_test binary_file_test.cpp)
+target_link_libraries(binary_file_test PRIVATE ElectronicATEStorage)
+add_test(NAME binary_file_storage COMMAND binary_file_test)
+
+add_executable(pending_config_test pending_config_test.cpp)
+target_link_libraries(pending_config_test PRIVATE ElectronicATEOscilloscopeLifecycle)
+add_test(NAME pending_configuration_updates COMMAND pending_config_test)
+
+add_executable(oscilloscope_builder_test oscilloscope_builder_test.cpp)
+target_link_libraries(oscilloscope_builder_test PRIVATE ElectronicATEOscilloscopeLifecycle ElectronicATEInstrumentCore)
+add_test(NAME oscilloscope_connection_policy COMMAND oscilloscope_builder_test)
+
+add_executable(capture_preparation_test capture_preparation_test.cpp)
+target_link_libraries(capture_preparation_test PRIVATE ElectronicATECapture ElectronicATEInstrumentCore ElectronicATEMessages)
+add_test(NAME capture_preparation_errors COMMAND capture_preparation_test)
+
+add_executable(capture_session_test capture_session_test.cpp)
+target_link_libraries(capture_session_test PRIVATE ElectronicATECapture ElectronicATEOscilloscopeLifecycle ElectronicATEInstrumentCore)
+add_test(NAME capture_session_shutdown COMMAND capture_session_test)
+set_tests_properties(capture_session_shutdown PROPERTIES TIMEOUT 10)
+
+add_executable(instrument_operation_test instrument_operation_test.cpp)
+target_link_libraries(instrument_operation_test PRIVATE ElectronicATEOperations)
+add_test(NAME instrument_operation_completion COMMAND instrument_operation_test)
+set_tests_properties(instrument_operation_completion PROPERTIES TIMEOUT 10)
+
+add_executable(page4_console_test page4_console_test.cpp)
+target_link_libraries(page4_console_test PRIVATE ElectronicATEConsole ElectronicATEInstrumentCore)
+add_test(NAME page4_console_results COMMAND page4_console_test)
+set_tests_properties(page4_console_results PROPERTIES TIMEOUT 10)
+
+add_executable(configuration_policy_test configuration_policy_test.cpp)
+target_link_libraries(configuration_policy_test PRIVATE ElectronicATEData)
+add_test(NAME configuration_policies COMMAND configuration_policy_test)
+
+add_executable(page2_model_test page2_model_test.cpp)
+target_link_libraries(page2_model_test PRIVATE ElectronicATEModels)
+add_test(NAME page2_model_updates COMMAND page2_model_test)
+set_tests_properties(page2_model_updates PROPERTIES TIMEOUT 10)
+
+add_executable(page2_viewmodel_test page2_viewmodel_test.cpp)
+target_link_libraries(page2_viewmodel_test PRIVATE ElectronicATEConditions)
+add_test(NAME page2_viewmodel_without_widgets COMMAND page2_viewmodel_test)
+set_tests_properties(page2_viewmodel_without_widgets PROPERTIES TIMEOUT 10)
+
+add_executable(page1_viewmodel_test page1_viewmodel_test.cpp)
+target_link_libraries(page1_viewmodel_test PRIVATE ElectronicATEInstrumentSettings)
+add_test(NAME page1_viewmodel_without_widgets COMMAND page1_viewmodel_test)
+set_tests_properties(page1_viewmodel_without_widgets PROPERTIES TIMEOUT 10)
+
+add_executable(page3_model_test page3_model_test.cpp)
+target_link_libraries(page3_model_test PRIVATE ElectronicATEModels)
+add_test(NAME page3_model_snapshot COMMAND page3_model_test)
+set_tests_properties(page3_model_snapshot PROPERTIES TIMEOUT 10)
+
+add_executable(instrument_queue_test instrument_queue_test.cpp)
+target_link_libraries(instrument_queue_test PRIVATE ElectronicATEOperations)
+add_test(NAME instrument_operation_queue COMMAND instrument_queue_test)
+set_tests_properties(instrument_operation_queue PROPERTIES TIMEOUT 15)
+
+add_executable(page3_viewmodel_test page3_viewmodel_test.cpp)
+target_link_libraries(page3_viewmodel_test PRIVATE ElectronicATEManualControl)
+add_test(NAME page3_viewmodel_without_drivers COMMAND page3_viewmodel_test)
+set_tests_properties(page3_viewmodel_without_drivers PROPERTIES TIMEOUT 20)
+
+add_executable(page2_widget_test page2_widget_test.cpp
+    ../src/views/page2/page2.cpp ../src/views/page2/page2.h
+    ../src/ui/style/styleutils.cpp ../src/ui/delegate/navdelegate.cpp ../src/ui/delegate/navdelegate.h)
+target_include_directories(page2_widget_test PRIVATE ../src/views/page2 ../src/ui/style ../src/ui/delegate)
+target_link_libraries(page2_widget_test PRIVATE ElectronicATEConditions Qt6::Widgets)
+add_test(NAME page2_widget_snapshot COMMAND page2_widget_test)
+set_tests_properties(page2_widget_snapshot PROPERTIES TIMEOUT 20 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

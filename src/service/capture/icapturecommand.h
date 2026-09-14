@@ -6,5 +6,9 @@
 class ICaptureCommand {
 public:
     virtual ~ICaptureCommand() = default;
-    virtual void execute() = 0;
+    // Every command enters through the same synchronous exception boundary.
+    virtual void execute() final;
+
+protected:
+    virtual void executeImpl() = 0;
 };

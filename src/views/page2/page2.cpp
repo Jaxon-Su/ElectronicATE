@@ -1,3 +1,4 @@
+#include "conditiontextformatter.h"
 #include "page2.h"
 #include "page2viewmodel.h"
 #include "styleutils.h"
@@ -37,11 +38,13 @@ Page2::Page2(Page2ViewModel* viewModel, QWidget *parent)
 
 void Page2::syncUIToViewModel()
 {
-    syncInputTable();
-    syncDcTable();
-    syncRelayTable();
-    syncLoadTable();
-    syncDynamicTable();
+    TestConditionSnapshot snapshot;
+    syncInputTable(snapshot);
+    syncDcTable(snapshot);
+    syncRelayTable(snapshot);
+    syncLoadTable(snapshot);
+    syncDynamicTable(snapshot);
+    emit conditionsEdited(snapshot);
 }
 
 // ========== 表格工具函數 ==========
@@ -453,7 +456,7 @@ QComboBox* Page2::makeInputPhaseComboBox(QTableWidget* tbl, int r, int c,
 
 // ========== 同步輔助函數 ==========
 
-void Page2::syncInputTable()
+void Page2::syncInputTable(TestConditionSnapshot& snapshot)
 {
     QVector<InputRow> inputs;
     for (int row = 0; row < tblInput->rowCount(); ++row) {
@@ -470,12 +473,12 @@ void Page2::syncInputTable()
             inputRow.phase = le->text();
         inputs.append(inputRow);
     }
-    emit inputRowsChanged(inputs);
+    snapshot.inputRows = std::move(inputs);
 }
 
 // DC Table sync
 // 結構：col 0 = Seq, col 1 = DC Input (label item), col 2 = Vin (QLineEdit)
-void Page2::syncDcTable()
+void Page2::syncDcTable(TestConditionSnapshot& snapshot)
 {
     QVector<DcRow> dcRows;
     for (int row = 0; row < tblDc->rowCount(); ++row) {
@@ -484,10 +487,10 @@ void Page2::syncDcTable()
             dcRow.vin = le->text();
         dcRows.append(dcRow);
     }
-    emit dcRowsChanged(dcRows);
+    snapshot.dcRows = std::move(dcRows);
 }
 
-void Page2::syncRelayTable()
+void Page2::syncRelayTable(TestConditionSnapshot& snapshot)
 {
     QVector<RelayDataRow> relayRows;
     int maxRelayOutput = tblRelay->columnCount() - 2;
@@ -514,10 +517,10 @@ void Page2::syncRelayTable()
 
         relayRows.append(dataRow);
     }
-    emit relayRowsChanged(relayRows);
+    snapshot.relayRows = std::move(relayRows);
 }
 
-void Page2::syncLoadTable()
+void Page2::syncLoadTable(TestConditionSnapshot& snapshot)
 {
     int maxOutput = tblLoad->columnCount() - 3;
 
@@ -556,11 +559,11 @@ void Page2::syncLoadTable()
 
         loadRows.append(dataRow);
     }
-    emit loadRowsChanged(loadRows);
-    emit loadMetaChanged(meta);
+    snapshot.loadRows = std::move(loadRows);
+    snapshot.loadMeta = std::move(meta);
 }
 
-void Page2::syncDynamicTable()
+void Page2::syncDynamicTable(TestConditionSnapshot& snapshot)
 {
     int dMaxOutput = tblDynamic->columnCount() - 4;
 
@@ -601,8 +604,8 @@ void Page2::syncDynamicTable()
 
         dynamicRows.append(dataRow);
     }
-    emit dynamicRowsChanged(dynamicRows);
-    emit dynamicMetaChanged(dmeta);
+    snapshot.dynamicRows = std::move(dynamicRows);
+    snapshot.dynamicMeta = std::move(dmeta);
 }
 
 QVector<QString> Page2::extractMetaRowValues(QTableWidget* tbl, int row, int maxOutput)
@@ -734,7 +737,9 @@ void Page2::handleDynamicHeadersTime(const QStringList &headers)
     fillDynamicMetaRows(newMaxOutput);
     fillDynamicDataRows(newMaxOutput, vm->dynamicRows().size());
 
-    syncDynamicTable();
+    auto snapshot = vm->conditions();
+    syncDynamicTable(snapshot);
+    emit conditionsEdited(snapshot);
 }
 
 void Page2::ensureT1T2ColumnSetup(int t1t2Col)
@@ -848,7 +853,7 @@ void Page2::onInputTitleChanged(int row, const QString & /*dummy*/)
     if (auto *le = qobject_cast<QLineEdit*>(tblInput->cellWidget(row, 5)))
         inputRow.phase = le->text();
 
-    tblInput->item(row, 1)->setText(Page2ViewModel::inputTitle(inputRow));
+    tblInput->item(row, 1)->setText(ConditionTextFormatter::inputTitle(inputRow));
 }
 
 void Page2::onPowerUpdated(int row, double value)
@@ -922,7 +927,7 @@ void Page2::resetInputTable()
         seqItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
         tblInput->setItem(row, 0, seqItem);
 
-        QString label = Page2ViewModel::inputTitle(inputRow);
+        QString label = ConditionTextFormatter::inputTitle(inputRow);
         auto *item = new QTableWidgetItem(label);
         item->setTextAlignment(Qt::AlignCenter);
         item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
@@ -1520,13 +1525,7 @@ void Page2::setupConnections()
     connect(vm, &Page2ViewModel::dynamicPowerUpdated, this, &Page2::onDynamicPowerUpdated);
     connect(vm, &Page2ViewModel::dataChanged,        this, &Page2::resetUIFromViewModel);
 
-    connect(this, &Page2::inputRowsChanged,   vm, &Page2ViewModel::onInputRowsChanged);
-    connect(this, &Page2::dcRowsChanged,      vm, &Page2ViewModel::onDcRowsChanged);
-    connect(this, &Page2::relayRowsChanged,   vm, &Page2ViewModel::onRelayRowsChanged);
-    connect(this, &Page2::loadMetaChanged,    vm, &Page2ViewModel::onLoadMetaChanged);
-    connect(this, &Page2::loadRowsChanged,    vm, &Page2ViewModel::onLoadRowsChanged);
-    connect(this, &Page2::dynamicMetaChanged, vm, &Page2ViewModel::onDynamicMetaChanged);
-    connect(this, &Page2::dynamicRowsChanged, vm, &Page2ViewModel::onDynamicRowsChanged);
+    connect(this, &Page2::conditionsEdited, vm, &Page2ViewModel::setConditions);
 
     connectTableItemChanged(tblRelay,   TableKind::Relay,  kMetaRowsRelay);
     connectTableItemChanged(tblLoad,    TableKind::Load,   kMetaRowsLoad);

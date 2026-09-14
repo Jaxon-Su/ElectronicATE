@@ -37,7 +37,7 @@ void Page5TestWorker::startTasks(const QVector<TaskPayload>& payloads, const Pag
         const TaskPayload& p = payloads[i];
         emit logMessage(QString("[%1] Running: %2  (uid=%3)")
                             .arg(i + 1).arg(p.task.name).arg(p.task.dutUid));
-        emit taskStatusChanged(i, Page5RunPanel::TaskStatus::Running);
+        emit taskStatusChanged(i, TaskStatus::Running);
 
         bool pass = false;
         for (int attempt = 0; attempt <= p.retry; ++attempt) {
@@ -58,8 +58,8 @@ void Page5TestWorker::startTasks(const QVector<TaskPayload>& payloads, const Pag
             if (m_stopRequested.loadAcquire()) break;
         }
 
-        emit taskStatusChanged(i, pass ? Page5RunPanel::TaskStatus::Pass
-                                       : Page5RunPanel::TaskStatus::Fail);
+        emit taskStatusChanged(i, pass ? TaskStatus::Pass
+                                       : TaskStatus::Fail);
         emit logMessage(QString("[%1] %2 → %3")
                             .arg(i + 1).arg(p.task.name).arg(pass ? "Pass" : "Fail"));
     }

@@ -133,7 +133,19 @@ Page1 instrument config
   -> Page3 manual control
 ```
 
-`AppService` 是跨頁 signal/slot 與 XML save/load 的主要 wiring point。  
+`PageConnectionCoordinator` 負責跨頁 signal/slot 與條件資料提供者的組裝。
+`XmlConfigStore` 負責 XML 存取，回傳結果，由 `MainWindowViewModel` 顯示錯誤並在成功後更新路徑。
+`ITestConditionProvider` 提供共用唯讀條件；`TaskStatus` 定義執行狀態，Worker 不依賴 RunPanel。
+擷取服務透過 View 提供的檔案選擇回呼與 `MessageService` 互動，不直接建立對話框。
+CSV/WFM 共用波形擷取流程；背景擷取由 `runCaptureTask` 統一執行及回報例外，`CaptureLease` 與 `CaptureSession` 管理忙碌及關閉狀態，最後一份擷取鎖釋放後才斷線。
+`BinaryFileStore` 統一截圖與波形的本機存檔，完整寫入後才替換目標檔案。
+`ITriggerController` 與 `TriggerBinding` 隔離 Page3 的控制器綁定及生命週期，替換控制器時解除舊訊號連線。
+XML 載入先透過隔離的 Model 驗證所有頁面，解析成功後才套用至實際頁面。
+Page3 手動操作透過 `runInstrumentOperation` 在背景執行，完成通知回到仍存活的頁面。
+Page4 通訊建立可注入測試替身；指令寫入失敗不再記為成功，查詢期間拒絕巢狀指令。
+
+CMake 將資料、Model、設定存取、訊息、擷取、儀器基底、控制器綁定與檔案存取拆為獨立 target。
+桌面程式與 `tests/` 共用這些 production target；Model 僅依賴 QtCore/QtXml，離線測試不需要 Widgets 或 VISA。
 `InstrumentCreator` 依 `Page1Config` 建立 AC Source、DC Load、Relay、Oscilloscope 與 communication 物件。  
 `InstrumentExecutor` 封裝 Input、Load、Dynamic Load、Relay 的實際硬體控制流程。
 
@@ -200,7 +212,7 @@ ElectronicATE/
 │   ├── hardware/        Communication、drivers、InstrumentCreator
 │   ├── infrastructure/  Worker、DataFinder、ResourceCleaner、TableUtils、Debounce
 │   ├── models/          Page Models
-│   ├── service/         AppService、MessageService、Executor、Capture、Validators
+│   ├── service/         XmlConfigStore、MessageService、Executor、Capture、Validators
 │   ├── ui/              Delegate、Style、Reusable Widgets
 │   ├── viewmodels/      Page ViewModels
 │   └── views/           Qt Widgets pages and dialogs
@@ -231,7 +243,7 @@ ElectronicATE/
 
 ## 開發注意
 
-- 專案沒有自動化測試，修改後請至少執行 CMake build。
+- 專案提供 tests/ 離線測試；修改後請執行相關 CTest 測試與完整 CMake build。
 - 硬體通訊流程多為非同步或背景執行，需留意 lifetime、timeout、thread 與 queued signal。
 - Load / Dynamic Load sync 修改必須保守處理實體 sync 線已接上的狀態。
 - 不要復原舊 `src/shared/` 架構；目前已拆分為 `hardware/`、`service/`、`infrastructure/`、`ui/` 等層。

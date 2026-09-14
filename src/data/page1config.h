@@ -2,7 +2,7 @@
 
 #include <QString>
 #include <QList>
-#include <QComboBox>
+#include <QStringList>
 #include "communicationconfig.h"
 
 struct ChannelSetting {

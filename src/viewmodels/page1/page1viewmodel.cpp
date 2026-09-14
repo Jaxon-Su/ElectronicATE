@@ -1,9 +1,10 @@
 #include "page1viewmodel.h"
 #include "page1model.h"
 #include <QSet>
-#include <algorithm>
+#include "channelnumberpolicy.h"
 #include <QDebug>
-#include <QCoreApplication>
+#include <QPointer>
+
 
 Page1ViewModel::Page1ViewModel(Page1Model *model, QObject *parent)
     : QObject(parent), m_model(model)
@@ -11,12 +12,7 @@ Page1ViewModel::Page1ViewModel(Page1Model *model, QObject *parent)
     connect(m_model, &Page1Model::configLoaded,
             this,    &Page1ViewModel::onConfigLoaded);
 
-    // 使用應用程式目錄的相對路徑
-    QString xmlPath = QCoreApplication::applicationDirPath() + "/XML/Instrument.xml";
-    m_model->loadBaseXml(xmlPath);
-
-    //以下硬編碼的絕對路徑build會有問題
-    // m_model->loadBaseXml("C:/Qt_Project/ElectronicATE/XML/Instrument.xml");
+    onConfigLoaded(m_model->getConfig());
 }
 
 // ==================== 查詢接口 ====================
@@ -28,16 +24,7 @@ QStringList Page1ViewModel::subModels(const QString &modelName) const
 
 QSet<int> Page1ViewModel::channelsOfModel(const QString &modelName) const
 {
-    QSet<int> channelSet;
-    const auto &channelStrings = m_model->getChannelsMap().value(modelName);
-
-    for (const QString &ch : channelStrings) {
-        bool ok;
-        int channelNum = ch.toInt(&ok);
-        if (ok) channelSet.insert(channelNum);
-    }
-
-    return channelSet;
+    return ChannelNumberPolicy::parse(m_model->getChannelsMap().value(modelName));
 }
 
 bool Page1ViewModel::hasChannelInterface(const QString &instName) const
@@ -83,7 +70,14 @@ void Page1ViewModel::onConfigLoaded(const Page1Config &cfg)
     if (m_model)
         m_model->setInstrumentConfigs(enrichedConfigs);
 
-    notifyViewModelReady();
+    const auto revision = ++m_uiConfigRevision;
+    QPointer<Page1ViewModel> alive(this);
+    emit dataChanged();
+    if (!alive || revision != m_uiConfigRevision) return;
+    emit loadOutputsChanged(enrichedCfg.loadOutputs);
+    if (!alive || revision != m_uiConfigRevision) return;
+    emit relayOutputsChanged(enrichedCfg.relayOutputs);
+    if (!alive || revision != m_uiConfigRevision) return;
     emit configUpdated(enrichedCfg);
 }
 
@@ -102,26 +96,9 @@ void Page1ViewModel::buildTableRows(const Page1Config &cfg)
 void Page1ViewModel::buildChannelList()
 {
     QSet<int> channelSet;
-
-    // qDebug() << "m_model->getChannelsMap() = " << m_model->getChannelsMap();
-
-    for (const auto &channelList : m_model->getChannelsMap()) {
-        for (const QString &chStr : channelList) {
-            bool ok;
-            int channelNum = chStr.toInt(&ok); //轉換失敗ok = false , 成功 = true
-            if (ok) channelSet.insert(channelNum);
-        }
-    }
-
-    m_channels = channelSet.values();
-    std::sort(m_channels.begin(), m_channels.end()); //ex:QList(1, 2, 3, 4, 5, 7) 紀錄所有儀器instruments channels不重複數值
-}
-
-void Page1ViewModel::notifyViewModelReady()
-{
-    emit dataChanged();
-    emit loadOutputsChanged(m_model->loadOutputs());
-    emit relayOutputsChanged(m_model->relayOutputs());
+    for (const auto& channelList : m_model->getChannelsMap())
+        channelSet.unite(ChannelNumberPolicy::parse(channelList));
+    m_channels = ChannelNumberPolicy::sorted(channelSet);
 }
 
 // ==================== UI 配置變更處理 ====================
@@ -129,28 +106,23 @@ void Page1ViewModel::notifyViewModelReady()
 void Page1ViewModel::onUiConfigChanged(const QList<InstrumentConfig>& configs,
                                        int loadOutputs, int relayOutputs)
 {
-    updateOutputSettings(loadOutputs, relayOutputs);
-    updateInstrumentConfigs(configs);
+    const bool loadChanged = m_model->loadOutputs() != loadOutputs;
+    const bool relayChanged = m_model->relayOutputs() != relayOutputs;
+    Page1Config updated = m_model->getConfig();
+    updated.loadOutputs = loadOutputs;
+    updated.relayOutputs = relayOutputs;
+    updated.instruments = configs;
+    enrichConfigsWithChannelNumbers(updated.instruments);
+    m_model->setConfig(updated);
 
-    emit configUpdated(m_model->getConfig());
+    const auto revision = ++m_uiConfigRevision;
+    QPointer<Page1ViewModel> alive(this);
+    if (loadChanged) emit loadOutputsChanged(loadOutputs);
+    if (!alive || revision != m_uiConfigRevision) return;
+    if (relayChanged) emit relayOutputsChanged(relayOutputs);
+    if (!alive || revision != m_uiConfigRevision) return;
+    emit configUpdated(updated);
 }
-
-void Page1ViewModel::updateOutputSettings(int loadOutputs, int relayOutputs)
-{
-    setLoadOutputs(loadOutputs);
-    setRelayOutputs(relayOutputs);
-}
-
-void Page1ViewModel::updateInstrumentConfigs(const QList<InstrumentConfig>& configs)
-{
-    QList<InstrumentConfig> enrichedConfigs = configs;
-    enrichConfigsWithChannelNumbers(enrichedConfigs);
-
-    if (m_model) {
-        m_model->setInstrumentConfigs(enrichedConfigs);
-    }
-}
-
 void Page1ViewModel::enrichConfigsWithChannelNumbers(QList<InstrumentConfig>& configs) const
 {
     for (auto& inst : configs) {
@@ -162,12 +134,7 @@ void Page1ViewModel::enrichConfigsWithChannelNumbers(QList<InstrumentConfig>& co
 
 void Page1ViewModel::assignChannelNumbers(InstrumentConfig& inst) const
 {
-    inst.channelNumbers.clear();
-
-    for (int i = 0; i < inst.channels.size(); ++i) {
-        int channelNum = (i < m_channels.size()) ? m_channels[i] : -1;
-        inst.channelNumbers << channelNum;
-    }
+    inst.channelNumbers = ChannelNumberPolicy::assign(inst.channels.size(), m_channels);
 }
 
 // ==================== XML 序列化 ====================
@@ -187,4 +154,10 @@ void Page1ViewModel::loadXml(QXmlStreamReader& reader)
 bool Page1ViewModel::isChannelBasedType(const QString &type) const
 {
     return (type == "Load" || type == "Relay");
+}
+
+void Page1ViewModel::validateXml(QXmlStreamReader& reader) const
+{
+    Page1Model candidate;
+    candidate.loadXml(reader);
 }

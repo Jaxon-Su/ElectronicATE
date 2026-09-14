@@ -1,8 +1,8 @@
 #pragma once
 
 #include <QObject>
-#include <QTimer>
 #include <memory>
+#include <functional>
 #include "page4config.h"
 #include "ixmlserializable.h"
 
@@ -16,7 +16,9 @@ class Page4ViewModel : public QObject, public IXmlSerializable
     Q_OBJECT
 
 public:
+    using CommunicationCreator = std::function<std::unique_ptr<ICommunication>(const QString&)>;
     explicit Page4ViewModel(Page4Model *model, QObject *parent = nullptr);
+    Page4ViewModel(Page4Model* model, CommunicationCreator create, QObject* parent = nullptr);
     ~Page4ViewModel() override;
 
     // ==================== 連線操作 ====================
@@ -44,6 +46,7 @@ public:
     // ==================== XML 序列化 ====================
     QString xmlTagName() const override { return "Page4"; }
     void writeXml(QXmlStreamWriter &writer) const override;
+    void validateXml(QXmlStreamReader& reader) const override;
     void loadXml(QXmlStreamReader &reader) override;
 
     // ==================== Model 存取 ====================
@@ -65,23 +68,20 @@ signals:
     // 歷史更新（通知 UI 刷新下拉選單）
     void historyUpdated();
 
-private slots:
-    void onReadTimeout();
-
 private:
     // 內部通訊方法
-    QString executeCommand(const QString &command, bool expectResponse);
+    struct CommandResult {
+        bool success = false;
+        QString response;
+        QString error;
+    };
+    CommandResult executeCommand(const QString &command, bool expectResponse);
     void closeConnection();
-
-    // 地址解析
-    static bool parseAddress(const QString &address, CommType &type);
 
     Page4Model *m_model = nullptr;
     std::unique_ptr<ICommunication> m_comm;    // 通訊介面（由 Factory 創建）
+    CommunicationCreator m_create;
+    quint64 m_connectionRevision = 0;
+    bool m_commandInProgress = false;
 
-    // 讀取超時計時器
-    QTimer *m_readTimer = nullptr;
-
-    // 追蹤最後發送的命令（用於錯誤記錄）
-    QString m_lastCommand;
 };

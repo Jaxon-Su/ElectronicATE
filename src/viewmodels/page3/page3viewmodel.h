@@ -7,33 +7,27 @@
 #include "page3model.h"
 #include "page1config.h"
 #include "page2config.h"
-#include "dcload.h"
-#include "acsource.h"
+
 #include <QXmlStreamWriter>
 #include <QXmlStreamReader>
 #include "oscilloscope.h"
-#include "abstracttriggercontroller.h"
-#include <QMutex>
-#include "relay.h"
-#include "datafinder.h"
-#include "resourcecleaner.h"
-#include "parameterparser.h"
-#include "instrumentcreator.h"
-#include "instrumentexecutor.h"
+#include "triggerbinding.h"
+
 #include "capturecontext.h"
 #include "ixmlserializable.h"
 #include "tableheaderbuilder.h"
 #include "debounce.h"
 #include "oscilloscopemanager.h"
+#include "pendingconfigupdate.h"
+#include "instrumentoperationqueue.h"
+#include "page3operations.h"
 #include <QPointer>
-#include <atomic>
+
 #include <memory>
-#include "dpo7000triggercontroller.h"
-#include <QTimer>
+#include <utility>
 
 // InputAction / LoadAction / DyLoadAction / RelayAction
-// 已移至 instrumentexecutor.h，此處透過 include 取得
-enum class ConfigUpdateState {Idle, Pending, Processing};
+// Defined in instrumentactions.h, shared with hardware execution services.
 
 // 各 TableKind 的選擇狀態（index + text）
 struct SelectionState {
@@ -46,11 +40,18 @@ class Page3ViewModel : public QObject, public IXmlSerializable
     Q_OBJECT
 public:
     Page3ViewModel(Page3Model* p3, QObject *parent = nullptr);
+    Page3ViewModel(Page3Model* model, Page3Operations operations, QObject* parent = nullptr);
     virtual ~Page3ViewModel();
+
+    void setCaptureFileSelector(CaptureFileSelector selector)
+    {
+        m_captureFileSelector = std::move(selector);
+    }
 
     // IXmlSerializable
     QString xmlTagName() const override { return "Page3"; }
     void writeXml(QXmlStreamWriter& writer) const override;
+    void validateXml(QXmlStreamReader& reader) const override;
     void loadXml(QXmlStreamReader& reader) override;
 
     void restoreFromModel();
@@ -68,6 +69,7 @@ public:
     QString getSelectedRelayText()    const { return m_selections.value(TableKind::Relay).text;  }
 
 public slots:
+    void onConditionsChanged(const TestConditionSnapshot& snapshot);
     void setMaxOutput(int maxOutput);
     void setNameList(const QStringList &names);
     void updateTitles(TableKind, const QStringList& titles);
@@ -124,16 +126,9 @@ private slots:
     void applyPendingConfig();
 
 private:
-    using LoadDataInfo   = DataFinder::LoadDataResult;
-    using DyLoadDataInfo = DataFinder::DyLoadDataResult;
-    using RelayDataInfo  = DataFinder::RelayDataResult;
-
-    using ACSourceCreationResult = InstrumentCreator::ACSourceResult;
-    using DCLoadCreationResult   = InstrumentCreator::DCLoadResult;
-    using RelayCreationResult    = InstrumentCreator::RelayResult;
 
     // UI 狀態
-    QStringList m_names;
+
     QStringList m_inputTitles;
     QStringList m_loadTitles;
     QStringList m_dyloadTitles;
@@ -144,23 +139,16 @@ private:
 
     // 配置數據
     Page1Config m_page1Config;
-    QVector<InputRow> m_page2InputData;
-    LoadMetaRow m_LoadMetaData;
-    QVector<LoadDataRow> m_LoadRowsData;
-    DynamicMetaRow m_DynamicMetaData;
-    QVector<DynamicDataRow> m_DynamicRowsData;
-    QVector<RelayDataRow> m_RelayRowsData;
+    TestConditionSnapshot m_conditions;
 
     // 選擇狀態（TableKind → index/text）
     QMap<TableKind, SelectionState> m_selections;
 
     // 示波器生命週期（含建立、disconnect、current 管理）
     OscilloscopeManager m_oscManager;
-    QPointer<AbstractTriggerController> m_currentTriggerController = nullptr;
-    QString m_triggerModelName;   // 觸發控制器對應的示波器型號
+    TriggerBinding m_triggerBinding;
 
     // 私有方法
-    void createAllInstruments();
     void cleanupAllInstruments();
     void connectTriggerController();
     void cleanupTriggerResources();
@@ -177,29 +165,26 @@ private:
 
     // 防抖（替換原 m_configTimer）
     Debounce* m_debounce   = nullptr;
-    bool      m_isConnecting = false;
-
-    // 暫存待處理的配置
-    Page1Config m_pendingConfig;
-
-    // 配置更新狀態
-    ConfigUpdateState m_updateState = ConfigUpdateState::Idle;
-
-    // 狀態保護互斥鎖
-    mutable QMutex m_stateMutex;
+    PendingConfigUpdate m_configUpdates;
 
     // DC Load hardware operations must not overlap. Page3 runs them in worker
     // threads, so a quick ON/OFF click can otherwise race two command streams.
     bool m_loadOperationBusy = false;
+    Page3Operations m_operations;
+    InstrumentOperationQueue m_operationQueue;
     bool tryBeginLoadOperation(const char* context);
     void finishLoadOperation();
+    void rejectOperation(const QString& title, const QString& message, TableKind type);
+    void startInstrumentOperation(std::function<InstrumentOperationResult()> work,
+        const QString& errorTitle, TableKind type, bool forceOffOnFailure, bool releaseLoadBusy = false);
 
     // 防抖延遲時間 (毫秒)
     static const int configDelayTime = 500;
 
-    // 防止在 WFM/CSV async 擷取期間刪除示波器物件，避免 use-after-free 崩潰
-    // 使用 shared_ptr 使 CaptureCommand lambda 可在 ViewModel 析構後安全重置旗標
-    std::shared_ptr<std::atomic<bool>> m_captureInProgress;
+    // Session outlives the ViewModel while capture work holds a lease.
+    // Closing defers instrument disconnection until the final lease is released.
+    std::shared_ptr<CaptureSession> m_captureSession;
+    CaptureFileSelector m_captureFileSelector;
 
     // 組裝命令所需的上下文（由三個 On* handler 共用）
     CaptureContext buildCaptureContext() const;

@@ -1,59 +1,18 @@
 #include "oscilloscopemanager.h"
 #include "oscilloscope.h"
-#include "icommunication.h"
-#include "communicationfactory.h"
-#include "oscilloscopefactory.h"
-#include "abstracttriggercontroller.h"
 #include <QThread>
 #include <QDebug>
+#include <utility>
 
-// ── 靜態：背景執行緒建立示波器 ──────────────────────────────────────────────
-
-OscilloscopeManager::OscMap
-OscilloscopeManager::buildFromConfig(const Page1Config& config)
-{
-    OscMap result;
-
-    for (const auto& ic : std::as_const(config.instruments)) {
-        if (ic.type != "Oscilloscope" || !ic.enabled) continue;
-        if (ic.modelName.isEmpty() || ic.address.isEmpty())  continue;
-
-        ICommunication* rawComm = CommunicationFactory::create(ic.address);
-        if (!rawComm) continue;
-        auto commPtr = std::shared_ptr<ICommunication>(rawComm);
-
-        Oscilloscope* rawOsc =
-            OscilloscopeFactory::createOscilloscope(ic.modelName, rawComm);
-        if (!rawOsc) continue;  // commPtr 自動釋放
-
-        // custom deleter：保證 comm 在 osc 之後才釋放
-        auto oscPtr = std::shared_ptr<Oscilloscope>(rawOsc,
-            [commPtr](Oscilloscope* osc) mutable {
-                delete osc;
-                commPtr.reset();
-            });
-
-        try {
-            oscPtr->connect();
-            if (!oscPtr->isConnected()) continue;
-        } catch (const std::exception& e) {
-            qWarning() << "[OscilloscopeManager] connect exception:" << e.what();
-            continue;
-        }
-
-        result[ic.modelName] = oscPtr;
-        qDebug() << "[OscilloscopeManager] created:" << ic.modelName;
-    }
-
-    return result;
-}
 
 void OscilloscopeManager::disconnectAll(OscMap& oscilloscopes)
 {
     for (auto& osc : std::as_const(oscilloscopes)) {
-        if (osc && osc->isConnected()) {
-            try { osc->disconnect(); }
-            catch (...) {}
+        if (!osc) continue;
+        try {
+            if (osc->isConnected()) osc->disconnect();
+        } catch (...) {
+            qWarning() << "[OscilloscopeManager] disconnect failed; continuing cleanup";
         }
     }
     QThread::msleep(100);
@@ -75,21 +34,18 @@ void OscilloscopeManager::assign(OscMap newMap)
     }
 }
 
-void OscilloscopeManager::clear(AbstractTriggerController* triggerCtrl)
+void OscilloscopeManager::clear()
 {
-    if (triggerCtrl)
-        triggerCtrl->setInstrument(nullptr);
-
-    for (auto& osc : std::as_const(m_map)) {
-        if (osc && osc->isConnected()) {
-            try { osc->disconnect(); }
-            catch (...) {}
-        }
-    }
-    QThread::msleep(100);
-    m_map.clear();
+    disconnectAll(m_map);
     m_current.reset();
     m_currentModel.clear();
+}
+
+OscilloscopeManager::OscMap OscilloscopeManager::takeAll()
+{
+    m_current.reset();
+    m_currentModel.clear();
+    return std::exchange(m_map, {});
 }
 
 std::shared_ptr<Oscilloscope>

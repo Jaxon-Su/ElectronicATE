@@ -6,7 +6,7 @@
 #include <QStringList>
 #include <QMap>
 #include <QVariant>
-#include "page5model.h"
+#include "dutrowdata.h"
 #include "page5runpanel.h"   // 間接引入 page5taskpayload.h → RunTask
 
 class Page5ViewModel;

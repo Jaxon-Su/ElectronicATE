@@ -1,21 +1,23 @@
 #include "page4viewmodel.h"
 #include "page4model.h"
 #include "icommunication.h"
-#include "communicationfactory.h"
-#include <QRegularExpression>
-#include <QThread>
+#include <QPointer>
+#include <QScopeGuard>
+#include <QDebug>
+#include "consoleexchange.h"
+
+
 #include <QCoreApplication>
 #include <QXmlStreamWriter>
 #include <QXmlStreamReader>
-#include <QDebug>
 
-Page4ViewModel::Page4ViewModel(Page4Model *model, QObject *parent)
+
+Page4ViewModel::Page4ViewModel(Page4Model *model, CommunicationCreator create, QObject *parent)
     : QObject(parent)
     , m_model(model)
-    , m_readTimer(new QTimer(this))
+    , m_create(std::move(create))
+
 {
-    m_readTimer->setSingleShot(true);
-    connect(m_readTimer, &QTimer::timeout, this, &Page4ViewModel::onReadTimeout);
 
     // 監聽 Model 變化，轉發給 View
     connect(m_model, &Page4Model::addressHistoryChanged,
@@ -41,7 +43,7 @@ void Page4ViewModel::connectToAddress(const QString &address)
     }
 
     // 如果已連線，先斷開
-    if (m_comm && m_comm->isOpen()) {
+    if (m_comm) {
         closeConnection();
     }
 
@@ -51,23 +53,32 @@ void Page4ViewModel::connectToAddress(const QString &address)
     emit connectionStatusChanged(ConnectionStatus::Connecting, tr("連線中..."));
 
     // 使用工廠創建通訊物件
-    m_comm.reset(CommunicationFactory::create(trimmedAddr));
-
-    if (!m_comm) {
-        m_model->setConnectionStatus(ConnectionStatus::Error);
-        emit connectionStatusChanged(ConnectionStatus::Error, tr("無法解析地址格式"));
-        emit errorOccurred(tr("無法解析地址格式: %1").arg(trimmedAddr));
-        return;
+    ++m_connectionRevision;
+    QString failure;
+    bool opened = false;
+    try {
+        m_comm = m_create ? m_create(trimmedAddr) : nullptr;
+        if (m_comm) {
+            opened = m_comm->open();
+            if (!opened) failure = m_comm->lastError();
+        } else {
+            failure = tr("無法解析地址格式: %1").arg(trimmedAddr);
+        }
+    } catch (const std::exception& error) {
+        failure = QString::fromUtf8(error.what());
+    } catch (...) {
+        failure = tr("通訊初始化發生未知錯誤");
     }
 
-    // 嘗試開啟連線
-    if (!m_comm->open()) {
-        QString error = m_comm->lastError();
+    if (!opened) {
+        // Release ownership before notifying slots that may retry.
+        closeConnection();
+        QPointer<Page4ViewModel> alive(this);
+        const auto revision = m_connectionRevision;
         m_model->setConnectionStatus(ConnectionStatus::Error);
         emit connectionStatusChanged(ConnectionStatus::Error, tr("連線失敗"));
-        emit errorOccurred(tr("連線失敗: %1").arg(error));
-
-        m_comm.reset();
+        if (alive && m_connectionRevision == revision)
+            emit errorOccurred(tr("連線失敗: %1").arg(failure));
         return;
     }
 
@@ -94,6 +105,15 @@ bool Page4ViewModel::isConnected() const
 
 void Page4ViewModel::sendCommand(const QString &command)
 {
+    QPointer<Page4ViewModel> alive(this);
+    if (m_commandInProgress) {
+        emit errorOccurred(tr("指令仍在執行中，請稍後再試"));
+        return;
+    }
+    m_commandInProgress = true;
+    const auto releaseCommand = qScopeGuard([alive] {
+        if (alive) alive->m_commandInProgress = false;
+    });
     QString cmd = command.trimmed();
 
     if (cmd.isEmpty()) {
@@ -108,25 +128,31 @@ void Page4ViewModel::sendCommand(const QString &command)
 
     // 加入命令歷史
     m_model->addToCommandHistory(cmd);
-    m_lastCommand = cmd;
+    if (!alive) return;
+
     emit commandSent(cmd);
+    if (!alive) return;
 
     // 判斷是否為查詢指令
     bool isQuery = cmd.endsWith('?');
-    QString response = executeCommand(cmd, isQuery);
+    const auto result = executeCommand(cmd, isQuery);
+    if (!alive) return;
+    if (!result.success) {
+        m_model->recordCommand(cmd, result.error.isEmpty() ? "No response" : result.error, false);
+        if (!alive) return;
+        if (!result.error.isEmpty()) emit errorOccurred(result.error);
+        else emit responseReceived(cmd, tr("(無回應)"));
+        return;
+    }
+    const QString& response = result.response;
 
     if (isQuery) {
-        if (!response.isEmpty()) {
-            m_model->recordCommand(cmd, response, true);
-            emit responseReceived(cmd, response);
-        } else {
-            m_model->recordCommand(cmd, "No response", false);
-            emit responseReceived(cmd, tr("(無回應)"));
-        }
+        m_model->recordCommand(cmd, response, true);
+        if (alive) emit responseReceived(cmd, response);
     } else {
         // 非查詢指令，標記為成功
         m_model->recordCommand(cmd, "OK", true);
-        emit responseReceived(cmd, tr("OK (無需回應)"));
+        if (alive) emit responseReceived(cmd, tr("OK (無需回應)"));
     }
 }
 
@@ -198,110 +224,46 @@ void Page4ViewModel::loadXml(QXmlStreamReader &reader)
 
 // ==================== 內部方法 ====================
 
-QString Page4ViewModel::executeCommand(const QString &command, bool expectResponse)
+Page4ViewModel::CommandResult Page4ViewModel::executeCommand(const QString &command, bool expectResponse)
 {
-    if (!m_comm || !m_comm->isOpen()) {
-        return QString();
+    if (!m_comm) return {false, {}, tr("請先連線到儀器")};
+    const quint64 revision = m_connectionRevision;
+    QPointer<Page4ViewModel> alive(this);
+    const auto result = exchangeConsoleCommand(*m_comm, command, expectResponse, m_model->timeout(),
+        [alive, revision] {
+            QCoreApplication::processEvents();
+            return alive && alive->m_connectionRevision == revision;
+        });
+    using Error = ConsoleExchangeResult::Error;
+    switch (result.error) {
+    case Error::None: return {true, result.response, {}};
+    case Error::Disconnected: return {false, {}, tr("請先連線到儀器")};
+    case Error::Write: return {false, {}, tr("發送失敗: %1").arg(result.detail)};
+    case Error::Read: return {false, {}, tr("讀取失敗: %1").arg(result.detail)};
+    case Error::Timeout: return {false, {}, tr("回應逾時")};
+    case Error::Interrupted: return {false, {}, tr("連線已變更")};
+    case Error::NoResponse: return {};
+    case Error::Exception: return {false, {}, tr("通訊失敗: %1").arg(result.detail)};
     }
-
-    // 準備命令（加換行符）
-    QString cmdToSend = command;
-    if (!cmdToSend.endsWith('\n')) {
-        cmdToSend += '\n';
-    }
-
-    // 發送命令
-    int bytesWritten = m_comm->write(cmdToSend.toUtf8());
-    if (bytesWritten < 0) {
-        emit errorOccurred(tr("發送失敗: %1").arg(m_comm->lastError()));
-        return QString();
-    }
-
-    if (!expectResponse) {
-        return QString();
-    }
-
-    // 等待回應
-    QByteArray responseData;
-    QString response;
-    int timeoutMs = m_model->timeout();
-    int elapsed = 0;
-    const int pollInterval = 10;  // 每 10ms 檢查一次
-
-    while (elapsed < timeoutMs) {
-        QByteArray chunk;
-        int bytesRead = m_comm->read(chunk, 4096);
-
-        if (bytesRead > 0) {
-            responseData.append(chunk);
-
-            // 檢查是否收到完整回應（以換行結尾）
-            if (responseData.contains('\n')) {
-                break;
-            }
-        }
-
-        QThread::msleep(pollInterval);
-        QCoreApplication::processEvents();
-        elapsed += pollInterval;
-    }
-
-    if (responseData.isEmpty() && elapsed >= timeoutMs) {
-        emit errorOccurred(tr("回應逾時"));
-    }
-
-    response = QString::fromUtf8(responseData).trimmed();
-    return response;
+    return {};
 }
-
 void Page4ViewModel::closeConnection()
 {
-    if (m_comm) {
-        m_comm->close();
-        m_comm.reset();
+    ++m_connectionRevision;
+    // Detach first so failed cleanup cannot leave an apparently active owner.
+    // Local ownership also guarantees destruction when the transport throws.
+    auto connection = std::move(m_comm);
+    if (!connection) return;
+    try { connection->close(); }
+    catch (const std::exception& error) {
+        qWarning() << "[Page4ViewModel] close failed:" << error.what();
+    } catch (...) {
+        qWarning() << "[Page4ViewModel] unknown close failure";
     }
-    m_readTimer->stop();
 }
 
-void Page4ViewModel::onReadTimeout()
+void Page4ViewModel::validateXml(QXmlStreamReader& reader) const
 {
-    // 讀取超時處理（如果需要非阻塞讀取可以擴展）
-    qDebug() << "[Page4ViewModel] Read timeout";
-}
-
-bool Page4ViewModel::parseAddress(const QString &address, CommType &type)
-{
-    QString addr = address.trimmed().toUpper();
-
-    if (addr.startsWith("TCPIP")) {
-        type = CommType::TCPIP;
-        return true;
-    }
-    if (addr.startsWith("GPIB")) {
-        type = CommType::GPIB;
-        return true;
-    }
-    if (addr.startsWith("COM") || addr.startsWith("/DEV/TTY")) {
-        type = CommType::Serial;
-        return true;
-    }
-    if (addr.startsWith("USB")) {
-        type = CommType::USB;
-        return true;
-    }
-    if (addr.startsWith("MODBUS")) {
-        type = CommType::Modbus;
-        return true;
-    }
-
-    // 簡化格式：IP:Port
-    static const QRegularExpression ipPortRx(
-        R"(^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d+$)");
-    if (ipPortRx.match(address).hasMatch()) {
-        type = CommType::TCPIP;
-        return true;
-    }
-
-    type = CommType::Unknown;
-    return false;
+    Page4Model candidate;
+    candidate.loadXml(reader);
 }

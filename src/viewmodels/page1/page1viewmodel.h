@@ -27,6 +27,7 @@ public:
 
     QString xmlTagName() const override { return "Page1"; }
     void writeXml(QXmlStreamWriter& writer) const override;
+    void validateXml(QXmlStreamReader& reader) const override;
     void loadXml(QXmlStreamReader& reader) override;
 
 public slots:
@@ -47,17 +48,16 @@ private:
     // ==================== 初始化輔助函式 ====================
     void buildTableRows(const Page1Config &cfg);
     void buildChannelList();
-    void notifyViewModelReady();
 
     // ==================== 配置更新輔助函式 ====================
-    void updateOutputSettings(int loadOutputs, int relayOutputs);
-    void updateInstrumentConfigs(const QList<InstrumentConfig>& configs);
+
     void enrichConfigsWithChannelNumbers(QList<InstrumentConfig>& configs) const;
     void assignChannelNumbers(InstrumentConfig& inst) const;
 
     // ==================== 工具函式 ====================
     bool isChannelBasedType(const QString &type) const;
 
+    quint64 m_uiConfigRevision = 0;
     Page1Model         *m_model = nullptr;
     QList<TableRowInfo> m_rows;
     QList<int>          m_channels;

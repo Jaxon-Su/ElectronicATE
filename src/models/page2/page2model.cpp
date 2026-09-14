@@ -5,6 +5,29 @@ Page2Model::Page2Model(QObject *parent)
     : QObject(parent)
 {}
 
+void Page2Model::resizeLoadOutputs(int count)
+{
+    if (count <= 0) return;
+    const auto resize = [count](QVector<QString>& values) { values.resize(count); };
+    resize(loadMeta.names);
+    resize(loadMeta.vo);
+    resize(loadMeta.modes);
+    resize(loadMeta.ranges);
+    resize(loadMeta.von);
+    resize(dynamicMeta.ranges);
+    resize(dynamicMeta.vo);
+    resize(dynamicMeta.von);
+}
+
+void Page2Model::resizeRelayOutputs(int count)
+{
+    if (count <= 0) return;
+    for (auto& row : relayRows) {
+        while (row.values.size() < count) row.values.append("off");
+        row.values.resize(count);
+    }
+}
+
 // ========== 主要 XML 操作 ==========
 
 void Page2Model::writeXml(QXmlStreamWriter& writer) const
@@ -22,14 +45,17 @@ void Page2Model::writeXml(QXmlStreamWriter& writer) const
 
 void Page2Model::loadXml(QXmlStreamReader& reader)
 {
-    inputRows.clear();
-    dcRows.clear();             // ★ 新增
-    relayRows.clear();
-    loadMeta = {};
-    loadRows.clear();
-    dynamicMeta = {};
-    dynamicRows.clear();
-
+    if (!reader.isStartElement() || reader.name() != QStringLiteral("Page2")) {
+        reader.raiseError(QStringLiteral("Expected Page2 element"));
+        return;
+    }
+    QVector<InputRow> inputRows;
+    QVector<DcRow> dcRows;
+    QVector<RelayDataRow> relayRows;
+    LoadMetaRow loadMeta;
+    QVector<LoadDataRow> loadRows;
+    DynamicMetaRow dynamicMeta;
+    QVector<DynamicDataRow> dynamicRows;
     while (!reader.atEnd()) {
         reader.readNext();
 
@@ -56,6 +82,14 @@ void Page2Model::loadXml(QXmlStreamReader& reader)
         }
     }
 
+    if (reader.hasError()) return;
+    this->inputRows = std::move(inputRows);
+    this->dcRows = std::move(dcRows);
+    this->relayRows = std::move(relayRows);
+    this->loadMeta = std::move(loadMeta);
+    this->loadRows = std::move(loadRows);
+    this->dynamicMeta = std::move(dynamicMeta);
+    this->dynamicRows = std::move(dynamicRows);
     emit configLoaded();
 }
 

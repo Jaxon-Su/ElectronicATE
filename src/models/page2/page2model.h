@@ -14,6 +14,38 @@ public:
     void writeXml(QXmlStreamWriter& writer) const;
     void loadXml(QXmlStreamReader& reader);
 
+    const DynamicMetaRow& getDynamicMeta() const { return dynamicMeta; }
+    void setDynamicMeta(const DynamicMetaRow& value) { dynamicMeta = value; }
+    const LoadMetaRow& getLoadMeta() const { return loadMeta; }
+    void setLoadMeta(const LoadMetaRow& value) { loadMeta = value; }
+    const QVector<DcRow>& getDcRows() const { return dcRows; }
+    void setDcRows(const QVector<DcRow>& value) { dcRows = value; }
+    const QVector<RelayDataRow>& getRelayRows() const { return relayRows; }
+    void setRelayRows(const QVector<RelayDataRow>& value) { relayRows = value; }
+    const QVector<InputRow>& getInputRows() const { return inputRows; }
+    void setInputRows(const QVector<InputRow>& value) { inputRows = value; }
+    const QVector<LoadDataRow>& getLoadRows() const { return loadRows; }
+    void setLoadRows(const QVector<LoadDataRow>& value) { loadRows = value; }
+    const QVector<DynamicDataRow>& getDynamicRows() const { return dynamicRows; }
+    void setDynamicRows(const QVector<DynamicDataRow>& value) { dynamicRows = value; }
+    void resizeLoadOutputs(int count);
+    void resizeRelayOutputs(int count);
+    TestConditionSnapshot snapshot() const
+    {
+        return {inputRows, dcRows, relayRows, loadMeta, loadRows, dynamicMeta, dynamicRows};
+    }
+    void setSnapshot(const TestConditionSnapshot& value)
+    {
+        inputRows = value.inputRows;
+        dcRows = value.dcRows;
+        relayRows = value.relayRows;
+        loadMeta = value.loadMeta;
+        loadRows = value.loadRows;
+        dynamicMeta = value.dynamicMeta;
+        dynamicRows = value.dynamicRows;
+    }
+
+private:
     QVector<InputRow>        inputRows;
     QVector<DcRow>           dcRows;       // ★ 新增 DC Table 資料
     QVector<RelayDataRow>    relayRows;

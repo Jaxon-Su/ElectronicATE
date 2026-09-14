@@ -17,3 +17,14 @@ struct RelayDataRow {
 };
 
 enum class TableKind { Input, Dc, Relay, Load, DyLoad };
+
+struct TestConditionSnapshot {
+    QVector<InputRow> inputRows;
+    QVector<DcRow> dcRows;
+    QVector<RelayDataRow> relayRows;
+    LoadMetaRow loadMeta;
+    QVector<LoadDataRow> loadRows;
+    DynamicMetaRow dynamicMeta;
+    QVector<DynamicDataRow> dynamicRows;
+};
+Q_DECLARE_METATYPE(TestConditionSnapshot)

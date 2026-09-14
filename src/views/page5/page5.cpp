@@ -165,7 +165,7 @@ void Page5::setupConnections()
 
     // ── ViewModel 轉發 Worker 輸出 → View UI ─────────────
     connect(m_viewModel, &Page5ViewModel::taskStatusChanged,
-            this, [this](int idx, Page5RunPanel::TaskStatus status) {
+            this, [this](int idx, TaskStatus status) {
                 m_centerPanel->runPanel()->setTaskStatus(idx, status);
             });
     connect(m_viewModel, &Page5ViewModel::taskRetryCountChanged,

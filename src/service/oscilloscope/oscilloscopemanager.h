@@ -3,10 +3,9 @@
 #include <QMap>
 #include <QString>
 #include <QStringList>
-#include "page1config.h"
 
 class Oscilloscope;
-class AbstractTriggerController;
+struct Page1Config;
 
 // 示波器生命週期管理
 // - 靜態方法供背景執行緒使用（建立 / 斷線）
@@ -26,8 +25,10 @@ public:
     // 以新 map 取代舊的（同時更新 current 為第一台）
     void assign(OscMap newMap);
 
-    // 斷線並清除所有儀器；若傳入 triggerCtrl 會先解除綁定
-    void clear(AbstractTriggerController* triggerCtrl = nullptr);
+    // 斷線並清除所有儀器；呼叫端必須先解除 UI/controller 綁定。
+    void clear();
+    // Transfer ownership without disconnecting; caller must arrange safe cleanup.
+    OscMap takeAll();
 
     // 依名稱取得示波器
     std::shared_ptr<Oscilloscope> get(const QString& modelName) const;

@@ -11,6 +11,7 @@ class Page2ViewModel;
 class Page3ViewModel;
 class Page4ViewModel;
 class Page5ViewModel;
+struct XmlOperationResult;
 
 class MainWindowViewModel : public QObject {
     Q_OBJECT
@@ -53,4 +54,5 @@ private:
     void initializeViewModels();
     void setupPageConnections();
     QList<IXmlSerializable*> xmlPages() const;
+    bool reportXmlResult(const XmlOperationResult& result, const QString& fileName, bool saving);
 };

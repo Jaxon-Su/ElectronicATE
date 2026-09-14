@@ -3,7 +3,7 @@
 #include <QVector>
 #include <QAtomicInt>
 #include "page5taskpayload.h"
-#include "page5runpanel.h"
+#include "taskstatus.h"
 
 class IOscilloscopeMeasureStrategy;
 
@@ -41,7 +41,7 @@ public slots:
     void stop();
 
 signals:
-    void taskStatusChanged(int runPanelIndex, Page5RunPanel::TaskStatus status);
+    void taskStatusChanged(int runPanelIndex, TaskStatus status);
     void retryCountChanged(int runPanelIndex, int attempt);
     void logMessage(const QString& msg);
     void finished();

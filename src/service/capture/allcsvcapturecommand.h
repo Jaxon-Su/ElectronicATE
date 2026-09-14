@@ -6,8 +6,9 @@
 class AllCsvCaptureCommand : public ICaptureCommand {
 public:
     explicit AllCsvCaptureCommand(const CaptureContext& ctx);
-    void execute() override;
+
 
 private:
+    void executeImpl() override;
     CaptureContext m_ctx;
 };

@@ -5,15 +5,13 @@
 #include "page2config.h"
 #include "datafinder.h"
 #include "instrumentcreator.h"
+#include "instrumentoperationresult.h"
+#include "instrumentactions.h"
 
 // ══════════════════════════════════════════════════════
 //  Action 枚舉（原定義於 page3viewmodel.h，移此共用）
 //  Page3ViewModel 與 Page5TestWorker 都需要這些枚舉
 // ══════════════════════════════════════════════════════
-enum class InputAction  { PowerOn, PowerOff, Change };
-enum class LoadAction   { LoadOn,  LoadOff,  Change };
-enum class DyLoadAction { DyLoadOn, DyloadOff, Change };
-enum class RelayAction  { RelayOn,  RelayOff,  Change };
 
 class DCLoad;
 class ACSource;
@@ -35,10 +33,7 @@ class RelayBase;
 class InstrumentExecutor
 {
 public:
-    struct Result {
-        bool    success      = true;
-        QString errorMessage;
-    };
+    using Result = InstrumentOperationResult;
 
     // ── 主要執行方法 ──────────────────────────────────
     static Result runInput (const Page1Config&          cfg,

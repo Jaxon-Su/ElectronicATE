@@ -1,4 +1,5 @@
-﻿#include "msoseries456.h"
+#include "binaryfilestore.h"
+#include "msoseries456.h"
 #include <QDateTime>
 #include <QDebug>
 #include <QFile>
@@ -727,21 +728,13 @@ bool MSOSeries456::captureWaveformFileToHost(int channel,
         return false;
     }
 
-    QFile file(hostFilePath);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        qWarning() << "[MSO456] captureWaveformFileToHost: 無法開啟目標檔案：" << hostFilePath;
+    const auto saved = BinaryFileStore::save(hostFilePath, waveData);
+    if (!saved.succeeded()) {
+        qWarning() << "[msoseries456] captureWaveformFileToHost: save failed:"
+                   << hostFilePath << saved.detail;
         return false;
     }
-
-    const qint64 written = file.write(waveData);
-    file.close();
-
-    if (written != static_cast<qint64>(waveData.size())) {
-        qWarning() << "[MSO456] captureWaveformFileToHost: 寫入不完整："
-                   << written << "/" << waveData.size() << "bytes";
-        return false;
-    }
-
+    const qint64 written = saved.bytesWritten;
     qDebug() << "[MSO456] captureWaveformFileToHost 完成："
              << hostFilePath << written / 1024.0 << "KB";
     return true;

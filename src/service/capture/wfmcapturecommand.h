@@ -7,8 +7,9 @@
 class WfmCaptureCommand : public ICaptureCommand {
 public:
     explicit WfmCaptureCommand(const CaptureContext& ctx);
-    void execute() override;
+
 
 private:
+    void executeImpl() override;
     CaptureContext m_ctx;
 };

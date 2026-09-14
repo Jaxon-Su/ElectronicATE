@@ -20,13 +20,7 @@ public:
     void syncUIToViewModel();
 
 signals:
-    void inputRowsChanged(const QVector<InputRow>&);
-    void dcRowsChanged(const QVector<DcRow>&);
-    void relayRowsChanged(const QVector<RelayDataRow>&);
-    void loadMetaChanged(const LoadMetaRow&);
-    void loadRowsChanged(const QVector<LoadDataRow>&);
-    void dynamicMetaChanged(const DynamicMetaRow&);
-    void dynamicRowsChanged(const QVector<DynamicDataRow>&);
+    void conditionsEdited(const TestConditionSnapshot& snapshot);
 
 private slots:
     void onHeadersChanged(TableKind kind, const QStringList &headers);
@@ -85,11 +79,11 @@ private:
     bool handleNavigationKey(QKeyEvent* keyEvent, QTableWidget* tbl, int row, int col);
 
     // 同步輔助函數
-    void syncInputTable();
-    void syncDcTable();
-    void syncRelayTable();
-    void syncLoadTable();
-    void syncDynamicTable();
+    void syncInputTable(TestConditionSnapshot& snapshot);
+    void syncDcTable(TestConditionSnapshot& snapshot);
+    void syncRelayTable(TestConditionSnapshot& snapshot);
+    void syncLoadTable(TestConditionSnapshot& snapshot);
+    void syncDynamicTable(TestConditionSnapshot& snapshot);
     QVector<QString> extractMetaRowValues(QTableWidget* tbl, int row, int maxOutput);
 
     // 重置輔助函數

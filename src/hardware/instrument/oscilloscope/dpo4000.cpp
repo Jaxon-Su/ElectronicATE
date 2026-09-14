@@ -1,3 +1,4 @@
+#include "binaryfilestore.h"
 #include "dpo4000.h"
 #include "tcpcommunication.h"
 #include <QDebug>
@@ -639,21 +640,13 @@ bool DPO4000::captureWaveformFileToHost(int channel,
         return false;
     }
 
-    QFile file(hostFilePath);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        qWarning() << "[DPO4000] captureWaveformFileToHost: 無法開啟檔案:" << hostFilePath;
+    const auto saved = BinaryFileStore::save(hostFilePath, waveData);
+    if (!saved.succeeded()) {
+        qWarning() << "[dpo4000] captureWaveformFileToHost: save failed:"
+                   << hostFilePath << saved.detail;
         return false;
     }
-
-    const qint64 written = file.write(waveData);
-    file.close();
-
-    if (written != static_cast<qint64>(waveData.size())) {
-        qWarning() << "[DPO4000] captureWaveformFileToHost: 寫入不完整"
-                   << written << "/" << waveData.size() << "bytes";
-        return false;
-    }
-
+    const qint64 written = saved.bytesWritten;
     qDebug() << "[DPO4000] captureWaveformFileToHost 成功:"
              << hostFilePath << written / 1024.0 << "KB";
     return true;

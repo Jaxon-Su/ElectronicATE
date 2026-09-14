@@ -5,8 +5,11 @@
 #include "page3viewmodel.h"
 #include "page4viewmodel.h"
 #include "page5viewmodel.h"
-#include "appservice.h"
+#include "xmlconfigstore.h"
+#include "messageservice.h"
+#include "pageconnectioncoordinator.h"
 #include <QDebug>
+#include <QCoreApplication>
 
 MainWindowViewModel::MainWindowViewModel(MainWindowModel* model, QObject* parent)
     : QObject(parent)
@@ -19,7 +22,7 @@ MainWindowViewModel::MainWindowViewModel(MainWindowModel* model, QObject* parent
 {
     initializeViewModels();
     setupPageConnections();
-    AppService::instance().registerMetaTypes();
+    qRegisterMetaType<TableKind>("TableKind");
 }
 
 MainWindowViewModel::~MainWindowViewModel()
@@ -35,6 +38,9 @@ void MainWindowViewModel::initializeViewModels()
     }
 
     m_page1ViewModel = new Page1ViewModel(m_model->page1Model(), this);
+    const QString catalogPath = QCoreApplication::applicationDirPath() + "/XML/Instrument.xml";
+    if (!m_model->page1Model()->loadBaseXml(catalogPath))
+        qWarning() << "Failed to load instrument catalog:" << catalogPath;
     m_page2ViewModel = new Page2ViewModel(m_model->page2Model(), this);
     m_page3ViewModel = new Page3ViewModel(m_model->page3Model(), this);
     m_page4ViewModel = new Page4ViewModel(m_model->page4Model(), this);
@@ -43,7 +49,7 @@ void MainWindowViewModel::initializeViewModels()
 
 void MainWindowViewModel::setupPageConnections()
 {
-    AppService::instance().setupPageConnections(
+    PageConnectionCoordinator::setupPageConnections(
         m_page1ViewModel,
         m_page2ViewModel,
         m_page3ViewModel,
@@ -63,7 +69,8 @@ void MainWindowViewModel::saveConfig()
         saveConfigAs();
         return;
     }
-    AppService::instance().saveAllToXml(m_model->lastSavePath(), xmlPages());
+    const auto result = XmlConfigStore::saveAllToXml(m_model->lastSavePath(), xmlPages());
+    reportXmlResult(result, m_model->lastSavePath(), true);
 }
 
 void MainWindowViewModel::saveConfigAs()
@@ -85,16 +92,45 @@ void MainWindowViewModel::onSaveDialogAccepted(const QString& fileName)
         finalFileName += ".xml";
     }
 
-    AppService::instance().saveAllToXml(finalFileName, xmlPages());
-
-    m_model->setLastSavePath(finalFileName);
+    const auto result = XmlConfigStore::saveAllToXml(finalFileName, xmlPages());
+    if (reportXmlResult(result, finalFileName, true))
+        m_model->setLastSavePath(finalFileName);
 }
 
 void MainWindowViewModel::onLoadDialogAccepted(const QString& fileName)
 {
     if (fileName.isEmpty()) return;
 
-    AppService::instance().loadAllFromXml(fileName, xmlPages());
+    const auto result = XmlConfigStore::loadAllFromXml(fileName, xmlPages());
+    if (reportXmlResult(result, fileName, false))
+        m_model->setLastSavePath(fileName);
+}
 
-    m_model->setLastSavePath(fileName);
+bool MainWindowViewModel::reportXmlResult(
+    const XmlOperationResult& result, const QString& fileName, bool saving)
+{
+    if (result.succeeded()) return true;
+
+    QString title = saving ? tr("儲存失敗") : tr("載入失敗");
+    QString message;
+    switch (result.error) {
+    case XmlOperationResult::Error::Open:
+        message = tr("無法開啟檔案: %1\n%2").arg(fileName, result.detail);
+        break;
+    case XmlOperationResult::Error::Write:
+        message = tr("無法寫入檔案: %1\n%2").arg(fileName, result.detail);
+        break;
+    case XmlOperationResult::Error::Parse:
+        title = tr("XML 解析錯誤");
+        message = tr("行 %1: %2").arg(result.line).arg(result.detail);
+        break;
+    case XmlOperationResult::Error::InvalidRoot:
+        title = tr("XML 格式錯誤");
+        message = tr("預期根元素 loodGUI，實際為 %1。").arg(result.detail);
+        break;
+    case XmlOperationResult::Error::None:
+        return true;
+    }
+    MessageService::instance().showError(title, message);
+    return false;
 }

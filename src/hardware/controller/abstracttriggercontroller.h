@@ -1,13 +1,15 @@
 #pragma once
-#include <QObject>
+#include "itriggercontroller.h"
 #include "oscilloscope.h"
 
-class AbstractTriggerController : public QObject
+class QWidget;
+
+class AbstractTriggerController : public ITriggerController
 {
     Q_OBJECT
 public:
     explicit AbstractTriggerController(QWidget* triggerWidget, QObject* parent = nullptr)
-        : QObject(parent) {}
+        : ITriggerController(parent) { Q_UNUSED(triggerWidget); }
     virtual ~AbstractTriggerController() = default;
 
     // 純虛擬方法 - 所有子類必須實作
@@ -19,10 +21,6 @@ public:
     // 直接讀 UI，不查詢儀器，確保與使用者選擇一致。
     // 子類如有 Source ComboBox 應 override；預設回傳 0（未知）。
     virtual int getSelectedChannel() const { return 0; }
-
-signals:
-    // 偵測到通訊中斷時發出，由 Page3ViewModel 重建示波器連線
-    void reconnectRequested();
 
 protected:
     // 共用的UI查找和連接方法

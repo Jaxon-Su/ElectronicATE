@@ -5,13 +5,13 @@
 #include <QXmlStreamReader>
 #include "page1config.h"
 #include "page2config.h"
-#include "page5model.h"
+#include "dutrowdata.h"
 #include "page5taskpayload.h"
-#include "page5runpanel.h"      // Page5RunPanel::TaskStatus
+#include "taskstatus.h"
 #include "ixmlserializable.h"
 
 class Page5Model;
-class Page2ViewModel;
+class ITestConditionProvider;
 class Oscilloscope;
 class Page5TestWorker;
 class QThread;
@@ -23,7 +23,8 @@ public:
     explicit Page5ViewModel(Page5Model *model, QObject *parent = nullptr);
     ~Page5ViewModel() override;
 
-    void setPage2ViewModel(Page2ViewModel* vm2) { m_page2ViewModel = vm2; }
+    // Borrowed provider; nullptr restores the model-backed fallback.
+    void setConditionProvider(const ITestConditionProvider* provider) { m_conditionProvider = provider; }
 
     const Page1Config&             page1Config()  const;
     const QVector<InputRow>&       inputRows()    const;
@@ -40,6 +41,7 @@ public:
 
     QString xmlTagName() const override { return "Page5"; }
     void writeXml(QXmlStreamWriter& writer) const override;
+    void validateXml(QXmlStreamReader& reader) const override;
     void loadXml(QXmlStreamReader& reader) override;
 
     Page5ExecutionContext executionContext() const;
@@ -72,7 +74,7 @@ signals:
     void runningChanged(bool running);
 
     // ★ Worker 輸出轉發給 View（queued 跨執行緒後再由 ViewModel 廣播）
-    void taskStatusChanged(int runPanelIndex, Page5RunPanel::TaskStatus status);
+    void taskStatusChanged(int runPanelIndex, TaskStatus status);
     void taskRetryCountChanged(int runPanelIndex, int attempt);
     void logMessage(const QString& msg);
 
@@ -81,7 +83,7 @@ private slots:
 
 private:
     Page5Model*                   m_model          = nullptr;
-    Page2ViewModel*               m_page2ViewModel = nullptr;
+    const ITestConditionProvider* m_conditionProvider = nullptr;
     Oscilloscope*                 m_oscilloscope   = nullptr;
     Page5TestWorker* m_worker       = nullptr;
     QThread*         m_workerThread = nullptr;

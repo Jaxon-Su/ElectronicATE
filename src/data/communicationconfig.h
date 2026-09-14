@@ -4,7 +4,7 @@
 #include <QVector>
 #include <QXmlStreamWriter>
 #include <QXmlStreamReader>
-#include <QSerialPort>
+#include <QStringList>
 #include <QRegularExpression>
 
 // ========== 協議類型枚舉 ==========
@@ -340,7 +340,7 @@ struct CommunicationConfig {
             timeout = reader.attributes().value("timeout").toInt();
         }
 
-        while (!(reader.isEndElement() && reader.name() == QString("CommunicationConfig"))) {
+        while (!reader.atEnd() && !(reader.isEndElement() && reader.name() == QString("CommunicationConfig"))) {
             reader.readNext();
             if (!reader.isStartElement()) continue;
 

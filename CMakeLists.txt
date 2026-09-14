@@ -1,8 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
 project(ElectronicATE VERSION 0.1 LANGUAGES CXX)
 
-include_directories("C:/Program Files (x86)/IVI Foundation/VISA/WinNT/Include")
-link_directories("C:/Program Files (x86)/IVI Foundation/VISA/WinNT/Lib_x64/msc")
+set(ELECTRONICATE_VISA_INCLUDE_DIR "C:/Program Files (x86)/IVI Foundation/VISA/WinNT/Include"
+    CACHE PATH "NI-VISA SDK include directory")
+set(ELECTRONICATE_VISA_LIBRARY_DIR "C:/Program Files (x86)/IVI Foundation/VISA/WinNT/Lib_x64/msc"
+    CACHE PATH "NI-VISA SDK library directory")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -16,8 +18,8 @@ set(CMAKE_AUTORCC ON)
 find_package(QT NAMES Qt6 REQUIRED COMPONENTS Widgets Xml Network SerialPort Concurrent)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Widgets Xml Network SerialPort Concurrent)
 
-# 把所有子資料夾的 header 都加進來
-include_directories(
+# Application-only include paths; do not leak them into independent layers.
+set(ELECTRONICATE_APP_INCLUDE_DIRS
   ${CMAKE_CURRENT_SOURCE_DIR}/src/hardware/communication
   ${CMAKE_CURRENT_SOURCE_DIR}/src/hardware/instrument/acsource
   ${CMAKE_CURRENT_SOURCE_DIR}/src/hardware/instrument/dcload
@@ -78,10 +80,9 @@ include_directories(
 )
 
 # 自動蒐集所有來源檔案
-file(GLOB_RECURSE MODEL_SRC
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/models/**/*.h"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/models/**/*.cpp"
-)
+add_subdirectory(src/data)
+add_subdirectory(src/models)
+include(cmake/ElectronicATECore.cmake)
 file(GLOB_RECURSE VIEWMODEL_SRC
   "${CMAKE_CURRENT_SOURCE_DIR}/src/viewmodels/**/*.h"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/viewmodels/**/*.cpp"
@@ -120,7 +121,6 @@ file(GLOB_RECURSE SERVICE_SRC CONFIGURE_DEPENDS
 set(PROJECT_SOURCES
   main.cpp
   ${HARDWARE_SRC}
-  ${MODEL_SRC}
   ${VIEWMODEL_SRC}
   ${VIEW_SRC}
   ${DATA_SRC}
@@ -129,6 +129,16 @@ set(PROJECT_SOURCES
   ${SERVICE_SRC}
   resource.qrc
 )
+
+# Core sources are compiled once in their own targets, not again in the app.
+foreach(core_target IN LISTS ELECTRONICATE_CORE_TARGETS)
+    get_target_property(core_sources ${core_target} SOURCES)
+    get_target_property(core_source_dir ${core_target} SOURCE_DIR)
+    foreach(core_source IN LISTS core_sources)
+        get_filename_component(core_source_path "${core_source}" ABSOLUTE BASE_DIR "${core_source_dir}")
+        list(REMOVE_ITEM PROJECT_SOURCES "${core_source_path}")
+    endforeach()
+endforeach()
 
 # 建立執行檔
 if(QT_VERSION_MAJOR EQUAL 6)
@@ -144,8 +154,14 @@ else()
     )
 endif()
 
-# 連結 Qt 模組
+target_include_directories(ElectronicATE PRIVATE
+    "${ELECTRONICATE_VISA_INCLUDE_DIR}"
+    ${ELECTRONICATE_APP_INCLUDE_DIRS})
+target_link_directories(ElectronicATE PRIVATE "${ELECTRONICATE_VISA_LIBRARY_DIR}")
+
+# 連結 Qt 模組與獨立 Model 層
 target_link_libraries(ElectronicATE PRIVATE
+    ${ELECTRONICATE_CORE_TARGETS}
     Qt${QT_VERSION_MAJOR}::Core
     Qt${QT_VERSION_MAJOR}::Widgets
     Qt${QT_VERSION_MAJOR}::Xml

@@ -1,4 +1,5 @@
 #include "page1.h"
+#include "outputindexpolicy.h"
 #include "page1viewmodel.h"
 #include <QLabel>
 #include <QSpinBox>
@@ -460,13 +461,12 @@ QComboBox* Page1::createIndexComboBox(const InstrumentConfig &ic, int channelIdx
     int maxOutputs = (type == "Load") ? viewModel->loadOutputs() : viewModel->relayOutputs();
 
     if (enabled) {
-        for (int i = 1; i <= maxOutputs; ++i)
-            cb->addItem(QString::number(i));
+        cb->addItems(OutputIndexPolicy::choices(maxOutputs).mid(1));
         cb->setEnabled(true);
 
         // 還原儲存值
         int savedIdx = (ic.channels.size() > channelIdx) ? ic.channels[channelIdx].index : 0;
-        if (savedIdx > 0 && savedIdx <= maxOutputs)
+        if (OutputIndexPolicy::isValid(savedIdx, maxOutputs))
             cb->setCurrentText(QString::number(savedIdx));
     } else {
         cb->setEnabled(false);
@@ -597,10 +597,9 @@ void Page1::updateIndexComboBox(int row, int col, bool enable, const QString &ty
     cb->addItem("");
 
     if (enable) {
-        for (int i = 1; i <= maxOutputs; ++i)
-            cb->addItem(QString::number(i));
+        cb->addItems(OutputIndexPolicy::choices(maxOutputs).mid(1));
 
-        if (cur.toInt() > 0 && cur.toInt() <= maxOutputs)
+        if (!OutputIndexPolicy::restoredChoice(cur, maxOutputs).isEmpty())
             cb->setCurrentText(cur);
 
         cb->setEnabled(true);
@@ -631,8 +630,7 @@ void Page1::enforceUniqueIndices()
             if (!cb) continue;
             QString v = cb->currentText();
             if (v.isEmpty()) continue;
-            if (usedSet->contains(v)) cb->setCurrentText("");
-            else usedSet->insert(v);
+            if (!OutputIndexPolicy::claim(v, *usedSet)) cb->setCurrentText("");
         }
     }
 }
@@ -869,10 +867,9 @@ void Page1::applyOutputsChange(const QString &type, int newVal)
             cb->clear();
             cb->addItem("");
 
-            for (int i = 1; i <= newVal; ++i)
-                cb->addItem(QString::number(i));
+            cb->addItems(OutputIndexPolicy::choices(newVal).mid(1));
 
-            if (!cur.isEmpty() && cur.toInt() <= newVal)
+            if (!OutputIndexPolicy::restoredChoice(cur, newVal).isEmpty())
                 cb->setCurrentText(cur);
 
             cb->blockSignals(false);
@@ -1004,9 +1001,7 @@ bool Page1::isItemAvailable(const QString &itemText,
                             const QString &currentText,
                             const QSet<QString> &usedSet) const
 {
-    return itemText.isEmpty()
-    || !usedSet.contains(itemText)
-        || itemText == currentText;
+    return OutputIndexPolicy::isAvailable(itemText, currentText, usedSet);
 }
 
 QPushButton* Page1::createConfigButton(const QString &instName)

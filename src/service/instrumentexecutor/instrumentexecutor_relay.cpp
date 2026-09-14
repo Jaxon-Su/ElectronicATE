@@ -75,7 +75,7 @@ InstrumentExecutor::runRelay(
 
         int relayIndex = 0;
         for (const auto& inst : cfg.instruments) {
-            if (inst.type != "Relay" || !inst.enabled || inst.address.isEmpty()) continue;
+            if (inst.type != "Relay" || !inst.enabled || inst.getResourceString().isEmpty()) continue;
 
             if (relayIndex >= createResult.relays.size()) break;
             RelayBase* relay = createResult.relays[relayIndex++];

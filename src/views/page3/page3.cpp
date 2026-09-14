@@ -1,4 +1,6 @@
 #include "page3.h"
+#include <QFileDialog>
+#include <QPointer>
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -13,6 +15,13 @@
 Page3::Page3(Page3ViewModel* viewModel, QWidget *parent)
     : QWidget(parent), vm(viewModel)
 {
+    if (vm) {
+        vm->setCaptureFileSelector([page = QPointer<Page3>(this)](
+            const QString& title, const QString& defaultPath, const QString& filter) {
+            if (!page) return QString{};
+            return QFileDialog::getSaveFileName(page.data(), title, defaultPath, filter);
+        });
+    }
     initializeUI();
     buildLayout();
     applyStyles();

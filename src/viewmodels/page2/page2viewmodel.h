@@ -7,35 +7,37 @@
 #include "page2model.h"
 #include "page1config.h"
 #include "ixmlserializable.h"
+#include "itestconditionprovider.h"
 #include "tableheaderbuilder.h"
 
 // Page2 的 ViewModel - 負責業務邏輯和 UI-Model 數據轉換
-class Page2ViewModel : public QObject, public IXmlSerializable
+class Page2ViewModel : public QObject, public IXmlSerializable, public ITestConditionProvider
 {
     Q_OBJECT
 public:
     explicit Page2ViewModel(Page2Model* model, QObject *parent = nullptr);
+    TestConditionSnapshot conditions() const { return m_model->snapshot(); }
 
     // 獲取 Load 的名稱列表
     QStringList loadNameList() const;
 
     // 獲取指定表格的標題列表（供 Page3 ComboBox 使用）
     QStringList TitleList(TableKind type) const;
-    static QString inputTitle(const InputRow& row);
 
     // IXmlSerializable
     QString xmlTagName() const override { return "Page2"; }
     void writeXml(QXmlStreamWriter& writer) const override;
+    void validateXml(QXmlStreamReader& reader) const override;
     void loadXml(QXmlStreamReader& reader) override;
 
     // Model 數據代理訪問
-    const QVector<InputRow>&      inputRows()    const { return m_model->inputRows; }
-    const QVector<DcRow>&         dcRows()       const { return m_model->dcRows; }
-    const QVector<RelayDataRow>&  relayRows()    const { return m_model->relayRows; }
-    const LoadMetaRow&            loadMeta()     const { return m_model->loadMeta; }
-    const QVector<LoadDataRow>&   loadRows()     const { return m_model->loadRows; }
-    const DynamicMetaRow&         dynamicMeta()  const { return m_model->dynamicMeta; }
-    const QVector<DynamicDataRow>& dynamicRows() const { return m_model->dynamicRows; }
+    const QVector<InputRow>&      inputRows()    const override { return m_model->getInputRows(); }
+    const QVector<DcRow>&         dcRows()       const { return m_model->getDcRows(); }
+    const QVector<RelayDataRow>&  relayRows()    const override { return m_model->getRelayRows(); }
+    const LoadMetaRow&            loadMeta()     const override { return m_model->getLoadMeta(); }
+    const QVector<LoadDataRow>&   loadRows()     const override { return m_model->getLoadRows(); }
+    const DynamicMetaRow&         dynamicMeta()  const override { return m_model->getDynamicMeta(); }
+    const QVector<DynamicDataRow>& dynamicRows() const override { return m_model->getDynamicRows(); }
 
     int maxOutput() const;           // Load/Dynamic 的最大輸出數
     int maxRelayOutput() const { return m_maxRelayOutput; }
@@ -58,6 +60,7 @@ public:
     QStringList dynamicRangeOptions(int outputIndex) const;
 
 public slots:
+    void setConditions(const TestConditionSnapshot& snapshot);
     void setMaxOutput(int maxOutput);
     void setMaxRelayOutput(int maxRelayOutput);
 
@@ -79,6 +82,7 @@ public slots:
     void onDynamicRowsChanged(const QVector<DynamicDataRow>& rows) { setDynamicRows(rows); }
 
 signals:
+    void conditionsChanged(const TestConditionSnapshot& snapshot);
     // UI 更新信號
     void headersChanged(TableKind kind, const QStringList &headers);
     void relayRowsStructChanged(const QVector<RelayDataRow>&);
@@ -101,6 +105,8 @@ signals:
     void dynamicRowsStructChanged(const QVector<DynamicDataRow>&);
 
 private:
+    bool publishConditions();
+    quint64 m_conditionRevision = 0;
     // Meta 行數常量
     static constexpr int META_ROWS    = 5;  // Load 表格
     static constexpr int META_ROWS_Dy = 3;  // Dynamic 表格

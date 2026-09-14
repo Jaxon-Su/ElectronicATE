@@ -1,5 +1,5 @@
 #include "conditionpower.h"
-#include "page2viewmodel.h"
+#include "conditiontextformatter.h"
 #include "styleutils.h"
 #include "page5rightpanel.h"
 #include "tableutils.h"
@@ -234,7 +234,7 @@ void Page5RightPanel::refreshInputTable()
         // col 0：Seq
         m_inputTable->setItem(r, 0, TableUtils::makeCenteredItem(QString::number(r + 1)));
 
-        m_inputTable->setItem(r, 1, TableUtils::makeCenteredItem(Page2ViewModel::inputTitle(rows[r])));
+        m_inputTable->setItem(r, 1, TableUtils::makeCenteredItem(ConditionTextFormatter::inputTitle(rows[r])));
         m_inputTable->setItem(r, 2, TableUtils::makeCenteredItem(rows[r].phaseMode.isEmpty() ? "1phase" : rows[r].phaseMode));
         m_inputTable->setItem(r, 3, TableUtils::makeCenteredItem(rows[r].vin));
         m_inputTable->setItem(r, 4, TableUtils::makeCenteredItem(rows[r].frequency));

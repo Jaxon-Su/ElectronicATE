@@ -22,10 +22,10 @@ void Page3Model::writeXml(QXmlStreamWriter& writer) const
 void Page3Model::writeComboBoxTitles(QXmlStreamWriter& w) const
 {
     w.writeStartElement("ComboBoxTitles");
-    writeTitleList(w, "InputTitles", m_inputTitles);
-    writeTitleList(w, "LoadTitles", m_loadTitles);
-    writeTitleList(w, "DyLoadTitles", m_dyloadTitles);
-    writeTitleList(w, "RelayTitles", m_relayTitles);
+    writeTitleList(w, "InputTitles", m_state.m_inputTitles);
+    writeTitleList(w, "LoadTitles", m_state.m_loadTitles);
+    writeTitleList(w, "DyLoadTitles", m_state.m_dyloadTitles);
+    writeTitleList(w, "RelayTitles", m_state.m_relayTitles);
     w.writeEndElement();
 }
 
@@ -40,10 +40,10 @@ void Page3Model::writeCurrentSelections(QXmlStreamWriter& w) const
         w.writeEndElement();
     };
 
-    writeSelection("InputSelection", m_selectedInputIndex, m_selectedInputText);
-    writeSelection("LoadSelection", m_selectedLoadIndex, m_selectedLoadText);
-    writeSelection("DyLoadSelection", m_selectedDyLoadIndex, m_selectedDyLoadText);
-    writeSelection("RelaySelection", m_selectedRelayIndex, m_selectedRelayText);
+    writeSelection("InputSelection", m_state.m_selectedInputIndex, m_state.m_selectedInputText);
+    writeSelection("LoadSelection", m_state.m_selectedLoadIndex, m_state.m_selectedLoadText);
+    writeSelection("DyLoadSelection", m_state.m_selectedDyLoadIndex, m_state.m_selectedDyLoadText);
+    writeSelection("RelaySelection", m_state.m_selectedRelayIndex, m_state.m_selectedRelayText);
 
     w.writeEndElement();
 }
@@ -52,16 +52,16 @@ void Page3Model::writeLoadData(QXmlStreamWriter& w) const
 {
     // Meta
     w.writeStartElement("LoadMetaData");
-    writeStringList(w, "Modes", "Mode", m_LoadMetaData.modes);
-    writeStringList(w, "Ranges", "Range", m_LoadMetaData.ranges);
-    writeStringList(w, "Names", "Name", m_LoadMetaData.names);
-    writeStringList(w, "Vo", "Value", m_LoadMetaData.vo);
-    writeStringList(w, "Von", "Value", m_LoadMetaData.von);
+    writeStringList(w, "Modes", "Mode", m_state.m_LoadMetaData.modes);
+    writeStringList(w, "Ranges", "Range", m_state.m_LoadMetaData.ranges);
+    writeStringList(w, "Names", "Name", m_state.m_LoadMetaData.names);
+    writeStringList(w, "Vo", "Value", m_state.m_LoadMetaData.vo);
+    writeStringList(w, "Von", "Value", m_state.m_LoadMetaData.von);
     w.writeEndElement();
 
     // Rows
     w.writeStartElement("LoadRowsData");
-    for (const auto& row : m_LoadRowsData) {
+    for (const auto& row : m_state.m_LoadRowsData) {
         w.writeStartElement("LoadRow");
         w.writeAttribute("label", row.label);
         writeStringList(w, "Values", "Value", row.values);
@@ -74,15 +74,15 @@ void Page3Model::writeDynamicData(QXmlStreamWriter& w) const
 {
     // Meta
     w.writeStartElement("DynamicMetaData");
-    writeStringList(w, "Ranges", "Range", m_DynamicMetaData.ranges);
-    writeStringList(w, "Vo", "Value", m_DynamicMetaData.vo);
-    writeStringList(w, "Von", "Value", m_DynamicMetaData.von);
-    writeStringList(w, "T1T2", "Value", m_DynamicMetaData.t1t2);
+    writeStringList(w, "Ranges", "Range", m_state.m_DynamicMetaData.ranges);
+    writeStringList(w, "Vo", "Value", m_state.m_DynamicMetaData.vo);
+    writeStringList(w, "Von", "Value", m_state.m_DynamicMetaData.von);
+    writeStringList(w, "T1T2", "Value", m_state.m_DynamicMetaData.t1t2);
     w.writeEndElement();
 
     // Rows
     w.writeStartElement("DynamicRowsData");
-    for (const auto& row : m_DynamicRowsData) {
+    for (const auto& row : m_state.m_DynamicRowsData) {
         w.writeStartElement("DynamicRow");
         w.writeAttribute("label", row.label);
         writeStringList(w, "Values", "Value", row.values);
@@ -94,6 +94,18 @@ void Page3Model::writeDynamicData(QXmlStreamWriter& w) const
 // ========== XML 讀取 ==========
 
 void Page3Model::loadXml(QXmlStreamReader& reader)
+{
+    if (!reader.isStartElement() || reader.name() != QStringLiteral("Page3")) {
+        reader.raiseError(QStringLiteral("Expected Page3 element"));
+        return;
+    }
+    Page3Model candidate;
+    // Preserve legacy partial-document behavior for omitted fields.
+    candidate.m_state = m_state;
+    candidate.readXmlFields(reader);
+    if (!reader.hasError()) m_state = std::move(candidate.m_state);
+}
+void Page3Model::readXmlFields(QXmlStreamReader& reader)
 {
     while (!reader.atEnd()) {
         reader.readNext();
@@ -136,16 +148,16 @@ void Page3Model::readComboBoxTitles(QXmlStreamReader& r)
 
         if (r.isStartElement()) {
             if (r.name() == "InputTitles") {
-                m_inputTitles = readTitleList(r, "InputTitles");
+                m_state.m_inputTitles = readTitleList(r, "InputTitles");
             }
             else if (r.name() == "LoadTitles") {
-                m_loadTitles = readTitleList(r, "LoadTitles");
+                m_state.m_loadTitles = readTitleList(r, "LoadTitles");
             }
             else if (r.name() == "DyLoadTitles") {
-                m_dyloadTitles = readTitleList(r, "DyLoadTitles");
+                m_state.m_dyloadTitles = readTitleList(r, "DyLoadTitles");
             }
             else if (r.name() == "RelayTitles") {
-                m_relayTitles = readTitleList(r, "RelayTitles");
+                m_state.m_relayTitles = readTitleList(r, "RelayTitles");
             }
         }
     }
@@ -161,20 +173,20 @@ void Page3Model::readCurrentSelections(QXmlStreamReader& r)
             QXmlStreamAttributes attrs = r.attributes();
 
             if (r.name() == "InputSelection") {
-                m_selectedInputIndex = attrs.value("index").toInt();
-                m_selectedInputText = attrs.value("text").toString();
+                m_state.m_selectedInputIndex = attrs.value("index").toInt();
+                m_state.m_selectedInputText = attrs.value("text").toString();
             }
             else if (r.name() == "LoadSelection") {
-                m_selectedLoadIndex = attrs.value("index").toInt();
-                m_selectedLoadText = attrs.value("text").toString();
+                m_state.m_selectedLoadIndex = attrs.value("index").toInt();
+                m_state.m_selectedLoadText = attrs.value("text").toString();
             }
             else if (r.name() == "DyLoadSelection") {
-                m_selectedDyLoadIndex = attrs.value("index").toInt();
-                m_selectedDyLoadText = attrs.value("text").toString();
+                m_state.m_selectedDyLoadIndex = attrs.value("index").toInt();
+                m_state.m_selectedDyLoadText = attrs.value("text").toString();
             }
             else if (r.name() == "RelaySelection") {
-                m_selectedRelayIndex = attrs.value("index").toInt();
-                m_selectedRelayText = attrs.value("text").toString();
+                m_state.m_selectedRelayIndex = attrs.value("index").toInt();
+                m_state.m_selectedRelayText = attrs.value("text").toString();
             }
             r.skipCurrentElement();
         }
@@ -183,7 +195,7 @@ void Page3Model::readCurrentSelections(QXmlStreamReader& r)
 
 void Page3Model::readLoadMetaData(QXmlStreamReader& r)
 {
-    m_LoadMetaData = LoadMetaRow();
+    m_state.m_LoadMetaData = LoadMetaRow();
 
     while (!r.atEnd()) {
         r.readNext();
@@ -191,19 +203,19 @@ void Page3Model::readLoadMetaData(QXmlStreamReader& r)
 
         if (r.isStartElement()) {
             if (r.name() == "Modes") {
-                m_LoadMetaData.modes = readStringList(r, "Modes", "Mode");
+                m_state.m_LoadMetaData.modes = readStringList(r, "Modes", "Mode");
             }
             else if (r.name() == "Ranges") {
-                m_LoadMetaData.ranges = readStringList(r, "Ranges", "Range");
+                m_state.m_LoadMetaData.ranges = readStringList(r, "Ranges", "Range");
             }
             else if (r.name() == "Names") {
-                m_LoadMetaData.names = readStringList(r, "Names", "Name");
+                m_state.m_LoadMetaData.names = readStringList(r, "Names", "Name");
             }
             else if (r.name() == "Vo") {
-                m_LoadMetaData.vo = readStringList(r, "Vo", "Value");
+                m_state.m_LoadMetaData.vo = readStringList(r, "Vo", "Value");
             }
             else if (r.name() == "Von") {
-                m_LoadMetaData.von = readStringList(r, "Von", "Value");
+                m_state.m_LoadMetaData.von = readStringList(r, "Von", "Value");
             }
         }
     }
@@ -211,7 +223,7 @@ void Page3Model::readLoadMetaData(QXmlStreamReader& r)
 
 void Page3Model::readLoadRowsData(QXmlStreamReader& r)
 {
-    m_LoadRowsData.clear();
+    m_state.m_LoadRowsData.clear();
 
     while (!r.atEnd()) {
         r.readNext();
@@ -229,14 +241,14 @@ void Page3Model::readLoadRowsData(QXmlStreamReader& r)
                     row.values = readStringList(r, "Values", "Value");
                 }
             }
-            m_LoadRowsData << row;
+            m_state.m_LoadRowsData << row;
         }
     }
 }
 
 void Page3Model::readDynamicMetaData(QXmlStreamReader& r)
 {
-    m_DynamicMetaData = DynamicMetaRow();
+    m_state.m_DynamicMetaData = DynamicMetaRow();
 
     while (!r.atEnd()) {
         r.readNext();
@@ -244,16 +256,16 @@ void Page3Model::readDynamicMetaData(QXmlStreamReader& r)
 
         if (r.isStartElement()) {
             if (r.name() == "Ranges") {
-                m_DynamicMetaData.ranges = readStringList(r, "Ranges", "Range");
+                m_state.m_DynamicMetaData.ranges = readStringList(r, "Ranges", "Range");
             }
             if (r.name() == "Vo") {
-                m_DynamicMetaData.vo = readStringList(r, "Vo", "Value");
+                m_state.m_DynamicMetaData.vo = readStringList(r, "Vo", "Value");
             }
             if (r.name() == "Von") {
-                m_DynamicMetaData.von = readStringList(r, "Von", "Value");
+                m_state.m_DynamicMetaData.von = readStringList(r, "Von", "Value");
             }
             if (r.name() == "T1T2") {
-                m_DynamicMetaData.t1t2 = readStringList(r, "T1T2", "Value");
+                m_state.m_DynamicMetaData.t1t2 = readStringList(r, "T1T2", "Value");
             }
         }
     }
@@ -261,7 +273,7 @@ void Page3Model::readDynamicMetaData(QXmlStreamReader& r)
 
 void Page3Model::readDynamicRowsData(QXmlStreamReader& r)
 {
-    m_DynamicRowsData.clear();
+    m_state.m_DynamicRowsData.clear();
 
     while (!r.atEnd()) {
         r.readNext();
@@ -279,7 +291,7 @@ void Page3Model::readDynamicRowsData(QXmlStreamReader& r)
                     row.values = readStringList(r, "Values", "Value");
                 }
             }
-            m_DynamicRowsData << row;
+            m_state.m_DynamicRowsData << row;
         }
     }
 }
@@ -341,7 +353,7 @@ QVector<QString> Page3Model::readStringList(QXmlStreamReader& r, const QString& 
 void Page3Model::writeRelayData(QXmlStreamWriter& w) const
 {
     w.writeStartElement("RelayRowsData");
-    for (const auto& row : m_RelayRowsData) {
+    for (const auto& row : m_state.m_RelayRowsData) {
         w.writeStartElement("Row");
         w.writeAttribute("label", row.label);
         // 使用現有的工具函數寫入數值列表
@@ -353,7 +365,7 @@ void Page3Model::writeRelayData(QXmlStreamWriter& w) const
 
 void Page3Model::readRelayData(QXmlStreamReader& r)
 {
-    m_RelayRowsData.clear();
+    m_state.m_RelayRowsData.clear();
     while (!r.atEnd()) {
         r.readNext();
         if (r.isEndElement() && r.name() == "RelayRowsData") break;
@@ -369,7 +381,7 @@ void Page3Model::readRelayData(QXmlStreamReader& r)
                 }
                 if(r.isEndElement() && r.name() == "Row") break;
             }
-            m_RelayRowsData.append(row);
+            m_state.m_RelayRowsData.append(row);
         }
     }
 }
