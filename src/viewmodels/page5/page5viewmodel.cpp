@@ -242,3 +242,8 @@ void Page5ViewModel::validateXml(QXmlStreamReader& reader) const
     Page5Model candidate;
     candidate.loadXml(reader);
 }
+
+void Page5ViewModel::publishXmlLoaded()
+{
+    onConfigLoaded();
+}

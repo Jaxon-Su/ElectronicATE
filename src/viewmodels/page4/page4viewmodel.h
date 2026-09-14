@@ -3,6 +3,9 @@
 #include <QObject>
 #include <memory>
 #include <functional>
+#include <atomic>
+class ConsoleSession;
+class QThread;
 #include "page4config.h"
 #include "ixmlserializable.h"
 
@@ -26,6 +29,7 @@ public:
     void disconnect();
     bool isConnected() const;
     bool isControlActive() const;
+    bool isOperationPending() const { return m_connectionPending || m_commandInProgress; }
     void setControlAllowed(bool allowed) { m_controlAllowed = allowed; }
 
     // ==================== 指令操作 ====================
@@ -48,6 +52,7 @@ public:
     // ==================== XML 序列化 ====================
     QString xmlTagName() const override { return "Page4"; }
     void writeXml(QXmlStreamWriter &writer) const override;
+    void publishXmlLoaded() override;
     void validateXml(QXmlStreamReader& reader) const override;
     void loadXml(QXmlStreamReader &reader) override;
 
@@ -72,18 +77,13 @@ signals:
     void historyUpdated();
 
 private:
-    // 內部通訊方法
-    struct CommandResult {
-        bool success = false;
-        QString response;
-        QString error;
-    };
-    CommandResult executeCommand(const QString &command, bool expectResponse);
-    void closeConnection();
-
     Page4Model *m_model = nullptr;
-    std::unique_ptr<ICommunication> m_comm;    // 通訊介面（由 Factory 創建）
-    CommunicationCreator m_create;
+    ConsoleSession* m_session = nullptr;
+    QThread* m_thread = nullptr;
+    std::shared_ptr<std::atomic<quint64>> m_revision;
+    bool m_connected = false;
+    bool m_connectionPending = false;
+    quint64 m_commandRevision = 0;
     quint64 m_connectionRevision = 0;
     bool m_commandInProgress = false;
     bool m_controlAllowed = true;

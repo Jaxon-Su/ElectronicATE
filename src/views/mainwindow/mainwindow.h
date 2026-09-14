@@ -27,6 +27,9 @@ public:
     Page4* page4() const { return m_page4; }
     Page5* page5() const { return m_page5; }
 
+protected:
+    void closeEvent(QCloseEvent* event) override;
+
 private slots:
     void onSaveConfig();
     void onSaveConfigAs();

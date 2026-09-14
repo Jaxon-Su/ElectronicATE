@@ -219,7 +219,7 @@ void Page2ViewModel::loadXml(QXmlStreamReader& reader)
     QPointer<Page2ViewModel> alive(this);
     m_model->loadXml(reader);
     if (!alive || reader.hasError()) return;
-    refreshUIOutputs();
+    if (!signalsBlocked()) refreshUIOutputs();
 }
 
 void Page2ViewModel::refreshUIOutputs()
@@ -451,4 +451,10 @@ void Page2ViewModel::setConditions(const TestConditionSnapshot& snapshot)
     broadcastAllPowers();
     if (!current()) return;
     broadcastAllDynamicPowers();
+}
+
+void Page2ViewModel::publishXmlLoaded()
+{
+    onConfigLoaded();
+    refreshUIOutputs();
 }

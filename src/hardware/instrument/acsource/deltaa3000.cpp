@@ -40,6 +40,7 @@ void DeltaA3000::setPowerOff() {
     //OUTPut OFF
     // qDebug() << QString("OUTPut OFF");
     sendCommandWithLog(QString("OUTPut OFF"), "[DeltaA3000]");
+    requireOutputOff("OUTPut?");
 }
 
 double DeltaA3000::measureVoltage() {

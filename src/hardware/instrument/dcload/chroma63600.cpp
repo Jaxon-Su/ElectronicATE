@@ -18,6 +18,7 @@ void Chroma63600::setLoadOn()
 void Chroma63600::setLoadOff()
 {
     sendCommandWithLog(QString("LOAD OFF"), "[Chroma63600]");
+    requireOutputOff("LOAD?");
 }
 
 void Chroma63600::setChannel(int channel)

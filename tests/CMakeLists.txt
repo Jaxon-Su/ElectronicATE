@@ -128,3 +128,8 @@ target_include_directories(control_page_lock_test PRIVATE ../src/ui)
 target_link_libraries(control_page_lock_test PRIVATE Qt6::Widgets)
 add_test(NAME control_page_lock COMMAND control_page_lock_test)
 set_tests_properties(control_page_lock PROPERTIES TIMEOUT 10 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(output_readback_test output_readback_test.cpp)
+target_link_libraries(output_readback_test PRIVATE ElectronicATEInstrumentCore)
+add_test(NAME output_off_readback COMMAND output_readback_test)
+set_tests_properties(output_off_readback PROPERTIES TIMEOUT 10)

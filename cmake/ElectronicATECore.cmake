@@ -71,6 +71,8 @@ target_include_directories(ElectronicATEConsoleTransport PUBLIC "${ELECTRONICATE
 target_link_libraries(ElectronicATEConsoleTransport PUBLIC Qt6::Core PRIVATE ElectronicATEInstrumentCore)
 list(APPEND ELECTRONICATE_CORE_TARGETS ElectronicATEConsoleTransport)
 add_library(ElectronicATEConsole STATIC
+    "${ELECTRONICATE_SOURCE_ROOT}/service/console/consolesession.cpp"
+    "${ELECTRONICATE_SOURCE_ROOT}/service/console/consolesession.h"
     "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/page4/page4viewmodel.cpp"
     "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/page4/page4viewmodel.h")
 set_target_properties(ElectronicATEConsole PROPERTIES AUTOMOC ON)

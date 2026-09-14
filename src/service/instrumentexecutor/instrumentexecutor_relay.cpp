@@ -38,6 +38,9 @@ void executeRelayAction(
             success = shouldBeOn ? relay->turnOn(hwChannel) : relay->turnOff(hwChannel);
         }
 
+        if (success && (action == RelayAction::RelayOff || !shouldBeOn))
+            success = relay->getStatus(hwChannel) == RelayStatus::Open;
+
         if (!success) {
             throw std::runtime_error(
                 QString("Control failed for %1 Output %2")

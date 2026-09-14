@@ -27,6 +27,7 @@ public:
 
     QString xmlTagName() const override { return "Page1"; }
     void writeXml(QXmlStreamWriter& writer) const override;
+    void publishXmlLoaded() override;
     void validateXml(QXmlStreamReader& reader) const override;
     void loadXml(QXmlStreamReader& reader) override;
 

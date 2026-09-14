@@ -7,6 +7,7 @@
 
 #include <QDebug>
 #include <cmath>
+#include <QScopeGuard>
 
 namespace {
 
@@ -72,12 +73,12 @@ InstrumentExecutor::Result runInputWithParams(
     if (!createResult.success || !createResult.source)
         return { false, "AC Source creation failed" };
 
+    const auto cleanup = qScopeGuard([&] { ResourceCleaner::cleanupACSource(createResult.source, createResult.comm); });
+
     if (!executeACSourceAction(createResult.source, action, params)) {
-        ResourceCleaner::cleanupACSource(createResult.source, createResult.comm);
         return { false, "3phase input is supported only for Chroma 61509" };
     }
 
-    ResourceCleaner::cleanupACSource(createResult.source, createResult.comm);
     return {};
 }
 

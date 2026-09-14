@@ -17,4 +17,6 @@ public:
     // Consume this section using isolated state; report errors on reader without changing live state.
     virtual void validateXml(QXmlStreamReader& reader) const = 0;
     virtual void loadXml(QXmlStreamReader& reader)        = 0;
+    // Called only after every page has been applied successfully.
+    virtual void publishXmlLoaded() {}
 };

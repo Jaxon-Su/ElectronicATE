@@ -15,7 +15,7 @@ int main(int argc, char** argv)
             applyControlPageLock(&tabs, active);
             for (int i = 2; i < 5; ++i)
                 if (tabs.isTabEnabled(i) != (i == owner + 2)) throw std::runtime_error("control page lock mismatch");
-            if (tabs.isTabEnabled(0) != (owner != 2)) throw std::runtime_error("Page5 configuration lock lost");
+            if (tabs.isTabEnabled(0) || tabs.isTabEnabled(1)) throw std::runtime_error("configuration changed during hardware ownership");
         }
         applyControlPageLock(&tabs, {true, false, true});
         applyControlPageLock(&tabs, {true, false, false});

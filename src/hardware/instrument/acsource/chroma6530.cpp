@@ -34,6 +34,7 @@ void Chroma6530::setPowerOff()
 {
     sendCommandWithLog("OUTPut OFF", "[Chroma6530]");
     sendCommandWithLog("ORELay OFF", "[Chroma6530]");
+    requireOutputOff("OUTPut?");
 }
 
 

@@ -161,3 +161,8 @@ void Page1ViewModel::validateXml(QXmlStreamReader& reader) const
     Page1Model candidate;
     candidate.loadXml(reader);
 }
+
+void Page1ViewModel::publishXmlLoaded()
+{
+    onConfigLoaded(m_model->getConfig());
+}

@@ -1,6 +1,8 @@
 #include "instrumentwithcommbase.h"
 #include <QDebug>
 #include <QMutexLocker>
+#include <QThread>
+#include <stdexcept>
 
 void InstrumentWithCommBase::connect()
 {
@@ -307,4 +309,24 @@ bool InstrumentWithCommBase::queryRaw(const QString& cmd, QByteArray& outData)
 
     m_lastError.clear();
     return true;
+}
+
+void InstrumentWithCommBase::requireOutputOff(const QString& query)
+{
+    QMutexLocker lock(&m_commMutex);
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        auto bytes = query.toUtf8();
+        if (!bytes.endsWith('\n')) bytes += '\n';
+        QByteArray response;
+        if (write(bytes) != bytes.size() || read(response, 256) <= 0)
+            throw std::runtime_error(QString("%1: output OFF readback failed (%2)").arg(model(), query).toStdString());
+        const QString value = QString::fromUtf8(response).trimmed().toUpper();
+        bool numeric = false;
+        const double state = value.toDouble(&numeric);
+        if (value == "OFF" || (numeric && state == 0.0)) return;
+        if (value != "ON" && !(numeric && state == 1.0))
+            throw std::runtime_error(QString("%1: invalid output state '%2' (%3)").arg(model(), value, query).toStdString());
+        if (attempt < 2) QThread::msleep(50);
+    }
+    throw std::runtime_error(QString("%1: output is still ON after OFF command").arg(model()).toStdString());
 }

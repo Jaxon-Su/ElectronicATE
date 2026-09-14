@@ -241,6 +241,9 @@ void Page4::setupConnections()
             this, &Page4::onCommandHistorySelected);
 
     // ViewModel 信號
+    connect(m_viewModel, &Page4ViewModel::controlActiveChanged, this, [this] {
+        updateConnectionUI(m_viewModel->isConnected());
+    });
     connect(m_viewModel, &Page4ViewModel::connectionStatusChanged,
             this, &Page4::onConnectionStatusChanged);
     connect(m_viewModel, &Page4ViewModel::responseReceived,
@@ -379,17 +382,20 @@ void Page4::onHistoryUpdated()
 
 void Page4::updateConnectionUI(bool connected)
 {
-    m_connectBtn->setEnabled(!connected);
-    m_disconnectBtn->setEnabled(connected);
-    m_addressCombo->setEnabled(!connected);
+    const bool pending = m_viewModel && m_viewModel->isOperationPending();
+    const bool active = m_viewModel && m_viewModel->isControlActive();
+    m_connectBtn->setEnabled(!connected && !pending);
+    m_disconnectBtn->setEnabled(active);
+    m_addressCombo->setEnabled(!active);
+    const bool canSend = connected && !pending;
 
-    m_sendBtn->setEnabled(connected);
-    m_commandEdit->setEnabled(connected);
-    m_commandHistory->setEnabled(connected);
-    m_idnBtn->setEnabled(connected);
-    m_rstBtn->setEnabled(connected);
-    m_clsBtn->setEnabled(connected);
-    m_opcBtn->setEnabled(connected);
+    m_sendBtn->setEnabled(canSend);
+    m_commandEdit->setEnabled(canSend);
+    m_commandHistory->setEnabled(canSend);
+    m_idnBtn->setEnabled(canSend);
+    m_rstBtn->setEnabled(canSend);
+    m_clsBtn->setEnabled(canSend);
+    m_opcBtn->setEnabled(canSend);
 }
 
 void Page4::appendLog(const QString &text, const QString &color)

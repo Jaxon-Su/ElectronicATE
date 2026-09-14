@@ -10,6 +10,7 @@
 #include "pageconnectioncoordinator.h"
 #include <QDebug>
 #include <QCoreApplication>
+#include <QPointer>
 
 MainWindowViewModel::MainWindowViewModel(MainWindowModel* model, QObject* parent)
     : QObject(parent)
@@ -101,7 +102,21 @@ void MainWindowViewModel::onLoadDialogAccepted(const QString& fileName)
 {
     if (fileName.isEmpty()) return;
 
-    const auto result = XmlConfigStore::loadAllFromXml(fileName, xmlPages());
+    if (m_page3ViewModel->isControlActive() || m_page4ViewModel->isControlActive() || m_page5ViewModel->isRunning()) {
+        MessageService::instance().showWarning(tr("無法載入"), tr("請先停止控制並斷線，再載入設定。"));
+        return;
+    }
+    QPointer<MainWindowViewModel> alive(this);
+    const auto result = XmlConfigStore::loadAllFromXml(fileName, xmlPages(), [this] {
+        const auto config = m_page1ViewModel->currentConfig();
+        m_page2ViewModel->onPage1ConfigChanged(config);
+        m_page2ViewModel->setMaxOutput(config.loadOutputs);
+        m_page2ViewModel->setMaxRelayOutput(config.relayOutputs);
+        m_page3ViewModel->onPage1ConfigChanged(config);
+        m_page3ViewModel->onConditionsChanged(m_page2ViewModel->conditions());
+        m_page5ViewModel->onPage1ConfigChanged(config);
+    });
+    if (!alive) return;
     if (reportXmlResult(result, fileName, false))
         m_model->setLastSavePath(fileName);
 }

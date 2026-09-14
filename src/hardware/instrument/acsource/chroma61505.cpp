@@ -33,6 +33,7 @@ void Chroma61505::setPowerOff()
 {
     // OUTPut OFF
     sendCommandWithLog("OUTPut OFF", "[Chroma61505]");
+    requireOutputOff("OUTPut?");
 }
 
 // ─────────────────────────────────────────────

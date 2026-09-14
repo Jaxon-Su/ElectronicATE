@@ -316,3 +316,11 @@ User authorized a GitHub release. Created refactor/architecture-alpha3 from main
 - Page4 連線期間保持控制權，斷線仍等待執行中指令結束；三頁的操作入口也檢查控制權。
 - Page3 關閉輸出失敗保留控制權及可重試的按鈕狀態。擷取取消釋放控制權。
 - 新增控制頁 offscreen 測試，擴充 Page3／Page4 的狀態及失敗回復測試；25 組 CTest 通過，實體儀器待驗證。
+
+## 2026-09-14 必要修正與驗收
+
+- Page4 transport 在專用 QThread 內建立、使用、關閉及銷毀；使用 revision 中止過期操作，移除 GUI processEvents 輪詢。
+- OFF 操作增加讀回確認；ON 部分失敗仍維持控制權。輸出期間凍結儀器設定，避免 OFF 指向不同地址。
+- XML 批次套用抑制 ViewModel 通知，成功同步依賴後公布；失敗回復序列化快照，拒絕巢狀載入及重複段落。
+- 關閉視窗改為先停止 Page5／斷開 Page4；Page3 有輸出或背景工作時維持視窗供停止操作。
+- 26 組離線測試及 Release 建置；實機驗收未執行，依 hardware-acceptance.md 由現場確認。

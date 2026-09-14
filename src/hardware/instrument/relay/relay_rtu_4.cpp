@@ -78,6 +78,10 @@ RelayStatus Relay_RTU_4::getStatus(int channel)
     if (read(resp, 6) < 6 || resp.size() < 6)
         return RelayStatus::Unknown;
 
+    if (static_cast<quint8>(resp[0]) != m_slaveAddr ||
+        static_cast<quint8>(resp[1]) != 0x01 || static_cast<quint8>(resp[2]) != 1)
+        return RelayStatus::Unknown;
+
     // 驗證 CRC (CRC 計算前 4 bytes，frame 中以 little-endian 存放)
     quint16 recvCrc = static_cast<quint8>(resp[4]) |
                       (static_cast<quint8>(resp[5]) << 8);

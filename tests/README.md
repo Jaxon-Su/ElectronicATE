@@ -47,3 +47,5 @@ instrument_operation_queue checks Page3's shared FIFO primitive: operation order
 page3_viewmodel_without_drivers links ElectronicATEManualControl with injected execution functions to test queued operations, captured condition snapshots, Load retry, callback deletion, and adopted/abandoned scope connection lifetimes. page2_widget_snapshot uses offscreen QtWidgets to verify real table-to-snapshot synchronization and output resizing; it does not show the UI or use hardware.
 
 `control_page_lock` 使用 offscreen QtWidgets 驗證 Page3／Page4／Page5 互斥停用、Page5 設定頁鎖定及解鎖彙整。Page3／Page4 測試另涵蓋輸出持續 ON、關閉失敗、延後連線、擷取取消及指令返回前不解鎖。
+
+必要修正驗證：`output_off_readback` 檢查 OFF、延遲 ON→OFF、未知值及傳輸失敗；`page4_console_results` 檢查背景執行緒、阻塞 I/O 時 GUI 回應及取消；`xml_persistence` 檢查後段套用失敗回復、多頁通知時的一致狀態與巢狀載入拒絕。實機驗收另見 `docs/hardware-acceptance.md`。

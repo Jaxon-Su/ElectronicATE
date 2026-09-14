@@ -38,6 +38,7 @@ protected:
     int read(QByteArray& data, int maxLen);
 
     QString m_lastError;
+    void requireOutputOff(const QString& query);
     bool queryInt(const QString& cmd, int& value);
     bool queryDouble(const QString& cmd, double& value);
     bool queryString(const QString& cmd, QString& result);

@@ -2,6 +2,7 @@
 
 #include <QList>
 #include <QString>
+#include <functional>
 #include "ixmlserializable.h"
 #include "xmloperationresult.h"
 
@@ -12,7 +13,8 @@ public:
     [[nodiscard]] static XmlOperationResult saveAllToXml(
         const QString& fileName, const QList<IXmlSerializable*>& pages);
     [[nodiscard]] static XmlOperationResult loadAllFromXml(
-        const QString& fileName, const QList<IXmlSerializable*>& pages);
+        const QString& fileName, const QList<IXmlSerializable*>& pages,
+        const std::function<void()>& synchronize = {});
 
 private:
     XmlConfigStore() = delete;

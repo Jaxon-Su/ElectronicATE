@@ -22,6 +22,7 @@ void Chroma63200A::setLoadOn()
 void Chroma63200A::setLoadOff()
 {
     sendCommandWithLog("LOAD OFF", "[Chroma63200A]");
+    requireOutputOff("LOAD?");
 }
 
 void Chroma63200A::setSyncType(int type)

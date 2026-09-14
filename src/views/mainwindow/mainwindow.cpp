@@ -15,6 +15,8 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QDir>
+#include <QCloseEvent>
+#include <QStatusBar>
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
@@ -215,5 +217,24 @@ void MainWindow::updateControlPageLock()
     p4->setControlAllowed(!active[0] && !active[2]);
     p5->setControlAllowed(!active[0] && !active[1]);
     applyControlPageLock(m_tableWidget->tabWidget(), active);
-    menuBar()->setEnabled(!active[2]);
+    menuBar()->setEnabled(!active[0] && !active[1] && !active[2]);
+}
+
+void MainWindow::closeEvent(QCloseEvent* event)
+{
+    auto* p3 = m_viewModel->page3ViewModel();
+    auto* p4 = m_viewModel->page4ViewModel();
+    auto* p5 = m_viewModel->page5ViewModel();
+    if (p5->isRunning()) {
+        p5->stopExecution();
+        statusBar()->showMessage(tr("正在停止測試，完成後請再關閉視窗。"));
+        event->ignore();
+    } else if (p3->isControlActive()) {
+        statusBar()->showMessage(tr("請先關閉 Page3 的輸出，並等待背景操作結束，再關閉視窗。"));
+        event->ignore();
+    } else if (p4->isControlActive()) {
+        p4->disconnect();
+        statusBar()->showMessage(tr("正在中止通訊並斷線，完成後請再關閉視窗。"));
+        event->ignore();
+    } else QMainWindow::closeEvent(event);
 }

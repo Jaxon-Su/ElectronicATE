@@ -10,6 +10,7 @@ ConsoleExchangeResult exchangeConsoleCommand(ICommunication& connection,
 {
     using Error = ConsoleExchangeResult::Error;
     try {
+        if (continueWaiting && !continueWaiting()) return {Error::Interrupted, {}, {}};
         if (!connection.isOpen()) return {Error::Disconnected, {}, {}};
         QByteArray encoded = command.toUtf8();
         if (!encoded.endsWith('\n')) encoded += '\n';
@@ -23,6 +24,7 @@ ConsoleExchangeResult exchangeConsoleCommand(ICommunication& connection,
         while (elapsed.elapsed() < timeoutMs) {
             QByteArray chunk;
             const int count = connection.read(chunk, 4096);
+            if (continueWaiting && !continueWaiting()) return {Error::Interrupted, {}, {}};
             if (count < 0) return {Error::Read, {}, connection.lastError()};
             if (count > 0) {
                 response.append(chunk);

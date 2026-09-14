@@ -329,7 +329,7 @@ void Page3ViewModel::loadXml(QXmlStreamReader& reader)
     m_model->loadXml(reader);
     if (reader.hasError()) return;
     restoreFromModel();
-    updateUIAfterLoad();
+    if (!signalsBlocked()) updateUIAfterLoad();
 }
 
 void Page3ViewModel::restoreFromModel()
@@ -546,6 +546,9 @@ void Page3ViewModel::startInstrumentOperation(std::function<InstrumentOperationR
     const QString& errorTitle, TableKind type, bool forceOffOnFailure, bool releaseLoadBusy, std::optional<bool> outputOn)
 {
     QPointer<Page3ViewModel> guard(this);
+    // An ON request may partially succeed before its driver reports an error.
+    // Keep ownership until an OFF command has been confirmed by readback.
+    if (outputOn && *outputOn) m_outputsOn[type] = true;
     ++m_pendingOperations;
     updateControlActivity();
     if (!guard) return;
@@ -611,4 +614,10 @@ void Page3ViewModel::executeCapture(const std::function<void()>& execute)
     });
     updateControlActivity();
     if (alive) execute();
+}
+
+void Page3ViewModel::publishXmlLoaded()
+{
+    restoreFromModel();
+    updateUIAfterLoad();
 }

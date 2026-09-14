@@ -30,6 +30,7 @@ void Chroma63804::setLoadOn()
 void Chroma63804::setLoadOff()
 {
     sendCommandWithLog("LOAD OFF", "[Chroma63804]");
+    requireOutputOff("LOAD?");
 }
 
 // [LOAD:]MODE CURR|POW|VOLT|RES|RLC|RLCP|INRUSH|RECT
