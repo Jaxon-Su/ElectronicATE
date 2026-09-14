@@ -470,6 +470,7 @@ void Page3::setOutputButtonState(TableKind type, bool on)
     if (btn) {
         QSignalBlocker blocker(btn);
         btn->setChecked(on);
+        btn->setText(on ? tr("ON") : tr("OFF"));
         if (btn == btnLoadOn || btn == btnDyloadOn)
             loadLock();
     }
