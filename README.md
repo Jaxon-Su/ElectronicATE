@@ -254,6 +254,7 @@ ElectronicATE/
 
 ## TODO
 
+- 增加 Page5 全自動控制。
 - 增加更多儀器型號與協議支援。
 - 持續拆分過長 UI 與 executor 邏輯。
 
