@@ -73,6 +73,28 @@ void Page1Model::loadXml(QXmlStreamReader& reader) {
 
     if (reader.hasError()) return;
 
+    bool hasDc = false;
+    for (auto& instrument : config.instruments) {
+        if (instrument.type != "InputDCSource") continue;
+        hasDc = true;
+        if (instrument.name == "DCSource" || instrument.name == "DC Source")
+            instrument.name = "DC Source1";
+    }
+    if (hasDc) {
+        for (int source = 1; source <= 3; ++source) {
+            const QString name = QString("DC Source%1").arg(source);
+            bool found = false;
+            for (const auto& instrument : config.instruments)
+                found |= instrument.name == name;
+            if (!found) {
+                InstrumentConfig instrument;
+                instrument.name = name;
+                instrument.type = "InputDCSource";
+                instrument.enabled = false;
+                config.instruments.append(instrument);
+            }
+        }
+    }
     m_config = config;
     emit configLoaded(m_config);
 }

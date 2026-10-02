@@ -20,7 +20,9 @@
     <!-- 多個電源，共用 Source_Template -->
     <instrument name="ACSource" type="InputSource" ref="ACSource_Template"/>
 
-    <instrument name="DCSource" type="InputDCSource" ref="DCSource_Template"/>
+    <instrument name="DC Source1" type="InputDCSource" ref="DCSource_Template"/>
+    <instrument name="DC Source2" type="InputDCSource" ref="DCSource_Template"/>
+    <instrument name="DC Source3" type="InputDCSource" ref="DCSource_Template"/>
 
 
     <!-- Load 模板 -->

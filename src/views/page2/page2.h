@@ -9,6 +9,7 @@
 class QTableWidget;
 class QPushButton;
 class QSpinBox;
+class QTabWidget;
 
 class Page2 : public QWidget
 {
@@ -41,6 +42,9 @@ private:
     void setupConnections();
     void setupDelegates();
     void setupInitialTableState();
+    void setupDcSourceTabs();
+    void applyDcTableLayout(QTableWidget* table);
+    void appendDcSourceRow(QTableWidget* table, const DcRow& value);
 
     // 表格工具函數
     QTableWidget* tableByKind(TableKind k) const;
@@ -152,6 +156,8 @@ private:
     // ── UI 元件 ──────────────────────────────────────────────────
     QTableWidget *tblInput      = nullptr;
     QTableWidget *tblDc         = nullptr;
+    QTabWidget *dcSourceTabs    = nullptr;
+    QTableWidget *extraDcTables[2] = {};
     QTableWidget *tblRelay      = nullptr;
     QTableWidget *tblLoad       = nullptr;
     QTableWidget *tblDynamic    = nullptr;

@@ -54,6 +54,31 @@ int main(int argc, char** argv)
             return InstrumentOperationResult{true, {}};
         };
         Page3ViewModel vm(&model, operations);
+        {
+            TestConditionSnapshot dc;
+            dc.dcRows = {{"24", "5", ""}};
+            dc.dcRows2 = {{"12", "3", "aux"}};
+            dc.dcRows3 = {{"5", "1", "logic"}};
+            QStringList dcTitles[3];
+            int selected[3] = {-1, -1, -1};
+            auto connection = QObject::connect(&vm, &Page3ViewModel::dcInputUpdated,
+                [&](int source, const QStringList& titles, int index) { dcTitles[source] = titles; selected[source] = index; });
+            vm.onConditionsChanged(dc);
+            vm.onDcSelected(1, 0, "aux / 3 A");
+            vm.onDcTabChanged(1);
+            QString saved;
+            QXmlStreamWriter writer(&saved);
+            vm.writeXml(writer);
+            vm.onDcSelected(1, -1, "");
+            QXmlStreamReader reader(saved);
+            reader.readNextStartElement();
+            vm.loadXml(reader);
+            vm.publishXmlLoaded();
+            require(!reader.hasError() && dcTitles[0] == QStringList{"24 V / 5 A"}
+                        && dcTitles[2] == QStringList{"logic / 1 A"} && selected[1] == 0
+                        && model.dcSourceTab() == 1, "DC titles or selections failed through ViewModel XML load");
+            QObject::disconnect(connection);
+        }
         Page1Config config;
         for (const QString& type : QStringList{"InputSource", "Relay", "Load"}) {
             InstrumentConfig instrument;

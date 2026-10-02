@@ -4,6 +4,10 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QGridLayout>
+#include <QTabWidget>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QGroupBox>
 #include <QFrame>
 #include <QFont>
@@ -46,6 +50,26 @@ void Page3::initializeUI()
     grpInput = new QGroupBox(tr("Input"));
     grpInput->setFont(QFont(font().family(), 9, QFont::Bold));
     grpInput->setFixedWidth(200);
+
+    for (int i = 0; i < 3; ++i) {
+        const QString suffix = QString::number(i + 1);
+        grpDcInput[i] = new QGroupBox(tr("DC Input%1").arg(i + 1));
+        grpDcInput[i]->setObjectName("grpDcInput" + suffix);
+        grpDcInput[i]->setFont(grpInput->font());
+        grpDcInput[i]->setFixedWidth(200);
+        cmbDcInput[i] = new QComboBox(this);
+        cmbDcInput[i]->setObjectName("cmbDcInput" + suffix);
+        cmbDcInput[i]->setEditable(false);
+        cmbDcInput[i]->setMinimumWidth(kBtnWidth);
+        btnDcInput[i] = createPushButton(tr("ON"), "btnDcInput" + suffix);
+        btnDcInput[i]->setCheckable(true);
+        btnDcChange[i] = createPushButton(tr("change"), "btnDcChange" + suffix);
+        for (auto *button : {btnDcInput[i], btnDcChange[i]}) {
+            button->setFixedSize(kBtnWidth, kBtnHeight);
+            button->setEnabled(false);
+            button->setToolTip(tr("DC Source control is not implemented yet."));
+        }
+    }
 
     // Load Group
     btnLoadOn  = createPushButton(tr("ON"));
@@ -100,16 +124,17 @@ void Page3::initializeUI()
     btnCsv = createPushButton(tr("CSV"), "btnCsv");
     btnAllCsv = createPushButton("AllCSV","btnAllCsv");
     btnWfm = createPushButton(tr("WFM"), "btnWfm");
+    btnAllWfm = createPushButton(tr("AllWFM"), "btnAllWfm");
 
     //btnAllCsv
     btnPic->setFixedSize(kBtnWidth, kBtnHeight);
     btnCsv->setFixedSize(kBtnWidth, kBtnHeight);
     btnWfm->setFixedSize(kBtnWidth, kBtnHeight);
+    btnAllWfm->setFixedSize(kBtnWidth, kBtnHeight);
     btnAllCsv->setFixedSize(kBtnWidth, kBtnHeight);
 
     grpCap = new QGroupBox(tr("Capture"));
     grpCap->setFont(QFont(font().family(), 9, QFont::Bold));
-    grpCap->setFixedWidth(200);
 
     // Table
     tblTop = new QTableWidget(this);
@@ -141,29 +166,50 @@ void Page3::buildLayout()
     };
 
     createGroupLayout(grpInput, cmbInput, btnInput, btnChange);
+    for (int i = 0; i < 3; ++i)
+        createGroupLayout(grpDcInput[i], cmbDcInput[i], btnDcInput[i], btnDcChange[i]);
     createGroupLayout(grpLoad, cmbLoad, btnLoadOn, btnLoadChg);
     createGroupLayout(grpDyload, cmbDyload, btnDyloadOn, btnDyloadChg, chkDyload);
     createGroupLayout(grpRelay, cmbRelay, btnRelayOn, btnRelayChg);
 
     // Capture Group
-    auto *layCap = new QVBoxLayout(grpCap);
-    layCap->setSpacing(6);
+    auto *layCap = new QGridLayout(grpCap);
+    layCap->setSpacing(4);
+    layCap->setAlignment(Qt::AlignLeft | Qt::AlignTop);
     layCap->setContentsMargins(4, 18, 4, 8);
-    auto *rowCap = new QHBoxLayout;
-    rowCap->setSpacing(6);
-    rowCap->addWidget(btnPic);
-    rowCap->addWidget(btnCsv);
-    rowCap->addWidget(btnAllCsv);
-    rowCap->addWidget(btnWfm);
-    layCap->addLayout(rowCap);
+    for (auto *button : {btnPic, btnCsv, btnAllCsv, btnWfm, btnAllWfm}) {
+        button->setFixedSize(90, 30);
+        button->setStyleSheet("QPushButton { font-size: 12px; padding: 1px 0px; min-height: 0px; min-width: 86px; max-width: 86px; }");
+    }
+    layCap->addWidget(btnPic, 0, 0);
+    layCap->addWidget(btnCsv, 1, 0);
+    layCap->addWidget(btnAllCsv, 1, 1);
+    layCap->addWidget(btnWfm, 2, 0);
+    layCap->addWidget(btnAllWfm, 2, 1);
+    grpCap->setFixedWidth(200);
 
     // 左欄
     auto *leftCol = new QVBoxLayout;
+    leftCol->setContentsMargins(6, 6, 6, 6);
     leftCol->setSpacing(10);
     leftCol->addWidget(grpInput);
+    auto *dcTabs = new QTabWidget(this);
+    dcInputTabs = dcTabs;
+    dcTabs->setObjectName("dcInputTabs");
+    dcTabs->setFixedWidth(200);
+    for (int i = 0; i < 3; ++i) {
+        grpDcInput[i]->setMinimumWidth(0);
+        grpDcInput[i]->setMaximumWidth(QWIDGETSIZE_MAX);
+        grpDcInput[i]->setTitle(QString());
+        grpDcInput[i]->setStyleSheet("QGroupBox { border: none; margin: 0px; }");
+        grpDcInput[i]->layout()->setContentsMargins(4, 4, 4, 4);
+        dcTabs->addTab(grpDcInput[i], tr("DC Input %1").arg(i + 1));
+    }
+    dcTabs->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     leftCol->addWidget(grpLoad);
     leftCol->addWidget(grpDyload);
     leftCol->addWidget(grpRelay);
+    leftCol->addWidget(dcTabs);
     leftCol->addStretch();
     leftCol->addWidget(grpCap);
 
@@ -171,6 +217,14 @@ void Page3::buildLayout()
     leftFrame->setFrameStyle(QFrame::Box | QFrame::Plain);
     leftFrame->setLineWidth(1);
     leftFrame->setLayout(leftCol);
+    leftFrame->setFixedWidth(leftFrame->sizeHint().width());
+    auto *leftScroll = new QScrollArea(this);
+    leftScroll->setObjectName("page3InputScroll");
+    leftScroll->setFrameShape(QFrame::NoFrame);
+    leftScroll->setWidgetResizable(true);
+    leftScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    leftScroll->setWidget(leftFrame);
+    leftScroll->setFixedWidth(leftFrame->width() + leftScroll->verticalScrollBar()->sizeHint().width());
 
     // 右欄
     auto *rightFrame = new QFrame;
@@ -186,7 +240,7 @@ void Page3::buildLayout()
     auto *root = new QHBoxLayout(this);
     root->setContentsMargins(0,0,0,0);
     root->setSpacing(4);
-    root->addWidget(leftFrame);
+    root->addWidget(leftScroll);
     root->addWidget(rightFrame, 1); /*伸展因子=1（佔據剩餘空間）*/
 
     // 控制區
@@ -197,6 +251,23 @@ void Page3::buildLayout()
 
 void Page3::setupConnections()
 {
+    connect(vm, &Page3ViewModel::dcInputUpdated, this,
+            [this](int source, const QStringList& titles, int index) {
+        const QSignalBlocker blocker(cmbDcInput[source]);
+        cmbDcInput[source]->clear();
+        cmbDcInput[source]->addItems(titles);
+        cmbDcInput[source]->setCurrentIndex(index);
+    });
+    connect(vm, &Page3ViewModel::dcTabRestored, this, [this](int tab) {
+        const QSignalBlocker blocker(dcInputTabs);
+        dcInputTabs->setCurrentIndex(tab);
+    });
+    connect(dcInputTabs, &QTabWidget::currentChanged, vm, &Page3ViewModel::onDcTabChanged);
+    for (int source = 0; source < 3; ++source)
+        connect(cmbDcInput[source], &QComboBox::currentIndexChanged, this, [this, source](int index) {
+            vm->onDcSelected(source, index, cmbDcInput[source]->currentText());
+        });
+    vm->refreshDcInputs();
     // Toggle 按鈕連接（使用輔助函數減少重複）
     connectToggleButton(btnInput, &Page3::inputToggled);
     connectToggleButton(btnLoadOn, &Page3::loadToggled);
@@ -218,6 +289,7 @@ void Page3::setupConnections()
     connectChangeButton(btnCsv, &Page3::csvCaptured);
     connectChangeButton(btnAllCsv, &Page3::allcsvCaptured);
     connectChangeButton(btnWfm, &Page3::wfmCaptured);
+    connectChangeButton(btnAllWfm, &Page3::allwfmCaptured);
 
     // Load/DyLoad 互鎖
     connect(btnLoadOn, &QPushButton::toggled, this, [this](bool) { loadLock(); });
@@ -252,6 +324,7 @@ void Page3::setupConnections()
     connect(this, &Page3::csvCaptured, vm, &Page3ViewModel::OnCsvCaptured);
     connect(this, &Page3::allcsvCaptured, vm, &Page3ViewModel::OnAllCsvCaptured);
     connect(this, &Page3::wfmCaptured, vm, &Page3ViewModel::OnWfmCaptured);
+    connect(this, &Page3::allwfmCaptured, vm, &Page3ViewModel::OnAllWfmCaptured);
 
     // Sync dynamic
     if (chkDyload) {
@@ -549,6 +622,9 @@ void Page3::syncUIToViewModel()
     syncCombo(cmbLoad, TableKind::Load);
     syncCombo(cmbDyload, TableKind::DyLoad);
     syncCombo(cmbRelay, TableKind::Relay);
+    for (int source = 0; source < 3; ++source)
+        vm->onDcSelected(source, cmbDcInput[source]->currentIndex(), cmbDcInput[source]->currentText());
+    vm->onDcTabChanged(dcInputTabs->currentIndex());
 }
 
 void Page3::resetUIFromViewModel()

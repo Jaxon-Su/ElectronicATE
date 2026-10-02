@@ -41,6 +41,9 @@ void Page3Model::writeCurrentSelections(QXmlStreamWriter& w) const
     };
 
     writeSelection("InputSelection", m_state.m_selectedInputIndex, m_state.m_selectedInputText);
+    for (int source = 0; source < 3; ++source)
+        writeSelection(QString("DcInput%1Selection").arg(source + 1), m_state.dcSelections[source].index, m_state.dcSelections[source].text);
+    w.writeTextElement("DcSourceTab", QString::number(m_state.dcSourceTab));
     writeSelection("LoadSelection", m_state.m_selectedLoadIndex, m_state.m_selectedLoadText);
     writeSelection("DyLoadSelection", m_state.m_selectedDyLoadIndex, m_state.m_selectedDyLoadText);
     writeSelection("RelaySelection", m_state.m_selectedRelayIndex, m_state.m_selectedRelayText);
@@ -102,6 +105,8 @@ void Page3Model::loadXml(QXmlStreamReader& reader)
     Page3Model candidate;
     // Preserve legacy partial-document behavior for omitted fields.
     candidate.m_state = m_state;
+    for (auto& selection : candidate.m_state.dcSelections) selection = {};
+    candidate.m_state.dcSourceTab = 0;
     candidate.readXmlFields(reader);
     if (!reader.hasError()) m_state = std::move(candidate.m_state);
 }
@@ -171,6 +176,14 @@ void Page3Model::readCurrentSelections(QXmlStreamReader& r)
 
         if (r.isStartElement()) {
             QXmlStreamAttributes attrs = r.attributes();
+            if (r.name() == "DcSourceTab") {
+                setDcSourceTab(r.readElementText().toInt());
+                continue;
+            }
+            for (int source = 0; source < 3; ++source) {
+                if (r.name() == QString("DcInput%1Selection").arg(source + 1))
+                    setDcSelection(source, attrs.value("index").toInt(), attrs.value("text").toString());
+            }
 
             if (r.name() == "InputSelection") {
                 m_state.m_selectedInputIndex = attrs.value("index").toInt();

@@ -12,6 +12,7 @@
 #include "csvcapturecommand.h"
 #include "allcsvcapturecommand.h"
 #include "wfmcapturecommand.h"
+#include "allwfmcapturecommand.h"
 #include "savedirpreference.h"
 #include "oscilloscopemanager.h"
 #include "instrumentoperationrunner.h"
@@ -145,6 +146,7 @@ void Page3ViewModel::onInputDataChanged(const QVector<InputRow>& rows) {
 void Page3ViewModel::onConditionsChanged(const TestConditionSnapshot& snapshot)
 {
     m_conditions = snapshot;
+    refreshDcInputs();
     onInputDataChanged(snapshot.inputRows);
     onLoadMetaChanged(snapshot.loadMeta);
     onLoadRowsChanged(snapshot.loadRows);
@@ -373,9 +375,34 @@ void Page3ViewModel::updateUIAfterLoad()
 
 void Page3ViewModel::restoreUISelections()
 {
+    refreshDcInputs();
+    emit dcTabRestored(m_model->dcSourceTab());
     for (auto it = m_selections.constBegin(); it != m_selections.constEnd(); ++it) {
         if (it.value().index >= 0)
             emit restoreSelections(it.key(), it.value().index, it.value().text);
+    }
+}
+
+void Page3ViewModel::onDcSelected(int source, int index, const QString& text)
+{
+    if (source >= 0 && source < 3)
+        m_model->setDcSelection(source, index, text);
+}
+
+void Page3ViewModel::refreshDcInputs()
+{
+    for (int source = 0; source < 3; ++source) {
+        QStringList titles;
+        const auto& rows = m_conditions.dcSourceRows(source);
+        for (const auto& row : rows) {
+            QString title = row.label;
+            if (title.isEmpty()) title = row.vin + " V";
+            if (!row.currentLimit.isEmpty()) title += " / " + row.currentLimit + " A";
+            titles.append(title);
+        }
+        const auto selection = m_model->dcSelection(source);
+        const int index = selection.index >= 0 && selection.index < titles.size() ? selection.index : -1;
+        emit dcInputUpdated(source, titles, index);
     }
 }
 
@@ -498,6 +525,12 @@ void Page3ViewModel::OnCsvCaptured()
 void Page3ViewModel::OnAllCsvCaptured()
 {
     AllCsvCaptureCommand cmd(buildCaptureContext());
+    executeCapture([&cmd] { cmd.execute(); });
+}
+
+void Page3ViewModel::OnAllWfmCaptured()
+{
+    AllWfmCaptureCommand cmd(buildCaptureContext());
     executeCapture([&cmd] { cmd.execute(); });
 }
 
@@ -624,5 +657,7 @@ void Page3ViewModel::executeCapture(const std::function<void()>& execute)
 void Page3ViewModel::publishXmlLoaded()
 {
     restoreFromModel();
+    refreshDcInputs();
+    emit dcTabRestored(m_model->dcSourceTab());
     updateUIAfterLoad();
 }

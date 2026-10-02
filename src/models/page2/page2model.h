@@ -32,12 +32,15 @@ public:
     void resizeRelayOutputs(int count);
     TestConditionSnapshot snapshot() const
     {
-        return {inputRows, dcRows, relayRows, loadMeta, loadRows, dynamicMeta, dynamicRows};
+        return {inputRows, dcRows, relayRows, loadMeta, loadRows, dynamicMeta, dynamicRows, dcRows2, dcRows3, dcSourceTab};
     }
     void setSnapshot(const TestConditionSnapshot& value)
     {
         inputRows = value.inputRows;
         dcRows = value.dcRows;
+        dcRows2 = value.dcRows2;
+        dcRows3 = value.dcRows3;
+        dcSourceTab = value.dcSourceTab;
         relayRows = value.relayRows;
         loadMeta = value.loadMeta;
         loadRows = value.loadRows;
@@ -46,6 +49,8 @@ public:
     }
 
 private:
+    QVector<DcRow> dcRows2, dcRows3;
+    int dcSourceTab = 0;
     QVector<InputRow>        inputRows;
     QVector<DcRow>           dcRows;       // ★ 新增 DC Table 資料
     QVector<RelayDataRow>    relayRows;
@@ -62,7 +67,7 @@ private:
     class XmlWriter {
     public:
         static void writeInputTable(QXmlStreamWriter& w, const QVector<InputRow>& rows);
-        static void writeDcTable(QXmlStreamWriter& w, const QVector<DcRow>& rows);  // ★ 新增
+        static void writeDcTable(QXmlStreamWriter& w, const QVector<DcRow>& rows, int source = 1);
         static void writeRelayTable(QXmlStreamWriter& w, const QVector<RelayDataRow>& rows);
         static void writeLoadTable(QXmlStreamWriter& w, const LoadMetaRow& meta,
                                    const QVector<LoadDataRow>& rows);

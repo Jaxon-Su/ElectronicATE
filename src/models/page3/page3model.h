@@ -9,6 +9,11 @@
 class Page3Model : public QObject {
     Q_OBJECT
 public:
+    struct DcSelection { int index = -1; QString text; };
+    DcSelection dcSelection(int source) const { return m_state.dcSelections[source]; }
+    void setDcSelection(int source, int index, const QString& text) { m_state.dcSelections[source] = {index, text}; }
+    int dcSourceTab() const { return m_state.dcSourceTab; }
+    void setDcSourceTab(int tab) { m_state.dcSourceTab = qBound(0, tab, 2); }
     explicit Page3Model(QObject* parent = nullptr);
 
     void setInputTitles(const QStringList& titles) { m_state.m_inputTitles = titles; }
@@ -94,6 +99,8 @@ private:
 
 private:
     struct State {
+    DcSelection dcSelections[3];
+    int dcSourceTab = 0;
     QStringList m_inputTitles;
     QStringList m_loadTitles;
     QStringList m_dyloadTitles;

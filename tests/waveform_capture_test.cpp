@@ -1,6 +1,7 @@
 #include "csvcapturecommand.h"
 #include "wfmcapturecommand.h"
 #include "allcsvcapturecommand.h"
+#include "allwfmcapturecommand.h"
 #include "oscilloscope.h"
 #include "messageservice.h"
 #include <QCoreApplication>
@@ -125,23 +126,32 @@ int main(int argc, char** argv)
                     "non-standard exception was not reported");
             require(scope->ranOnWorker, "transfer ran on application thread");
         }
+        for (bool csv : {true, false}) {
+        const QString extension = csv ? "csv" : "wfm";
         auto multiScope = std::make_shared<WaveformScope>();
         multiScope->failChannel = 3;
         CaptureContext multi;
         multi.oscilloscope = multiScope;
         multi.captureSession = std::make_shared<CaptureSession>();
-        multi.selectSaveFile = [&](const QString&, const QString&, const QString&) {
-            return dir.filePath("active.csv");
+        multi.selectSaveFile = [&](const QString&, const QString& suggested, const QString& filter) {
+            require(suggested.endsWith("." + extension) && filter.contains("*." + extension),
+                    "all-channel dialog format mismatch");
+            return dir.filePath("active." + extension);
         };
         const int originalInfos = infos;
-        AllCsvCaptureCommand(multi).execute();
+        if (csv) AllCsvCaptureCommand(multi).execute();
+        else AllWfmCaptureCommand(multi).execute();
         require(QThreadPool::globalInstance()->waitForDone(3000), "multi-channel capture did not finish");
         QCoreApplication::processEvents();
-        require(multiScope->hostPaths == QStringList{dir.filePath("active_CH1.csv"), dir.filePath("active_CH3.csv")},
+        require(multiScope->hostPaths == QStringList{dir.filePath("active_CH1." + extension), dir.filePath("active_CH3." + extension)},
                 "enabled channel filenames changed");
         require(infos == originalInfos + 1 && lastMessage.contains("Saved channels: 1")
                     && lastMessage.contains("Failed channels: CH3") && !multi.captureSession->isBusy(),
                 "partial capture result or lease release failed");
+        require(multiScope->lastFormat == extension.toUpper()
+                    && multiScope->lastRemote.endsWith("wave_ch3." + extension)
+                    && multiScope->ranOnWorker, "all-channel transfer arguments or thread incorrect");
+        }
         std::cout << "PASS: CSV/WFM metadata, channel selection, transfer arguments and async errors\n";
         return 0;
     } catch (const std::exception& e) {

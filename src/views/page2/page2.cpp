@@ -4,6 +4,7 @@
 #include "styleutils.h"
 #include "navdelegate.h"
 #include <QTableWidget>
+#include <QTabWidget>
 #include <QHeaderView>
 #include <QLineEdit>
 #include <QDoubleValidator>
@@ -246,6 +247,15 @@ void Page2::createRowWidgetsAt(QTableWidget *tbl, int row, const QStringList &ta
             });
         }
         refreshSeqCol(tbl);
+        if (!tbl->cellWidget(row, 3)) {
+            auto *limit = new QLineEdit(tbl);
+            limit->setValidator(makeDoubleVal(limit));
+            limit->setAlignment(Qt::AlignCenter);
+            limit->setFrame(false);
+            StyleUtils::applyLineEditStyle(limit);
+            tbl->setCellWidget(row, 3, limit);
+            connect(limit, &QLineEdit::textChanged, this, [this] { syncUIToViewModel(); });
+        }
         return;
     }
 
@@ -486,8 +496,17 @@ void Page2::syncDcTable(TestConditionSnapshot& snapshot)
         if (auto *le = qobject_cast<QLineEdit*>(tblDc->cellWidget(row, 2)))
             dcRow.vin = le->text();
         dcRows.append(dcRow);
+        dcRows.last().currentLimit = readCellText(tblDc, row, 3);
     }
     snapshot.dcRows = std::move(dcRows);
+    snapshot.dcSourceTab = dcSourceTabs->currentIndex();
+    for (int source = 0; source < 2; ++source) {
+        auto *table = extraDcTables[source];
+        if (!table) continue;
+        auto& rows = source == 0 ? snapshot.dcRows2 : snapshot.dcRows3;
+        for (int row = 0; row < table->rowCount(); ++row)
+            rows.append({readCellText(table, row, 2), readCellText(table, row, 3), readCellText(table, row, 1)});
+    }
 }
 
 void Page2::syncRelayTable(TestConditionSnapshot& snapshot)
@@ -771,6 +790,8 @@ void Page2::setupTableHeaders(TableKind kind, const QStringList &headers)
     QStringList fullHeaders;
     fullHeaders << "Seq";
     fullHeaders << headers;
+    if (kind == TableKind::Dc)
+        fullHeaders = {"Seq", "DC Input", "Vin (V)", "I Limit (A)"};
     tbl->setColumnCount(fullHeaders.size());
     tbl->setHorizontalHeaderLabels(fullHeaders);
 
@@ -791,6 +812,8 @@ void Page2::setupTableHeaders(TableKind kind, const QStringList &headers)
         tbl->horizontalHeader()->setSectionResizeMode(col, QHeaderView::Fixed);
         tbl->setColumnWidth(col, 80);
     }
+    if (kind == TableKind::Dc)
+        applyDcTableLayout(tbl);
 }
 
 void Page2::handleRelayHeaders(int maxOutput)
@@ -963,8 +986,8 @@ void Page2::resetDcTable()
 
     const int numRows = vm->dcRows().size();
     tblDc->setRowCount(numRows);
-    tblDc->setColumnCount(3);
-    tblDc->setHorizontalHeaderLabels({"Seq", "DC Input", "Vin"});
+    tblDc->setColumnCount(4);
+    tblDc->setHorizontalHeaderLabels({"Seq", "DC Input", "Vin (V)", "I Limit (A)"});
 
     for (int row = 0; row < numRows; ++row) {
         const auto& dcRow = vm->dcRows()[row];
@@ -988,8 +1011,27 @@ void Page2::resetDcTable()
                 item->setText(text);
         });
         { QSignalBlocker block(leVin); leVin->setText(dcRow.vin); }
+        auto *limit = new QLineEdit(tblDc);
+        limit->setValidator(makeDoubleVal(limit));
+        limit->setAlignment(Qt::AlignCenter);
+        limit->setFrame(false);
+        StyleUtils::applyLineEditStyle(limit);
+        limit->setText(dcRow.currentLimit);
+        tblDc->setCellWidget(row, 3, limit);
+        connect(limit, &QLineEdit::textChanged, this, [this] { syncUIToViewModel(); });
     }
     refreshSeqCol(tblDc);
+    applyDcTableLayout(tblDc);
+    const auto snapshot = vm->conditions();
+    for (int source = 0; source < 2; ++source) {
+        auto *table = extraDcTables[source];
+        const QSignalBlocker blocker(table);
+        table->setRowCount(0);
+        for (const auto& row : snapshot.dcSourceRows(source + 1))
+            appendDcSourceRow(table, row);
+    }
+    const QSignalBlocker tabBlocker(dcSourceTabs);
+    dcSourceTabs->setCurrentIndex(snapshot.dcSourceTab);
 }
 
 void Page2::resetRelayTable()
@@ -1473,9 +1515,7 @@ void Page2::setupLayouts()
     h1->addWidget(btnAddInput);
     h1->addWidget(btnSubInput);
 
-    auto *hDc = new QHBoxLayout;
-    hDc->addWidget(btnAddDc);
-    hDc->addWidget(btnSubDc);
+    setupDcSourceTabs();
 
     auto *h2 = new QHBoxLayout;
     h2->addWidget(btnAddRelay);
@@ -1492,8 +1532,7 @@ void Page2::setupLayouts()
     auto *vLeft = new QVBoxLayout;
     vLeft->addLayout(h1);
     vLeft->addWidget(tblInput);
-    vLeft->addLayout(hDc);
-    vLeft->addWidget(tblDc);
+    vLeft->addWidget(dcSourceTabs);
     vLeft->addLayout(h2);
     vLeft->addWidget(tblRelay);
 
@@ -1515,8 +1554,101 @@ void Page2::setupLayouts()
     setLayout(mainLayout);
 }
 
+void Page2::applyDcTableLayout(QTableWidget* table)
+{
+    StyleUtils::applyTableStyle(table);
+    table->setFont(tblDc->font());
+    table->setColumnCount(4);
+    table->setHorizontalHeaderLabels({"Seq", "DC Input", "Vin (V)", "I Limit (A)"});
+    table->verticalHeader()->hide();
+    table->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
+    table->verticalHeader()->setDefaultSectionSize(30);
+    auto *header = table->horizontalHeader();
+    header->setDefaultAlignment(Qt::AlignCenter);
+    header->setFixedHeight(26);
+    header->setSectionResizeMode(0, QHeaderView::Fixed);
+    table->setColumnWidth(0, 36);
+    header->setSectionResizeMode(1, QHeaderView::Fixed);
+    table->setColumnWidth(1, 120);
+    header->setSectionResizeMode(2, QHeaderView::Stretch);
+    header->setSectionResizeMode(3, QHeaderView::Stretch);
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setSelectionMode(QAbstractItemView::ExtendedSelection);
+}
+
+void Page2::appendDcSourceRow(QTableWidget* table, const DcRow& value)
+{
+    const QSignalBlocker blocker(table);
+    const int row = table->rowCount();
+    table->insertRow(row);
+    auto *seq = new QTableWidgetItem(QString::number(row + 1));
+    seq->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+    seq->setTextAlignment(Qt::AlignCenter);
+    table->setItem(row, 0, seq);
+    auto *label = new QTableWidgetItem(value.label);
+    label->setTextAlignment(Qt::AlignCenter);
+    table->setItem(row, 1, label);
+    for (int col = 2; col < 4; ++col) {
+        auto *edit = new QLineEdit(table);
+        edit->setAlignment(Qt::AlignCenter);
+        edit->setFrame(false);
+        StyleUtils::applyLineEditStyle(edit);
+        edit->setValidator(makeDoubleVal(edit));
+        edit->setText(col == 2 ? value.vin : value.currentLimit);
+        table->setCellWidget(row, col, edit);
+        connect(edit, &QLineEdit::textChanged, this, [this] { syncUIToViewModel(); });
+    }
+}
+
+void Page2::setupDcSourceTabs()
+{
+    dcSourceTabs = new QTabWidget(this);
+    dcSourceTabs->setObjectName("dcSourceTabs");
+    dcSourceTabs->setMinimumWidth(360);
+    for (int source = 0; source < 3; ++source) {
+        auto *page = new QWidget(dcSourceTabs);
+        auto *layout = new QVBoxLayout(page);
+        layout->setContentsMargins(4, 4, 4, 4);
+        layout->setSpacing(6);
+        auto *buttons = new QHBoxLayout;
+        buttons->setSpacing(6);
+        auto *add = source == 0 ? btnAddDc : new QPushButton("+", page);
+        auto *remove = source == 0 ? btnSubDc : new QPushButton("-", page);
+        buttons->addWidget(add);
+        buttons->addWidget(remove);
+        layout->addLayout(buttons);
+        auto *table = source == 0 ? tblDc : new QTableWidget(page);
+        table->setObjectName(QString("dcSource%1Table").arg(source + 1));
+        applyDcTableLayout(table);
+        layout->addWidget(table);
+        dcSourceTabs->addTab(page, QString("DC Source %1").arg(source + 1));
+        if (source == 0)
+            continue;
+
+        extraDcTables[source - 1] = table;
+        connect(table->selectionModel(), &QItemSelectionModel::selectionChanged,
+                this, [this, table] { updateTableSelectionVisuals(table); });
+        connect(table, &QTableWidget::itemChanged, this, [this] { syncUIToViewModel(); });
+        connect(add, &QPushButton::clicked, this, [this, table] {
+            appendDcSourceRow(table, {});
+            syncUIToViewModel();
+        });
+        connect(remove, &QPushButton::clicked, this, [this, table] {
+            const QSignalBlocker blocker(table);
+            const int row = table->currentRow() >= 0 ? table->currentRow() : table->rowCount() - 1;
+            if (row < 0) return;
+            table->removeRow(row);
+            for (int i = 0; i < table->rowCount(); ++i)
+                table->item(i, 0)->setText(QString::number(i + 1));
+            syncUIToViewModel();
+        });
+        appendDcSourceRow(table, {});
+    }
+}
+
 void Page2::setupConnections()
 {
+    connect(dcSourceTabs, &QTabWidget::currentChanged, this, [this] { syncUIToViewModel(); });
     connect(vm, &Page2ViewModel::headersChanged,     this, &Page2::onHeadersChanged);
     connect(vm, &Page2ViewModel::rowAddRequested,    this, &Page2::onRowAddRequested);
     connect(vm, &Page2ViewModel::rowRemoveRequested, this, &Page2::onRowRemoveRequested);
@@ -1579,14 +1711,7 @@ void Page2::setupDelegates()
 
 void Page2::setupInitialTableState()
 {
-    // DC table: 3 欄（Seq + DC Input + Vin）
-    tblDc->setColumnCount(3);
-    tblDc->setHorizontalHeaderLabels({"Seq", "DC Input", "Vin"});
-    tblDc->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Fixed);
-    tblDc->setColumnWidth(0, 36);
-    tblDc->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Fixed);
-    tblDc->setColumnWidth(1, 120);
-    tblDc->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+    applyDcTableLayout(tblDc);
 
     tblInput->setColumnCount(6);
     tblInput->setHorizontalHeaderLabels({"Seq", "AC Input", "Mode", "Vin", "Frequency", "Phase"});

@@ -76,6 +76,9 @@ public:
     QString getSelectedRelayText()    const { return m_selections.value(TableKind::Relay).text;  }
 
 public slots:
+    void onDcSelected(int source, int index, const QString& text);
+    void onDcTabChanged(int tab) { m_model->setDcSourceTab(tab); }
+    void refreshDcInputs();
     void onConditionsChanged(const TestConditionSnapshot& snapshot);
     void setMaxOutput(int maxOutput);
     void setNameList(const QStringList &names);
@@ -122,6 +125,7 @@ public slots:
     void OnCsvCaptured();
     void OnAllCsvCaptured();
     void OnWfmCaptured();
+    void OnAllWfmCaptured();
 
     // Synchronous Dynamic
     void onSyncChanged(bool enabled);
@@ -205,6 +209,8 @@ private:
     CaptureContext buildCaptureContext() const;
 
 signals:
+    void dcInputUpdated(int source, const QStringList& titles, int selectedIndex);
+    void dcTabRestored(int tab);
     void controlActiveChanged(bool active);
     void headersChanged(const QStringList &hdr);
     void rowLabelsChanged(const QStringList &lbl);

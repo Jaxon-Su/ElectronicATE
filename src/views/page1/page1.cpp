@@ -218,7 +218,7 @@ void Page1::prepareTableStructure()
     tableWidget->setColumnWidth(3, 31);    // 配置按鈕
 
     // Channel 欄固定寬度 + 水平捲動條（channels 多時不壓縮）
-    static constexpr int kChColWidth = 100;
+    static constexpr int kChColWidth = 110;
     for (int c = 4; c < nCols; ++c) {
         tableWidget->horizontalHeader()->setSectionResizeMode(c, QHeaderView::Fixed);
         tableWidget->setColumnWidth(c, kChColWidth);

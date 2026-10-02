@@ -59,6 +59,27 @@ int main(int argc, char** argv)
         require(!reload.hasError() && restored.loadOutputs() == 2
                     && restored.getConfig().instruments.first().channels.first().index == 3,
                 "model round trip failed");
+        QXmlStreamReader legacyDc(QStringLiteral("<Page1><Instruments><Instrument name='DCSource' type='InputDCSource' enabled='true'><ModelName>62000P</ModelName><Address>GPIB0::8::INSTR</Address></Instrument></Instruments></Page1>"));
+        legacyDc.readNextStartElement();
+        restored.loadXml(legacyDc);
+        auto dcConfig = restored.getConfig();
+        require(!legacyDc.hasError() && dcConfig.instruments.size() == 3
+                    && dcConfig.instruments[0].name == "DC Source1"
+                    && dcConfig.instruments[0].address == "GPIB0::8::INSTR"
+                    && !dcConfig.instruments[1].enabled && !dcConfig.instruments[2].enabled,
+                "legacy DC instrument migration lost address or enabled extra supplies");
+        dcConfig.instruments[1].address = "GPIB0::9::INSTR";
+        dcConfig.instruments[2].address = "GPIB0::10::INSTR";
+        restored.setInstrumentConfigs(dcConfig.instruments);
+        QString dcXml;
+        QXmlStreamWriter dcWriter(&dcXml);
+        restored.writeXml(dcWriter);
+        QXmlStreamReader dcReader(dcXml);
+        dcReader.readNextStartElement();
+        restored.loadXml(dcReader);
+        require(!dcReader.hasError() && restored.getConfig().instruments[1].address == "GPIB0::9::INSTR"
+                    && restored.getConfig().instruments[2].address == "GPIB0::10::INSTR",
+                "DC instrument addresses did not round trip");
         std::cout << "PASS: Page1 errors terminate without publishing partial state; model round trip preserved\n";
         return 0;
     } catch (const std::exception& e) {

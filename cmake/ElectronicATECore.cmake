@@ -35,6 +35,7 @@ add_library(ElectronicATECapture STATIC
     "${ELECTRONICATE_SOURCE_ROOT}/service/capture/pngcapturecommand.cpp"
     "${ELECTRONICATE_SOURCE_ROOT}/service/capture/csvcapturecommand.cpp"
     "${ELECTRONICATE_SOURCE_ROOT}/service/capture/allcsvcapturecommand.cpp"
+    "${ELECTRONICATE_SOURCE_ROOT}/service/capture/allwfmcapturecommand.cpp"
     "${ELECTRONICATE_SOURCE_ROOT}/service/capture/wfmcapturecommand.cpp"
     "${ELECTRONICATE_SOURCE_ROOT}/service/capture/savedirpreference.cpp")
 target_include_directories(ElectronicATECapture PUBLIC "${ELECTRONICATE_SOURCE_ROOT}/service/capture")

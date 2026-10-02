@@ -36,6 +36,9 @@ void Page2Model::writeXml(QXmlStreamWriter& writer) const
 
     XmlWriter::writeInputTable(writer, inputRows);
     XmlWriter::writeDcTable(writer, dcRows);        // ★ 新增
+    XmlWriter::writeDcTable(writer, dcRows2, 2);
+    XmlWriter::writeDcTable(writer, dcRows3, 3);
+    writer.writeTextElement("DcSourceTab", QString::number(dcSourceTab));
     XmlWriter::writeRelayTable(writer, relayRows);
     XmlWriter::writeLoadTable(writer, loadMeta, loadRows);
     XmlWriter::writeDynamicTable(writer, dynamicMeta, dynamicRows);
@@ -51,6 +54,8 @@ void Page2Model::loadXml(QXmlStreamReader& reader)
     }
     QVector<InputRow> inputRows;
     QVector<DcRow> dcRows;
+    QVector<DcRow> dcRows2, dcRows3;
+    int dcSourceTab = 0;
     QVector<RelayDataRow> relayRows;
     LoadMetaRow loadMeta;
     QVector<LoadDataRow> loadRows;
@@ -68,7 +73,18 @@ void Page2Model::loadXml(QXmlStreamReader& reader)
                 XmlReader::readInputTable(reader, inputRows);
             }
             else if (reader.name() == "DcTable") {     // ★ 新增
-                XmlReader::readDcTable(reader, dcRows); // ★ 新增
+                const auto source = reader.attributes().value("source");
+                const int index = source.isEmpty() ? 1 : source.toInt();
+                if (index < 1 || index > 3) {
+                    reader.raiseError("Invalid DC source number");
+                    return;
+                }
+                auto& rows = index == 1 ? dcRows : index == 2 ? dcRows2 : dcRows3;
+                rows.clear();
+                XmlReader::readDcTable(reader, rows);
+            }
+            else if (reader.name() == "DcSourceTab") {
+                dcSourceTab = qBound(0, reader.readElementText().toInt(), 2);
             }
             else if (reader.name() == "RelayTable") {
                 XmlReader::readRelayTable(reader, relayRows);
@@ -85,6 +101,9 @@ void Page2Model::loadXml(QXmlStreamReader& reader)
     if (reader.hasError()) return;
     this->inputRows = std::move(inputRows);
     this->dcRows = std::move(dcRows);
+    this->dcRows2 = std::move(dcRows2);
+    this->dcRows3 = std::move(dcRows3);
+    this->dcSourceTab = dcSourceTab;
     this->relayRows = std::move(relayRows);
     this->loadMeta = std::move(loadMeta);
     this->loadRows = std::move(loadRows);
@@ -112,13 +131,16 @@ void Page2Model::XmlWriter::writeInputTable(QXmlStreamWriter& w, const QVector<I
 }
 
 // ★ 新增：DC Table XML 寫入
-void Page2Model::XmlWriter::writeDcTable(QXmlStreamWriter& w, const QVector<DcRow>& rows)
+void Page2Model::XmlWriter::writeDcTable(QXmlStreamWriter& w, const QVector<DcRow>& rows, int source)
 {
     w.writeStartElement("DcTable");
+    w.writeAttribute("source", QString::number(source));
 
     for (const auto& row : rows) {
         w.writeStartElement("Row");
         w.writeTextElement("Vin", row.vin);
+        w.writeTextElement("CurrentLimit", row.currentLimit);
+        w.writeTextElement("Label", row.label);
         w.writeEndElement(); // Row
     }
 
@@ -346,6 +368,10 @@ DcRow Page2Model::XmlReader::readDcRow(QXmlStreamReader& r)
 
         if (r.isStartElement() && r.name() == "Vin") {
             row.vin = r.readElementText();
+        } else if (r.isStartElement() && r.name() == "CurrentLimit") {
+            row.currentLimit = r.readElementText();
+        } else if (r.isStartElement() && r.name() == "Label") {
+            row.label = r.readElementText();
         }
     }
 

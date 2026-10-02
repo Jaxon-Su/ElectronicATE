@@ -13,6 +13,7 @@
 #include "triggerwidgetfactory.h"
 
 class QPushButton;
+class QTabWidget;
 
 class Page3 : public QWidget
 {
@@ -65,6 +66,7 @@ signals:
     void csvCaptured();
     void allcsvCaptured();
     void wfmCaptured();
+    void allwfmCaptured();
 
 private:
     // 初始化
@@ -102,6 +104,11 @@ private:
     QComboBox   *cmbInput   = nullptr;
     QPushButton *btnInput   = nullptr;
     QPushButton *btnChange  = nullptr;
+    QGroupBox *grpDcInput[3] = {};
+    QTabWidget *dcInputTabs = nullptr;
+    QComboBox *cmbDcInput[3] = {};
+    QPushButton *btnDcInput[3] = {};
+    QPushButton *btnDcChange[3] = {};
 
     // UI 組件 - Load Group
     QGroupBox   *grpLoad    = nullptr;
@@ -131,6 +138,7 @@ private:
     QPushButton *btnAllCsv     = nullptr;
     //單組WFM
     QPushButton *btnWfm     = nullptr;
+    QPushButton *btnAllWfm  = nullptr;
 
 
     // UI 組件 - Trigger & Table

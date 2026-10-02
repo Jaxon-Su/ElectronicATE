@@ -41,7 +41,7 @@ MainWindow::~MainWindow()
 void MainWindow::setupUI()
 {
     // 設定視窗大小
-    resize(1400, 720);
+    resize(1400, 760);
 
     // MainWindow title and Icon
     setWindowTitle("Automatic test system");

@@ -12,6 +12,7 @@ ElectronicATE 是一套用於電源供應器、電子負載、示波器與繼電
 
 - 從 `XML/Instrument.xml` 讀取儀器模板與可選型號。
 - 支援多組 Load、Relay、Oscilloscope、InputSource 設定。
+- 提供 DC Source1、DC Source2、DC Source3 三台獨立儀器設定。
 - 支援 Load Outputs / Relay Outputs 數量設定。
 - 支援通道型儀器的 subModel、output index、sync role 設定。
 - Load sync role 支援 `MASTER` / `SLAVE` / `NONE`。
@@ -21,7 +22,7 @@ ElectronicATE 是一套用於電源供應器、電子負載、示波器與繼電
 ### Page2：測試條件表格
 
 - Input 條件表：phase mode、Vin、frequency、phase。
-- DC 表：DC Vin 條件。
+- DC Source 1／2／3 分頁：各自保存 Vin、I Limit 與條件列。
 - Relay 表：繼電器輸出條件。
 - Load 表：mode、range、name、Vo、Von 與各條件電流/電壓資料。
 - Dynamic Load 表：range、Vo、Von、T1/T2 與動態電流條件。
@@ -32,12 +33,13 @@ ElectronicATE 是一套用於電源供應器、電子負載、示波器與繼電
 ### Page3：手動控制與擷取
 
 - Input Source：Power On / Off / Change。
+- Relay 下方提供 DC Input 1／2／3 分頁，連動 Page2 條件並保存選取狀態；DC Source 硬體控制尚未實作，ON／change 按鈕停用。
 - Load：Load On / Off / Change。
 - Dynamic Load：Dynamic Load On / Off / Change。
 - Relay：Relay On / Off / Change。
 - Load 與 Dynamic Load 在 UI 上互鎖，避免同時啟用。
 - 示波器 trigger widget 依機型動態建立。
-- 支援示波器 PNG、CSV、All CSV、WFM 擷取。
+- 支援示波器 PNG、CSV、All CSV、WFM、All WFM 擷取；All WFM 依啟用通道各輸出一個檔案。
 - 支援示波器 reconnect request 與 trigger controller 綁定。
 
 ### Page4：通訊指令工具
