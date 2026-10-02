@@ -49,6 +49,10 @@ ElectronicATE 是一套用於電源供應器、電子負載、示波器與繼電
 - 內建常用 SCPI 按鈕：`*IDN?`、`*RST`、`*CLS`、`*OPC?`。
 - 保存 address / command history，方便調試儀器通訊。
 
+### Page5：全自動測試
+
+- 目前僅規劃 UI 介面。
+
 ## Load / Dynamic Load Sync 控制
 
 Page1 的 `MASTER` / `SLAVE` / `NONE` 是軟體設定，不會在 Page1 變更當下立即寫入硬體。實際寫入發生在 Page3 執行 Load / Dynamic Load 動作時。
