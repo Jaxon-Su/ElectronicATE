@@ -1,7 +1,6 @@
 # ElectronicATE
 
-電子 ATE 自動化測試系統  
-Qt 6 + C++17 + CMake + MVVM
+電子 ATE 自動化測試系統
 
 ElectronicATE 是一套用於電源供應器、電子負載、示波器與繼電器控制的 Windows 桌面測試平台。專案以 Qt Widgets 實作 GUI，透過 MVVM 分層管理 UI、測試條件、儀器設定、XML 保存/載入與硬體控制流程。
 
