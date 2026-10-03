@@ -1,0 +1,13 @@
+<RCC>
+    <qresource prefix="/">
+        <file>images/oscilloscope.png</file>
+        <file>images/condition.png</file>
+        <file>images/connection.png</file>
+        <file>images/control.png</file>
+        <file>images/error.png</file>
+        <file>images/tasks.png</file>
+        <file>images/queue.png</file>
+        <file>images/checkbox-checked.svg</file>
+        <file>images/checkbox-unchecked.svg</file>
+    </qresource>
+</RCC>
