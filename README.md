@@ -42,8 +42,6 @@ ElectronicATE 是一套用於電源供應器、電子負載、示波器與繼電
 - 支援示波器 PNG、CSV、All CSV、WFM、All WFM 擷取；All WFM 依啟用通道各輸出一個檔案。
 - 支援示波器 reconnect request 與 trigger controller 綁定。
 
-Page1～3 設定使用 `schemaVersion="2"`，不相容舊版存檔；格式見 [XML 說明](docs/configuration-xml.md)。
-
 ### Page4：通訊指令工具
 
 - 提供手動連線、斷線、送指令與通訊記錄。
@@ -246,8 +244,6 @@ ElectronicATE/
 ### Page3：手動控制
 
 ![Page3](screenshots/page3.png)
-
-Page1～3 設定使用 `schemaVersion="2"`，不相容舊版存檔；格式見 [XML 說明](docs/configuration-xml.md)。
 
 ### Page4：通訊指令工具
 
