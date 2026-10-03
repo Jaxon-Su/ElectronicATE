@@ -119,8 +119,8 @@ Chroma 62000H 系列支援以下 13 個型號，提供 SCPI 設定、輸出控�
 
 ### Oscilloscope
 
-- Tektronix DPO7000
-- Tektronix DPO4000
+- Tektronix DPO7000：待驗證
+- Tektronix DPO4000：待驗證
 - Tektronix MSO 4/5/6 Series：MSO44(B)、MSO46(B)、MSO54(B)、MSO56(B)、MSO58(B)、MSO58LP、MSO64(B)、MSO66B、MSO68B、LPD64
 
 MSO44B LAN capture 目前以 VXI-11 為主要測試路徑，例如：
@@ -139,112 +139,18 @@ PNG 與 native CSV 透過示波器檔案系統保存後讀回。
 
 ## 架構
 
-專案採 MVVM 分層：
+採用 MVVM 分層，介面、資料與儀器控制各自管理。
 
-```text
-View        src/views/pageN
-ViewModel   src/viewmodels/pageN
-Model       src/models/pageN
-Data        src/data
-Service     src/service
-Hardware    src/hardware
-Infra       src/infrastructure
-UI helpers  src/ui
-```
+| 層級 | 職責 | 目錄 |
+| --- | --- | --- |
+| View | 顯示頁面、接收使用者操作 | `src/views` |
+| ViewModel | 處理操作、同步頁面與資料 | `src/viewmodels` |
+| Model / Data | 保存儀器設定與測試條件 | `src/models`、`src/data` |
+| Service | 執行控制、波形擷取與 XML 存取 | `src/service` |
+| Hardware | 儀器驅動與通訊協議 | `src/hardware` |
 
-核心資料流：
-
-```text
-Page1 instrument config
-  -> Page2 output/table headers/range options
-  -> Page3 manual control
-```
-
-`PageConnectionCoordinator` 負責跨頁 signal/slot 與條件資料提供者的組裝。
-`XmlConfigStore` 負責 XML 存取，回傳結果，由 `MainWindowViewModel` 顯示錯誤並在成功後更新路徑。
-`ITestConditionProvider` 提供共用唯讀條件；`TaskStatus` 定義執行狀態，Worker 不依賴 RunPanel。
-擷取服務透過 View 提供的檔案選擇回呼與 `MessageService` 互動，不直接建立對話框。
-CSV/WFM 共用波形擷取流程；背景擷取由 `runCaptureTask` 統一執行及回報例外，`CaptureLease` 與 `CaptureSession` 管理忙碌及關閉狀態，最後一份擷取鎖釋放後才斷線。
-`BinaryFileStore` 統一截圖與波形的本機存檔，完整寫入後才替換目標檔案。
-`ITriggerController` 與 `TriggerBinding` 隔離 Page3 的控制器綁定及生命週期，替換控制器時解除舊訊號連線。
-XML 載入先透過隔離的 Model 驗證所有頁面，解析成功後才套用至實際頁面。
-Page3 手動操作透過 `runInstrumentOperation` 在背景執行，完成通知回到仍存活的頁面。
-Page4 通訊建立可注入測試替身；指令寫入失敗不再記為成功，查詢期間拒絕巢狀指令。
-
-CMake 將資料、Model、設定存取、訊息、擷取、儀器基底、控制器綁定與檔案存取拆為獨立 target。
-桌面程式與 `tests/` 共用這些 production target；Model 僅依賴 QtCore/QtXml，離線測試不需要 Widgets 或 VISA。
-`InstrumentCreator` 依 `Page1Config` 建立 AC Source、DC Load、Relay、Oscilloscope 與 communication 物件。  
-`InstrumentExecutor` 封裝 Input、Load、Dynamic Load、Relay 的實際硬體控制流程。
-
----
-
-## 建置需求
-
-- Windows 11 建議
-- Qt 6.9+，目前可用 Qt 6.10.x
-- CMake 3.16+
-- C++17 compiler
-- NI-VISA，需包含：
-  - Include: `C:/Program Files (x86)/IVI Foundation/VISA/WinNT/Include`
-  - Library: `C:/Program Files (x86)/IVI Foundation/VISA/WinNT/Lib_x64/msc/visa64.lib`
-
-Qt 模組：
-
-- Core
-- Widgets
-- Xml
-- Network
-- SerialPort
-- Concurrent
-
----
-
-## 建置方式
-
-使用 Qt Creator 開啟 `CMakeLists.txt` 建置，或使用命令列：
-
-```powershell
-cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH=C:\Qt\6.10.2\msvc2022_64
-cmake --build build --config Debug
-```
-
-Release 部署：
-
-```powershell
-cmake --build build --config Release
-cmake --install build --prefix ../deploy
-```
-
-建置後會自動：
-
-- 複製 `XML/` 到執行檔目錄
-- 執行 `windeployqt`
-- 部署 Qt runtime DLL 與 plugins
-
----
-
-## 資料夾
-
-```text
-ElectronicATE/
-├── main.cpp
-├── CMakeLists.txt
-├── README.md
-├── CLAUDE.md
-├── XML/                 儀器模板與設定來源
-├── images/              UI icons
-├── screenshots/         README 圖片
-├── src/
-│   ├── data/            Page config structs
-│   ├── hardware/        Communication、drivers、InstrumentCreator
-│   ├── infrastructure/  Worker、DataFinder、ResourceCleaner、TableUtils、Debounce
-│   ├── models/          Page Models
-│   ├── service/         XmlConfigStore、MessageService、Executor、Capture、Validators
-│   ├── ui/              Delegate、Style、Reusable Widgets
-│   ├── viewmodels/      Page ViewModels
-│   └── views/           Qt Widgets pages and dialogs
-└── build/               編譯產物
-```
+使用流程：**Page1 設定儀器 → Page2 建立條件 → Page3 手動控制與擷取**。
+Page4 提供獨立通訊工具；Page5 為全自動測試的 UI 規劃。
 
 ---
 
@@ -265,6 +171,10 @@ ElectronicATE/
 ### Page4：通訊指令工具
 
 ![Page4](screenshots/page4.png)
+
+### Page5：全自動測試（目前僅規劃 UI）
+
+![Page5](screenshots/page5.png)
 
 ---
 
