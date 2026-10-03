@@ -1,0 +1,10 @@
+#pragma once
+
+// Generated from cmake/ApplicationInfo.cmake.
+namespace ApplicationInfo {
+inline constexpr char Name[] = "ElectronicATE";
+inline constexpr char Version[] = "@ELECTRONICATE_VERSION@";
+inline constexpr char Author[] = "@ELECTRONICATE_AUTHOR@";
+inline constexpr char Copyright[] = "@ELECTRONICATE_COPYRIGHT@";
+inline constexpr char GitHubUrl[] = "@ELECTRONICATE_GITHUB_URL@";
+}

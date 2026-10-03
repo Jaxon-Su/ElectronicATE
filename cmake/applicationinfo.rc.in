@@ -1,0 +1,38 @@
+#pragma code_page(65001)
+#include <winver.h>
+
+#ifdef ELECTRONICATE_DEBUG_BUILD
+#define ELECTRONICATE_DEBUG_FLAG VS_FF_DEBUG
+#else
+#define ELECTRONICATE_DEBUG_FLAG 0
+#endif
+
+1 VERSIONINFO
+ FILEVERSION @ELECTRONICATE_WINDOWS_VERSION@
+ PRODUCTVERSION @ELECTRONICATE_WINDOWS_VERSION@
+ FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+ FILEFLAGS (@ELECTRONICATE_VERSION_FLAGS@ | ELECTRONICATE_DEBUG_FLAG)
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE 0
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", "@ELECTRONICATE_AUTHOR@\0"
+            VALUE "FileDescription", "ElectronicATE - Automatic test system\0"
+            VALUE "FileVersion", "@ELECTRONICATE_VERSION@\0"
+            VALUE "InternalName", "ElectronicATE\0"
+            VALUE "LegalCopyright", "@ELECTRONICATE_COPYRIGHT@\0"
+            VALUE "OriginalFilename", "ElectronicATE.exe\0"
+            VALUE "ProductName", "ElectronicATE\0"
+            VALUE "ProductVersion", "@ELECTRONICATE_VERSION@\0"
+            VALUE "Comments", "@ELECTRONICATE_GITHUB_URL@\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END
