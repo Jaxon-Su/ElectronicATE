@@ -88,6 +88,14 @@
       </model>
       <model>
         <modelName>MSO44B</modelName>
+        <modelName>MSO46B</modelName>
+        <modelName>MSO54B</modelName>
+        <modelName>MSO56B</modelName>
+        <modelName>MSO58B</modelName>
+        <modelName>MSO58LP</modelName>
+        <modelName>MSO64B</modelName>
+        <modelName>MSO68B</modelName>
+        <modelName>LPD64</modelName>
       </model>
     </instrument>
 
@@ -109,9 +117,19 @@
 
     <!-- 電源模板 -->
     <instrument name="DCSource_Template" type="Template">
-        <model>
-          <modelName>TBD</modelName>
-        </model>
+        <model><modelName>62050H-40</modelName></model>
+        <model><modelName>62050H-450</modelName></model>
+        <model><modelName>62050H-600</modelName></model>
+        <model><modelName>62075H-30</modelName></model>
+        <model><modelName>62100H-40</modelName></model>
+        <model><modelName>62100H-450</modelName></model>
+        <model><modelName>62100H-600</modelName></model>
+        <model><modelName>62100H-1000</modelName></model>
+        <model><modelName>62100H-30</modelName></model>
+        <model><modelName>62150H-40</modelName></model>
+        <model><modelName>62150H-450</modelName></model>
+        <model><modelName>62150H-600</modelName></model>
+        <model><modelName>62150H-1000</modelName></model>
     </instrument>
 
     <!-- Relay模板 -->

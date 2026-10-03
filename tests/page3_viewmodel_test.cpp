@@ -64,19 +64,18 @@ int main(int argc, char** argv)
             auto connection = QObject::connect(&vm, &Page3ViewModel::dcInputUpdated,
                 [&](int source, const QStringList& titles, int index) { dcTitles[source] = titles; selected[source] = index; });
             vm.onConditionsChanged(dc);
-            vm.onDcSelected(1, 0, "aux / 3 A");
-            vm.onDcTabChanged(1);
+            vm.onDcSelected(0, 0, "aux / 3 A");
             QString saved;
             QXmlStreamWriter writer(&saved);
             vm.writeXml(writer);
-            vm.onDcSelected(1, -1, "");
+            vm.onDcSelected(0, -1, "");
             QXmlStreamReader reader(saved);
             reader.readNextStartElement();
             vm.loadXml(reader);
             vm.publishXmlLoaded();
             require(!reader.hasError() && dcTitles[0] == QStringList{"24 V / 5 A"}
-                        && dcTitles[2] == QStringList{"logic / 1 A"} && selected[1] == 0
-                        && model.dcSourceTab() == 1, "DC titles or selections failed through ViewModel XML load");
+                        && dcTitles[2] == QStringList{"logic / 1 A"} && selected[0] == 0
+                       , "DC titles or selections failed through ViewModel XML load");
             QObject::disconnect(connection);
         }
         Page1Config config;

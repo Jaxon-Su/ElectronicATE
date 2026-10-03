@@ -104,11 +104,10 @@ private:
     QComboBox   *cmbInput   = nullptr;
     QPushButton *btnInput   = nullptr;
     QPushButton *btnChange  = nullptr;
-    QGroupBox *grpDcInput[3] = {};
-    QTabWidget *dcInputTabs = nullptr;
-    QComboBox *cmbDcInput[3] = {};
-    QPushButton *btnDcInput[3] = {};
-    QPushButton *btnDcChange[3] = {};
+    QGroupBox *grpDcInput = nullptr;
+    QComboBox *cmbDcInput = nullptr;
+    QPushButton *btnDcInput = nullptr;
+    QPushButton *btnDcChange = nullptr;
 
     // UI 組件 - Load Group
     QGroupBox   *grpLoad    = nullptr;

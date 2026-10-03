@@ -13,7 +13,7 @@ ElectronicATE 是一套用於電源供應器、電子負載、示波器與繼電
 - 從 `XML/Instrument.xml` 讀取儀器模板與可選型號。
 - 支援多組 Load、Relay、Oscilloscope、InputSource 設定。
 - 提供 DC Source1、DC Source2、DC Source3 三台獨立儀器設定。
-- 支援 Load Outputs / Relay Outputs 數量設定。
+- 支援 Load Outputs / Relay Outputs / DC Input 數量設定；預設皆為 1，所有模組預設勾選。
 - 支援通道型儀器的 subModel、output index、sync role 設定。
 - Load sync role 支援 `MASTER` / `SLAVE` / `NONE`。
 - 63640 使用 `63600-5` 模板，通道為 `1,3,5,7,9`。
@@ -22,7 +22,7 @@ ElectronicATE 是一套用於電源供應器、電子負載、示波器與繼電
 ### Page2：測試條件表格
 
 - Input 條件表：phase mode、Vin、frequency、phase。
-- DC Source 1／2／3 分頁：各自保存 Vin、I Limit 與條件列。
+- DC Source 群組表：自訂條件名稱、Vin、I Limit，依 Page1 DC Input 數量顯示 Index1～3；隱藏欄位保留設定。
 - Relay 表：繼電器輸出條件。
 - Load 表：mode、range、name、Vo、Von 與各條件電流/電壓資料。
 - Dynamic Load 表：range、Vo、Von、T1/T2 與動態電流條件。
@@ -33,7 +33,7 @@ ElectronicATE 是一套用於電源供應器、電子負載、示波器與繼電
 ### Page3：手動控制與擷取
 
 - Input Source：Power On / Off / Change。
-- Relay 下方提供 DC Input 1／2／3 分頁，連動 Page2 條件並保存選取狀態；DC Source 硬體控制尚未實作，ON／change 按鈕停用。
+- Relay 下方提供單一 DC Input 群組控制，依 Page2 條件執行 On／Off／Change；只控制 Page1 數量範圍內且勾選的 DC Source。
 - Load：Load On / Off / Change。
 - Dynamic Load：Dynamic Load On / Off / Change。
 - Relay：Relay On / Off / Change。
@@ -41,6 +41,8 @@ ElectronicATE 是一套用於電源供應器、電子負載、示波器與繼電
 - 示波器 trigger widget 依機型動態建立。
 - 支援示波器 PNG、CSV、All CSV、WFM、All WFM 擷取；All WFM 依啟用通道各輸出一個檔案。
 - 支援示波器 reconnect request 與 trigger controller 綁定。
+
+Page1～3 設定使用 `schemaVersion="2"`，不相容舊版存檔；格式見 [XML 說明](docs/configuration-xml.md)。
 
 ### Page4：通訊指令工具
 
@@ -86,6 +88,11 @@ sync enabled 時採用保守順序，避免 sync 線已接上時出現 master-fi
 
 - Delta A3000：`DE-A3000AB`
 - Chroma：`61505`、`61509`、`6530`
+
+### DC Source
+
+- Chroma 62000H 系列：依具體型號驗證電壓／電流額定值，支援 SCPI 設定、輸出控制與量測。
+- 硬體控制已完成離線測試，尚未完成實機驗證。
 
 ### DC Load
 
@@ -239,6 +246,8 @@ ElectronicATE/
 ### Page3：手動控制
 
 ![Page3](screenshots/page3.png)
+
+Page1～3 設定使用 `schemaVersion="2"`，不相容舊版存檔；格式見 [XML 說明](docs/configuration-xml.md)。
 
 ### Page4：通訊指令工具
 

@@ -77,7 +77,9 @@ public:
 
 public slots:
     void onDcSelected(int source, int index, const QString& text);
-    void onDcTabChanged(int tab) { m_model->setDcSourceTab(tab); }
+    void onDcInputToggled(int source, bool on);
+    void onDcInputChanged(int source);
+    void handleDcInput(int source, InputAction action);
     void refreshDcInputs();
     void onConditionsChanged(const TestConditionSnapshot& snapshot);
     void setMaxOutput(int maxOutput);
@@ -143,6 +145,8 @@ private:
     int m_pendingOperations = 0;
     int m_capturePreparing = 0;
     QMap<TableKind, bool> m_outputsOn;
+    bool m_dcOutputsOn[3] = {false, false, false};
+    bool m_dcBusy[3] = {false, false, false};
     void updateControlActivity();
     void executeCapture(const std::function<void()>& execute);
 
@@ -171,8 +175,6 @@ private:
     void cleanupAllInstruments();
     void connectTriggerController();
     void cleanupTriggerResources();
-
-    // execute* 方法已移至 InstrumentExecutor（src/service/instrumentexecutor）
 
     // ── Sync Dynamic 狀態 ──────────────────────────────────────
     // m_syncEnabled : checkbox is currently hidden, so sync dynamic is enabled by default.
@@ -209,8 +211,9 @@ private:
     CaptureContext buildCaptureContext() const;
 
 signals:
+    void dcOutputStateChanged(int source, bool on);
+    void dcOperationBusyChanged(int source, bool busy);
     void dcInputUpdated(int source, const QStringList& titles, int selectedIndex);
-    void dcTabRestored(int tab);
     void controlActiveChanged(bool active);
     void headersChanged(const QStringList &hdr);
     void rowLabelsChanged(const QStringList &lbl);

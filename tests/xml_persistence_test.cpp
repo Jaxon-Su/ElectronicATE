@@ -75,8 +75,8 @@ int main(int argc, char** argv)
                     == XmlOperationResult::Error::Open, "missing file should fail");
 
         const QByteArray malformed[] = {
-            "", "<loodGUI><Page1>new</Page1><broken></loodGUI>",
-            "<loodGUI><Page1>new</Page1></loodGUI><extra/>"
+            "", "<loodGUI><Page1 schemaVersion='2'>new</Page1><broken></loodGUI>",
+            "<loodGUI><Page1 schemaVersion='2'>new</Page1></loodGUI><extra/>"
         };
         for (const auto& document : malformed) {
             writeFile(path, document);
@@ -85,12 +85,12 @@ int main(int argc, char** argv)
             require(target.loads == 1 && target.value == source.value,
                     "malformed XML mutated page before validation");
         }
-        writeFile(path, "<other><loodGUI><Page1>new</Page1></loodGUI></other>");
+        writeFile(path, "<other><loodGUI><Page1 schemaVersion='2'>new</Page1></loodGUI></other>");
         require(XmlConfigStore::loadAllFromXml(path, {&target}).error == XmlOperationResult::Error::InvalidRoot,
                 "nested expected root should be rejected");
         require(target.loads == 1, "wrong root mutated page");
 
-        writeFile(path, "<loodGUI><Future><Page1>hidden</Page1></Future><Page1>visible</Page1></loodGUI>");
+        writeFile(path, "<loodGUI><Future><Page1 schemaVersion='2'>hidden</Page1></Future><Page1 schemaVersion='2'>visible</Page1></loodGUI>");
         require(XmlConfigStore::loadAllFromXml(path, {&target}).succeeded(), "unknown section rejected");
         require(target.loads == 2 && target.value == "visible", "nested unknown section dispatched");
         writeFile(path, "<loodGUI/>");
@@ -101,11 +101,11 @@ int main(int argc, char** argv)
         first.value = "old-first";
         second.value = "old-second";
         second.failApply = true;
-        writeFile(path, "<loodGUI><Page1>new-first</Page1><Page2>reject</Page2></loodGUI>");
+        writeFile(path, "<loodGUI><Page1 schemaVersion='2'>new-first</Page1><Page2 schemaVersion='2'>reject</Page2></loodGUI>");
         require(!XmlConfigStore::loadAllFromXml(path, {&first, &second}).succeeded(), "late apply failure accepted");
         require(first.value == "old-first" && second.value == "old-second", "late failure left a mixed configuration");
         require(first.publications == 0 && second.publications == 0, "failed transaction published changes");
-        writeFile(path, "<loodGUI><Page2>new-second</Page2><Page1>new-first</Page1></loodGUI>");
+        writeFile(path, "<loodGUI><Page2 schemaVersion='2'>new-second</Page2><Page1 schemaVersion='2'>new-first</Page1></loodGUI>");
         bool completeAtNotification = false, nestedRejected = false;
         first.onPublish = [&] {
             completeAtNotification = first.value == "new-first" && second.value == "new-second";
@@ -116,13 +116,13 @@ int main(int argc, char** argv)
             synchronized = first.signalsBlocked() && second.signalsBlocked();
         }).succeeded(), "transaction failed");
         require(completeAtNotification && nestedRejected && synchronized, "transaction exposed incomplete state or reentrant load");
-        writeFile(path, "<loodGUI><Page1>one</Page1><Page1>two</Page1></loodGUI>");
+        writeFile(path, "<loodGUI><Page1 schemaVersion='2'>one</Page1><Page1 schemaVersion='2'>two</Page1></loodGUI>");
         require(!XmlConfigStore::loadAllFromXml(path, {&first, &second}).succeeded(), "duplicate sections accepted");
         require(first.value == "new-first", "duplicate section changed current data");
         auto* closing = new TestPage;
         closing->tag = "Page2";
         first.onPublish = [&] { delete closing; closing = nullptr; };
-        writeFile(path, "<loodGUI><Page1>last</Page1><Page2>last</Page2></loodGUI>");
+        writeFile(path, "<loodGUI><Page1 schemaVersion='2'>last</Page1><Page2 schemaVersion='2'>last</Page2></loodGUI>");
         require(!XmlConfigStore::loadAllFromXml(path, {&first, closing}).succeeded() && !closing,
                 "notification dereferenced a closed page");
         std::cout << "PASS: round trip, atomic failure, open errors, preflight and section dispatch\n";

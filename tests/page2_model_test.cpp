@@ -34,21 +34,21 @@ int main(int argc, char** argv)
         model.loadXml(wrongRoot);
         require(wrongRoot.hasError() && loaded == 0 && model.getInputRows()[0].vin == "110",
                 "wrong XML element replaced Page2 data");
-        QXmlStreamReader broken(QStringLiteral("<Page2><InputTable><Row><Vin>230</Vin></Row></InputTable><LoadTable>"));
+        QXmlStreamReader broken(QStringLiteral("<Page2 schemaVersion='2'><InputTable><Row><Vin>230</Vin></Row></InputTable><LoadTable>"));
         broken.readNextStartElement();
         model.loadXml(broken);
         require(broken.hasError() && loaded == 0 && model.getInputRows()[0].vin == "110"
                     && model.getLoadMeta().names[0] == "first", "failed XML partially replaced model");
-        QXmlStreamReader valid(QStringLiteral("<Page2><InputTable><Row><Vin>230</Vin></Row></InputTable></Page2>"));
+        QXmlStreamReader valid(QStringLiteral("<Page2 schemaVersion='2'><InputTable><Row><Vin>230</Vin></Row></InputTable></Page2>"));
         valid.readNextStartElement();
         model.loadXml(valid);
         require(!valid.hasError() && loaded == 1 && model.getInputRows()[0].vin == "230"
                     && model.getLoadRows().isEmpty(), "successful replacement failed");
         auto dc = model.snapshot();
-        dc.dcRows = {{"24", "5", "main"}};
+        dc.dcRows = {{"24", "5", ""}, {"20", "4", ""}};
         dc.dcRows2 = {{"12", "3", "aux"}, {"10", "2", "low"}};
-        dc.dcRows3 = {{"5", "1", "logic"}};
-        dc.dcSourceTab = 2;
+        dc.dcRows3 = {{"5", "1", ""}, {"3", "1", ""}};
+        dc.dcNames = {"Main supplies", "Standby"};
         model.setSnapshot(dc);
         QString xml;
         QXmlStreamWriter writer(&xml);
@@ -57,18 +57,21 @@ int main(int argc, char** argv)
         QXmlStreamReader roundTrip(xml);
         roundTrip.readNextStartElement();
         restored.loadXml(roundTrip);
+        require(!xml.contains("DcTable") && !xml.contains("DcSourceTab") && xml.contains("DcConditions"), "old DC XML still written");
+        QString duplicate = xml;
+        duplicate.replace("index=\"3\"", "index=\"2\"");
+        QXmlStreamReader badGroup(duplicate);
+        badGroup.readNextStartElement(); restored.loadXml(badGroup);
+        require(badGroup.hasError() && restored.snapshot().dcNames[0] == "Main supplies", "invalid indices changed state");
         const auto result = restored.snapshot();
         require(!roundTrip.hasError() && result.dcRows[0].currentLimit == "5"
-                    && result.dcRows2.size() == 2 && result.dcRows2[1].label == "low"
-                    && result.dcRows3[0].vin == "5" && result.dcSourceTab == 2,
+                    && result.dcRows2.size() == 2 && result.dcNames[1] == "Standby" && result.dcRows2[1].vin == "10"
+                    && result.dcRows3[0].vin == "5",
                 "three DC sources did not round trip");
         QXmlStreamReader legacy(QStringLiteral("<Page2><DcTable><Row><Vin>48</Vin></Row></DcTable></Page2>"));
         legacy.readNextStartElement();
         restored.loadXml(legacy);
-        require(!legacy.hasError() && restored.snapshot().dcRows[0].vin == "48"
-                    && restored.snapshot().dcRows[0].currentLimit.isEmpty()
-                    && restored.snapshot().dcRows2.isEmpty() && restored.snapshot().dcRows3.isEmpty(),
-                "legacy DC source migration failed");
+        require(legacy.hasError() && restored.snapshot().dcNames[0] == "Main supplies", "old DC format must be rejected atomically");
         std::cout << "PASS: Page2 output updates and atomic XML replacement\n";
         return 0;
     } catch (const std::exception& error) {

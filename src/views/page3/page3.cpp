@@ -5,7 +5,6 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
-#include <QTabWidget>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QGroupBox>
@@ -51,23 +50,21 @@ void Page3::initializeUI()
     grpInput->setFont(QFont(font().family(), 9, QFont::Bold));
     grpInput->setFixedWidth(200);
 
-    for (int i = 0; i < 3; ++i) {
-        const QString suffix = QString::number(i + 1);
-        grpDcInput[i] = new QGroupBox(tr("DC Input%1").arg(i + 1));
-        grpDcInput[i]->setObjectName("grpDcInput" + suffix);
-        grpDcInput[i]->setFont(grpInput->font());
-        grpDcInput[i]->setFixedWidth(200);
-        cmbDcInput[i] = new QComboBox(this);
-        cmbDcInput[i]->setObjectName("cmbDcInput" + suffix);
-        cmbDcInput[i]->setEditable(false);
-        cmbDcInput[i]->setMinimumWidth(kBtnWidth);
-        btnDcInput[i] = createPushButton(tr("ON"), "btnDcInput" + suffix);
-        btnDcInput[i]->setCheckable(true);
-        btnDcChange[i] = createPushButton(tr("change"), "btnDcChange" + suffix);
-        for (auto *button : {btnDcInput[i], btnDcChange[i]}) {
+    {
+        const QString suffix = "1";
+        grpDcInput = new QGroupBox(tr("DC Input"));
+        grpDcInput->setObjectName("grpDcInput" + suffix);
+        grpDcInput->setFont(grpInput->font());
+        grpDcInput->setFixedWidth(200);
+        cmbDcInput = new QComboBox(this);
+        cmbDcInput->setObjectName("cmbDcInput" + suffix);
+        cmbDcInput->setEditable(false);
+        cmbDcInput->setMinimumWidth(kBtnWidth);
+        btnDcInput = createPushButton(tr("ON"), "btnDcInput" + suffix);
+        btnDcInput->setCheckable(true);
+        btnDcChange = createPushButton(tr("change"), "btnDcChange" + suffix);
+        for (auto *button : {btnDcInput, btnDcChange}) {
             button->setFixedSize(kBtnWidth, kBtnHeight);
-            button->setEnabled(false);
-            button->setToolTip(tr("DC Source control is not implemented yet."));
         }
     }
 
@@ -166,8 +163,7 @@ void Page3::buildLayout()
     };
 
     createGroupLayout(grpInput, cmbInput, btnInput, btnChange);
-    for (int i = 0; i < 3; ++i)
-        createGroupLayout(grpDcInput[i], cmbDcInput[i], btnDcInput[i], btnDcChange[i]);
+    createGroupLayout(grpDcInput, cmbDcInput, btnDcInput, btnDcChange);
     createGroupLayout(grpLoad, cmbLoad, btnLoadOn, btnLoadChg);
     createGroupLayout(grpDyload, cmbDyload, btnDyloadOn, btnDyloadChg, chkDyload);
     createGroupLayout(grpRelay, cmbRelay, btnRelayOn, btnRelayChg);
@@ -193,23 +189,10 @@ void Page3::buildLayout()
     leftCol->setContentsMargins(6, 6, 6, 6);
     leftCol->setSpacing(10);
     leftCol->addWidget(grpInput);
-    auto *dcTabs = new QTabWidget(this);
-    dcInputTabs = dcTabs;
-    dcTabs->setObjectName("dcInputTabs");
-    dcTabs->setFixedWidth(200);
-    for (int i = 0; i < 3; ++i) {
-        grpDcInput[i]->setMinimumWidth(0);
-        grpDcInput[i]->setMaximumWidth(QWIDGETSIZE_MAX);
-        grpDcInput[i]->setTitle(QString());
-        grpDcInput[i]->setStyleSheet("QGroupBox { border: none; margin: 0px; }");
-        grpDcInput[i]->layout()->setContentsMargins(4, 4, 4, 4);
-        dcTabs->addTab(grpDcInput[i], tr("DC Input %1").arg(i + 1));
-    }
-    dcTabs->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     leftCol->addWidget(grpLoad);
     leftCol->addWidget(grpDyload);
     leftCol->addWidget(grpRelay);
-    leftCol->addWidget(dcTabs);
+    leftCol->addWidget(grpDcInput);
     leftCol->addStretch();
     leftCol->addWidget(grpCap);
 
@@ -253,20 +236,37 @@ void Page3::setupConnections()
 {
     connect(vm, &Page3ViewModel::dcInputUpdated, this,
             [this](int source, const QStringList& titles, int index) {
-        const QSignalBlocker blocker(cmbDcInput[source]);
-        cmbDcInput[source]->clear();
-        cmbDcInput[source]->addItems(titles);
-        cmbDcInput[source]->setCurrentIndex(index);
+        if (source != 0) return;
+        const QSignalBlocker blocker(cmbDcInput);
+        cmbDcInput->clear();
+        cmbDcInput->addItems(titles);
+        cmbDcInput->setCurrentIndex(index);
     });
-    connect(vm, &Page3ViewModel::dcTabRestored, this, [this](int tab) {
-        const QSignalBlocker blocker(dcInputTabs);
-        dcInputTabs->setCurrentIndex(tab);
+    connect(vm, &Page3ViewModel::dcOutputStateChanged, this, [this](int source, bool on) {
+        if (source != 0) return;
+        const QSignalBlocker blocker(btnDcInput);
+        btnDcInput->setChecked(on);
+        btnDcInput->setText(on ? tr("ON") : tr("OFF"));
     });
-    connect(dcInputTabs, &QTabWidget::currentChanged, vm, &Page3ViewModel::onDcTabChanged);
-    for (int source = 0; source < 3; ++source)
-        connect(cmbDcInput[source], &QComboBox::currentIndexChanged, this, [this, source](int index) {
-            vm->onDcSelected(source, index, cmbDcInput[source]->currentText());
+    connect(vm, &Page3ViewModel::dcOperationBusyChanged, this, [this](int source, bool busy) {
+        if (source != 0) return;
+        btnDcInput->setEnabled(!busy);
+        btnDcChange->setEnabled(!busy);
+        cmbDcInput->setEnabled(!busy);
+    });
+    {
+        const int source = 0;
+        connect(btnDcInput, &QPushButton::toggled, this, [this, source](bool on) {
+            btnDcInput->setText(on ? tr("ON") : tr("OFF"));
+            vm->onDcInputToggled(source, on);
         });
+        connect(btnDcChange, &QPushButton::clicked, this, [this, source] {
+            vm->onDcInputChanged(source);
+        });
+        connect(cmbDcInput, &QComboBox::currentIndexChanged, this, [this, source](int index) {
+            vm->onDcSelected(source, index, cmbDcInput->currentText());
+        });
+    }
     vm->refreshDcInputs();
     // Toggle 按鈕連接（使用輔助函數減少重複）
     connectToggleButton(btnInput, &Page3::inputToggled);
@@ -622,9 +622,7 @@ void Page3::syncUIToViewModel()
     syncCombo(cmbLoad, TableKind::Load);
     syncCombo(cmbDyload, TableKind::DyLoad);
     syncCombo(cmbRelay, TableKind::Relay);
-    for (int source = 0; source < 3; ++source)
-        vm->onDcSelected(source, cmbDcInput[source]->currentIndex(), cmbDcInput[source]->currentText());
-    vm->onDcTabChanged(dcInputTabs->currentIndex());
+    vm->onDcSelected(0, cmbDcInput->currentIndex(), cmbDcInput->currentText());
 }
 
 void Page3::resetUIFromViewModel()

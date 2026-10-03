@@ -119,7 +119,7 @@ add_executable(page2_widget_test page2_widget_test.cpp
     ../src/views/page2/page2.cpp ../src/views/page2/page2.h
     ../src/ui/style/styleutils.cpp ../src/ui/delegate/navdelegate.cpp ../src/ui/delegate/navdelegate.h)
 target_include_directories(page2_widget_test PRIVATE ../src/views/page2 ../src/ui/style ../src/ui/delegate)
-target_link_libraries(page2_widget_test PRIVATE ElectronicATEConditions Qt6::Widgets)
+target_link_libraries(page2_widget_test PRIVATE ElectronicATEConditions ElectronicATEManualControl Qt6::Widgets)
 add_test(NAME page2_widget_snapshot COMMAND page2_widget_test)
 set_tests_properties(page2_widget_snapshot PROPERTIES TIMEOUT 20 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
@@ -133,3 +133,31 @@ add_executable(output_readback_test output_readback_test.cpp)
 target_link_libraries(output_readback_test PRIVATE ElectronicATEInstrumentCore)
 add_test(NAME output_off_readback COMMAND output_readback_test)
 set_tests_properties(output_off_readback PROPERTIES TIMEOUT 10)
+
+add_executable(dcsource_test dcsource_test.cpp
+    ../src/hardware/instrument/dcsource/chroma62000.cpp
+    ../src/hardware/instrument/dcsource/dcsourcefactory.cpp
+    ../src/hardware/instrument/dcsource/dcsourcespec/chroma62000spec.cpp)
+target_include_directories(dcsource_test PRIVATE ../src/hardware/instrument/dcsource)
+target_link_libraries(dcsource_test PRIVATE ElectronicATEInstrumentCore)
+add_test(NAME dcsource_scpi COMMAND dcsource_test)
+set_tests_properties(dcsource_scpi PROPERTIES TIMEOUT 10)
+
+add_executable(dcinput_operation_test dcinput_operation_test.cpp
+    ../src/service/instrumentexecutor/dcinputoperation.cpp
+    ../src/hardware/instrument/dcsource/chroma62000.cpp
+    ../src/hardware/instrument/dcsource/dcsourcefactory.cpp
+    ../src/hardware/instrument/dcsource/dcsourcespec/chroma62000spec.cpp)
+target_include_directories(dcinput_operation_test PRIVATE
+    ../src/service/instrumentexecutor ../src/hardware/instrument/dcsource)
+target_link_libraries(dcinput_operation_test PRIVATE ElectronicATEInstrumentCore ElectronicATEData)
+add_test(NAME dcinput_operation COMMAND dcinput_operation_test)
+
+add_executable(page3_dc_test page3_dc_test.cpp)
+target_link_libraries(page3_dc_test PRIVATE ElectronicATEManualControl)
+add_test(NAME page3_dc_controls COMMAND page3_dc_test)
+set_tests_properties(page3_dc_controls PROPERTIES TIMEOUT 15)
+
+add_executable(page123_xml_test page123_xml_test.cpp)
+target_link_libraries(page123_xml_test PRIVATE ElectronicATEInstrumentSettings ElectronicATEConditions ElectronicATEManualControl ElectronicATEPersistence)
+add_test(NAME page123_xml_roundtrip COMMAND page123_xml_test)

@@ -62,6 +62,7 @@ struct Page1Config {
     int loadOutputs = 1;
     int relayOutputs = 1;
     QList<InstrumentConfig> instruments;
+    int dcInputs = 1;
 };
 
 struct TableRowInfo {

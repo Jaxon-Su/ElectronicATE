@@ -40,6 +40,7 @@ public:
     const DynamicMetaRow&         dynamicMeta()  const override { return m_model->getDynamicMeta(); }
     const QVector<DynamicDataRow>& dynamicRows() const override { return m_model->getDynamicRows(); }
 
+    int dcInputs() const { return qBound(1, m_page1Config.dcInputs, 3); }
     int maxOutput() const;           // Load/Dynamic 的最大輸出數
     int maxRelayOutput() const { return m_maxRelayOutput; }
 

@@ -33,12 +33,26 @@ void Page2Model::resizeRelayOutputs(int count)
 void Page2Model::writeXml(QXmlStreamWriter& writer) const
 {
     writer.writeStartElement("Page2");
+    // Equal row indices across the three source tables form one DC condition.
+    writer.writeAttribute("schemaVersion", "2");
 
     XmlWriter::writeInputTable(writer, inputRows);
-    XmlWriter::writeDcTable(writer, dcRows);        // ★ 新增
-    XmlWriter::writeDcTable(writer, dcRows2, 2);
-    XmlWriter::writeDcTable(writer, dcRows3, 3);
-    writer.writeTextElement("DcSourceTab", QString::number(dcSourceTab));
+    writer.writeStartElement("DcConditions");
+    const auto state = snapshot();
+    for (int group = 0; group < qMax(dcNames.size(), qMax(dcRows.size(), qMax(dcRows2.size(), dcRows3.size()))); ++group) {
+        writer.writeStartElement("Condition");
+        writer.writeAttribute("name", dcNames.value(group));
+        for (int source = 0; source < 3; ++source) {
+            const auto row = state.dcSourceRows(source).value(group);
+            writer.writeStartElement("Source");
+            writer.writeAttribute("index", QString::number(source + 1));
+            writer.writeTextElement("Vin", row.vin);
+            writer.writeTextElement("CurrentLimit", row.currentLimit);
+            writer.writeEndElement();
+        }
+        writer.writeEndElement();
+    }
+    writer.writeEndElement();
     XmlWriter::writeRelayTable(writer, relayRows);
     XmlWriter::writeLoadTable(writer, loadMeta, loadRows);
     XmlWriter::writeDynamicTable(writer, dynamicMeta, dynamicRows);
@@ -52,10 +66,14 @@ void Page2Model::loadXml(QXmlStreamReader& reader)
         reader.raiseError(QStringLiteral("Expected Page2 element"));
         return;
     }
+    if (reader.attributes().value("schemaVersion") != "2") {
+        reader.raiseError("Unsupported Page2 schema; create a new configuration."); return;
+    }
+    QVector<QString> dcNames;
+    bool dcSeen = false;
     QVector<InputRow> inputRows;
     QVector<DcRow> dcRows;
     QVector<DcRow> dcRows2, dcRows3;
-    int dcSourceTab = 0;
     QVector<RelayDataRow> relayRows;
     LoadMetaRow loadMeta;
     QVector<LoadDataRow> loadRows;
@@ -72,19 +90,32 @@ void Page2Model::loadXml(QXmlStreamReader& reader)
             if (reader.name() == "InputTable") {
                 XmlReader::readInputTable(reader, inputRows);
             }
-            else if (reader.name() == "DcTable") {     // ★ 新增
-                const auto source = reader.attributes().value("source");
-                const int index = source.isEmpty() ? 1 : source.toInt();
-                if (index < 1 || index > 3) {
-                    reader.raiseError("Invalid DC source number");
-                    return;
+            else if (reader.name() == "DcConditions") {
+                if (dcSeen) { reader.raiseError("Duplicate DC conditions"); return; }
+                dcSeen = true;
+                while (reader.readNextStartElement()) {
+                    if (reader.name() != "Condition") { reader.raiseError("Expected DC Condition"); return; }
+                    dcNames.append(reader.attributes().value("name").toString());
+                    DcGroup group;
+                    bool seen[3] = {};
+                    while (reader.readNextStartElement()) {
+                        bool ok = false;
+                        const int index = reader.attributes().value("index").toInt(&ok) - 1;
+                        if (reader.name() != "Source" || !ok || index < 0 || index > 2 || seen[index]) {
+                            reader.raiseError("DC condition requires unique Source indices 1..3"); return;
+                        }
+                        seen[index] = true;
+                        bool voltage = false, current = false;
+                        while (reader.readNextStartElement()) {
+                            if (reader.name() == "Vin" && !voltage) { group[index].vin = reader.readElementText(); voltage = true; }
+                            else if (reader.name() == "CurrentLimit" && !current) { group[index].currentLimit = reader.readElementText(); current = true; }
+                            else { reader.raiseError("Invalid DC Source field"); return; }
+                        }
+                        if (!voltage || !current) { reader.raiseError("Missing DC Source values"); return; }
+                    }
+                    if (!seen[0] || !seen[1] || !seen[2]) { reader.raiseError("Missing DC Source index"); return; }
+                    dcRows.append(group[0]); dcRows2.append(group[1]); dcRows3.append(group[2]);
                 }
-                auto& rows = index == 1 ? dcRows : index == 2 ? dcRows2 : dcRows3;
-                rows.clear();
-                XmlReader::readDcTable(reader, rows);
-            }
-            else if (reader.name() == "DcSourceTab") {
-                dcSourceTab = qBound(0, reader.readElementText().toInt(), 2);
             }
             else if (reader.name() == "RelayTable") {
                 XmlReader::readRelayTable(reader, relayRows);
@@ -95,15 +126,16 @@ void Page2Model::loadXml(QXmlStreamReader& reader)
             else if (reader.name() == "DynamicTable") {
                 XmlReader::readDynamicTable(reader, dynamicMeta, dynamicRows);
             }
+            else { reader.raiseError("Unexpected Page2 element"); return; }
         }
     }
 
     if (reader.hasError()) return;
     this->inputRows = std::move(inputRows);
+    this->dcNames = std::move(dcNames);
     this->dcRows = std::move(dcRows);
     this->dcRows2 = std::move(dcRows2);
     this->dcRows3 = std::move(dcRows3);
-    this->dcSourceTab = dcSourceTab;
     this->relayRows = std::move(relayRows);
     this->loadMeta = std::move(loadMeta);
     this->loadRows = std::move(loadRows);
@@ -131,22 +163,6 @@ void Page2Model::XmlWriter::writeInputTable(QXmlStreamWriter& w, const QVector<I
 }
 
 // ★ 新增：DC Table XML 寫入
-void Page2Model::XmlWriter::writeDcTable(QXmlStreamWriter& w, const QVector<DcRow>& rows, int source)
-{
-    w.writeStartElement("DcTable");
-    w.writeAttribute("source", QString::number(source));
-
-    for (const auto& row : rows) {
-        w.writeStartElement("Row");
-        w.writeTextElement("Vin", row.vin);
-        w.writeTextElement("CurrentLimit", row.currentLimit);
-        w.writeTextElement("Label", row.label);
-        w.writeEndElement(); // Row
-    }
-
-    w.writeEndElement(); // DcTable
-}
-
 void Page2Model::XmlWriter::writeRelayTable(QXmlStreamWriter& w, const QVector<RelayDataRow>& rows)
 {
     w.writeStartElement("RelayTable");
@@ -250,21 +266,6 @@ void Page2Model::XmlReader::readInputTable(QXmlStreamReader& r, QVector<InputRow
 }
 
 // ★ 新增：DC Table XML 讀取
-void Page2Model::XmlReader::readDcTable(QXmlStreamReader& r, QVector<DcRow>& rows)
-{
-    while (!r.atEnd()) {
-        r.readNext();
-
-        if (r.isEndElement() && r.name() == "DcTable") {
-            break;
-        }
-
-        if (r.isStartElement() && r.name() == "Row") {
-            rows.append(readDcRow(r));
-        }
-    }
-}
-
 void Page2Model::XmlReader::readRelayTable(QXmlStreamReader& r, QVector<RelayDataRow>& rows)
 {
     while (!r.atEnd()) {
@@ -355,29 +356,6 @@ InputRow Page2Model::XmlReader::readInputRow(QXmlStreamReader& r)
 }
 
 // ★ 新增：DC Row 讀取
-DcRow Page2Model::XmlReader::readDcRow(QXmlStreamReader& r)
-{
-    DcRow row;
-
-    while (!r.atEnd()) {
-        r.readNext();
-
-        if (r.isEndElement() && r.name() == "Row") {
-            break;
-        }
-
-        if (r.isStartElement() && r.name() == "Vin") {
-            row.vin = r.readElementText();
-        } else if (r.isStartElement() && r.name() == "CurrentLimit") {
-            row.currentLimit = r.readElementText();
-        } else if (r.isStartElement() && r.name() == "Label") {
-            row.label = r.readElementText();
-        }
-    }
-
-    return row;
-}
-
 RelayDataRow Page2Model::XmlReader::readRelayDataRow(QXmlStreamReader& r)
 {
     RelayDataRow row;

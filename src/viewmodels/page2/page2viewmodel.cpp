@@ -239,8 +239,8 @@ QStringList Page2ViewModel::TitleList(TableKind type) const
         }
         break;
     case TableKind::Dc:
-        for (const auto& row : m_model->getDcRows())
-            titles << row.vin;
+        for (const auto& name : m_model->snapshot().dcNames)
+            titles << name;
         break;
     case TableKind::Relay:
         for (const auto& row : m_model->getRelayRows())

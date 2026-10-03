@@ -24,6 +24,8 @@ set(ELECTRONICATE_APP_INCLUDE_DIRS
   ${CMAKE_CURRENT_SOURCE_DIR}/src/hardware/instrument/acsource
   ${CMAKE_CURRENT_SOURCE_DIR}/src/hardware/instrument/dcload
   ${CMAKE_CURRENT_SOURCE_DIR}/src/hardware/instrument/dcload/dcloadspec
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/hardware/instrument/dcsource
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/hardware/instrument/dcsource/dcsourcespec
   ${CMAKE_CURRENT_SOURCE_DIR}/src/hardware/instrument/oscilloscope
   ${CMAKE_CURRENT_SOURCE_DIR}/src/hardware/instrument/relay
   ${CMAKE_CURRENT_SOURCE_DIR}/src/hardware/instrument

@@ -21,7 +21,9 @@ Page1::Page1(Page1ViewModel* vm, QWidget *parent) : QWidget(parent), viewModel(v
     initializeUI();
     setupLayout();
     setupTable();
-    setupCheckboxes();
+    QMap<QString, bool> enabled;
+    for (const auto& ic : viewModel->currentConfig().instruments) enabled[ic.name] = ic.enabled;
+    setupCheckboxes(enabled);
     setupConnections();
 
 }
@@ -44,6 +46,11 @@ void Page1::initializeUI()
     spinBox_Relay_Outputs->setObjectName("spinBox_Relay_Outputs");
     spinBox_Relay_Outputs->setRange(1, 20);
     spinBox_Relay_Outputs->setValue(1);
+
+    spinBox_DcInputs = new QSpinBox(this);
+    spinBox_DcInputs->setObjectName("spinBox_DcInputs");
+    spinBox_DcInputs->setRange(1, 3);
+    spinBox_DcInputs->setValue(viewModel->dcInputs());
 
     groupBox = new QGroupBox("Select Modules", this);
     QFont groupFont = groupBox->font();
@@ -103,6 +110,10 @@ void Page1::setupLayout()
     leftInnerLayout->setContentsMargins(0, 0, 0, 0);
     leftInnerLayout->addWidget(loadSpinWidget);
     leftInnerLayout->addWidget(relaySpinWidget);
+    auto* dcLabel = new QLabel("  DC Input", this);
+    dcLabel->setFont(label1->font());
+    leftInnerLayout->addWidget(dcLabel);
+    leftInnerLayout->addWidget(spinBox_DcInputs);
     leftInnerLayout->addWidget(groupBox);
 
     QVBoxLayout *mainLeftLayout = new QVBoxLayout;
@@ -163,6 +174,8 @@ void Page1::setupCheckboxes(const QMap<QString, bool> &enabledMap)
 
 void Page1::setupConnections()
 {
+    connect(spinBox_DcInputs, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, &Page1::syncUIToViewModel);
     connect(spinBox_Load_Outputs, QOverload<int>::of(&QSpinBox::valueChanged),
             this, &Page1::syncUIToViewModel);
 
@@ -705,7 +718,7 @@ void Page1::syncUIToViewModel()
     QList<InstrumentConfig> configs = collectAllInstrumentConfigs();
     // void Page1::syncUIToViewModel() emit uiConfigChanged 後記憶體洩漏，查找後續相關signal slot
     // 頻繁操作submodel、address 會崩潰
-    emit uiConfigChanged(configs, spinBox_Load_Outputs->value(), spinBox_Relay_Outputs->value());
+    emit uiConfigChanged(configs, spinBox_Load_Outputs->value(), spinBox_Relay_Outputs->value(), spinBox_DcInputs->value());
 }
 
 // 收集所有儀器配置
@@ -829,6 +842,9 @@ void Page1::resetUIFromViewModel()
     spinBox_Relay_Outputs->blockSignals(true);
     spinBox_Relay_Outputs->setValue(viewModel->relayOutputs());
     spinBox_Relay_Outputs->blockSignals(false);
+    spinBox_DcInputs->blockSignals(true);
+    spinBox_DcInputs->setValue(viewModel->dcInputs());
+    spinBox_DcInputs->blockSignals(false);
 
     setupTable();
 

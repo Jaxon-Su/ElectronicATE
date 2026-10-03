@@ -89,8 +89,8 @@ int main(int argc, char** argv)
         require(restored.p5.model.dutRows[0].settings.value("delay").toMap().value("delay_ms").toInt() == 100, "task settings lost");
         QFile invalid(path);
         require(invalid.open(QIODevice::WriteOnly | QIODevice::Truncate), "fixture open failed");
-        const QByteArray document = "<loodGUI><Page1><LoadOutputs>7</LoadOutputs></Page1>"
-            "<Page2><InputTable><Row><Vin><unexpected/></Vin></Row></InputTable></Page2></loodGUI>";
+        const QByteArray document = "<loodGUI><Page1 schemaVersion='2'><LoadOutputs>7</LoadOutputs></Page1>"
+            "<Page2 schemaVersion='2'><InputTable><Row><Vin><unexpected/></Vin></Row></InputTable></Page2></loodGUI>";
         require(invalid.write(document) == document.size(), "fixture write failed");
         invalid.close();
         const auto rejected = XmlConfigStore::loadAllFromXml(path, restored.pages());

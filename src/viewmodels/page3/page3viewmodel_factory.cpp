@@ -1,10 +1,18 @@
 #include "page3viewmodel.h"
 #include "instrumentexecutor.h"
+#include "dcinputoperation.h"
+#include "communicationfactory.h"
 
 namespace {
 Page3Operations hardwareOperations()
 {
     Page3Operations operations;
+    operations.dcGroup = [](const Page1Config& config, const DcGroup& rows, InputAction action) {
+        return runDcGroup(config, rows, action, &CommunicationFactory::create);
+    };
+    operations.dcInput = [](const Page1Config& config, int source, const DcRow& row, InputAction action) {
+        return runDcInput(config, source, row, action, &CommunicationFactory::create);
+    };
     operations.input = [](const Page1Config& config, const InputRow& row, InputAction action) {
         return InstrumentExecutor::runInput(config, row, action);
     };

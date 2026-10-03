@@ -14,4 +14,6 @@ struct Page3Operations {
     std::function<Result(const Page1Config&, const QVector<LoadDataRow>&, int, const LoadMetaRow&, LoadAction, bool)> load;
     std::function<Result(const Page1Config&, const QVector<DynamicDataRow>&, int, const DynamicMetaRow&, DyLoadAction, bool, bool)> dynamic;
     std::function<OscilloscopeManager::OscMap(const Page1Config&)> connectScopes;
+    std::function<Result(const Page1Config&, int, const DcRow&, InputAction)> dcInput;
+    std::function<Result(const Page1Config&, const DcGroup&, InputAction)> dcGroup;
 };

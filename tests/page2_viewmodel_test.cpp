@@ -40,7 +40,7 @@ int main(int argc, char** argv)
         vm.setMaxOutput(2);
         require(headers == before + 2 && vm.loadMeta().names.size() == 2, "resize was not propagated");
         const int beforeFailure = metaUpdates;
-        QXmlStreamReader broken(QStringLiteral("<Page2><LoadTable>"));
+        QXmlStreamReader broken(QStringLiteral("<Page2 schemaVersion='2'><LoadTable>"));
         broken.readNextStartElement();
         vm.loadXml(broken);
         require(broken.hasError() && metaUpdates == beforeFailure && vm.loadRows().size() == 1,
@@ -89,7 +89,7 @@ int main(int argc, char** argv)
         auto* deleted = new Page2ViewModel(&deletedModel);
         QPointer<Page2ViewModel> deletedAlive(deleted);
         QObject::connect(deleted, &Page2ViewModel::dataChanged, [deleted] { delete deleted; });
-        QXmlStreamReader validLoad(QStringLiteral("<Page2/>"));
+        QXmlStreamReader validLoad(QStringLiteral("<Page2 schemaVersion='2'/>"));
         validLoad.readNextStartElement();
         deleted->loadXml(validLoad);
         require(deletedAlive.isNull() && !validLoad.hasError(), "load notification lifetime failed");

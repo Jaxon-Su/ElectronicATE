@@ -9,6 +9,7 @@ Page3Model::Page3Model(QObject* parent)
 void Page3Model::writeXml(QXmlStreamWriter& writer) const
 {
     writer.writeStartElement("Page3");
+    writer.writeAttribute("schemaVersion", "2");
 
     writeComboBoxTitles(writer);
     writeCurrentSelections(writer);
@@ -41,9 +42,7 @@ void Page3Model::writeCurrentSelections(QXmlStreamWriter& w) const
     };
 
     writeSelection("InputSelection", m_state.m_selectedInputIndex, m_state.m_selectedInputText);
-    for (int source = 0; source < 3; ++source)
-        writeSelection(QString("DcInput%1Selection").arg(source + 1), m_state.dcSelections[source].index, m_state.dcSelections[source].text);
-    w.writeTextElement("DcSourceTab", QString::number(m_state.dcSourceTab));
+    writeSelection("DcGroupSelection", m_state.dcSelections[0].index, m_state.dcSelections[0].text);
     writeSelection("LoadSelection", m_state.m_selectedLoadIndex, m_state.m_selectedLoadText);
     writeSelection("DyLoadSelection", m_state.m_selectedDyLoadIndex, m_state.m_selectedDyLoadText);
     writeSelection("RelaySelection", m_state.m_selectedRelayIndex, m_state.m_selectedRelayText);
@@ -102,11 +101,10 @@ void Page3Model::loadXml(QXmlStreamReader& reader)
         reader.raiseError(QStringLiteral("Expected Page3 element"));
         return;
     }
+    if (reader.attributes().value("schemaVersion") != "2") {
+        reader.raiseError("Unsupported Page3 schema; create a new configuration."); return;
+    }
     Page3Model candidate;
-    // Preserve legacy partial-document behavior for omitted fields.
-    candidate.m_state = m_state;
-    for (auto& selection : candidate.m_state.dcSelections) selection = {};
-    candidate.m_state.dcSourceTab = 0;
     candidate.readXmlFields(reader);
     if (!reader.hasError()) m_state = std::move(candidate.m_state);
 }
@@ -141,6 +139,7 @@ void Page3Model::readXmlFields(QXmlStreamReader& reader)
             else if (reader.name() == "RelayRowsData") {
                 readRelayData(reader);
             }
+            else { reader.raiseError("Unexpected Page3 field"); return; }
         }
     }
 }
@@ -176,16 +175,13 @@ void Page3Model::readCurrentSelections(QXmlStreamReader& r)
 
         if (r.isStartElement()) {
             QXmlStreamAttributes attrs = r.attributes();
-            if (r.name() == "DcSourceTab") {
-                setDcSourceTab(r.readElementText().toInt());
-                continue;
+            if (r.name() == "DcGroupSelection") {
+                bool ok = false;
+                const int index = attrs.value("index").toInt(&ok);
+                if (!ok || index < -1) { r.raiseError("Invalid DC group selection"); return; }
+                setDcSelection(0, index, attrs.value("text").toString());
             }
-            for (int source = 0; source < 3; ++source) {
-                if (r.name() == QString("DcInput%1Selection").arg(source + 1))
-                    setDcSelection(source, attrs.value("index").toInt(), attrs.value("text").toString());
-            }
-
-            if (r.name() == "InputSelection") {
+            else if (r.name() == "InputSelection") {
                 m_state.m_selectedInputIndex = attrs.value("index").toInt();
                 m_state.m_selectedInputText = attrs.value("text").toString();
             }
@@ -201,6 +197,7 @@ void Page3Model::readCurrentSelections(QXmlStreamReader& r)
                 m_state.m_selectedRelayIndex = attrs.value("index").toInt();
                 m_state.m_selectedRelayText = attrs.value("text").toString();
             }
+            else { r.raiseError("Unexpected Page3 selection"); return; }
             r.skipCurrentElement();
         }
     }

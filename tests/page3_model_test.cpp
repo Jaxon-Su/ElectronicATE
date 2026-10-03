@@ -18,9 +18,6 @@ int main(int argc, char** argv)
         Page3Model model;
         model.setInputTitles({"original"});
         model.setDcSelection(0, 1, "main");
-        model.setDcSelection(1, 2, "aux");
-        model.setDcSelection(2, 3, "logic");
-        model.setDcSourceTab(2);
         model.setSelectedInputState(2, "original selection");
         model.setPage2LoadRowsChanged({{"load", {"1", "2"}}});
         const auto original = serialize(model);
@@ -28,28 +25,29 @@ int main(int argc, char** argv)
         QXmlStreamReader roundTrip(original);
         roundTrip.readNextStartElement();
         restored.loadXml(roundTrip);
-        if (roundTrip.hasError() || restored.dcSelection(0).index != 1
-                || restored.dcSelection(1).text != "aux" || restored.dcSelection(2).index != 3
-                || restored.dcSourceTab() != 2)
+        if (roundTrip.hasError() || restored.dcSelection(0).index != 1)
             throw std::runtime_error("DC selections did not round trip");
         for (const QString& document : QStringList{
                  "<Other/>",
-                 "<Page3><CurrentSelections><InputSelection index='9' text='changed'/></CurrentSelections><LoadRowsData>",
-                 "<Page3><ComboBoxTitles><InputTitles><Title><invalid/></Title></InputTitles></ComboBoxTitles></Page3>"}) {
+                 "<Page3 schemaVersion='2'><CurrentSelections><InputSelection index='9' text='changed'/></CurrentSelections><LoadRowsData>",
+                 "<Page3 schemaVersion='2'><ComboBoxTitles><InputTitles><Title><invalid/></Title></InputTitles></ComboBoxTitles></Page3>"}) {
             QXmlStreamReader reader(document);
             reader.readNextStartElement();
             model.loadXml(reader);
             if (!reader.hasError() || serialize(model) != original)
                 throw std::runtime_error("invalid Page3 XML modified live state");
         }
-        QXmlStreamReader valid(QStringLiteral("<Page3><CurrentSelections><InputSelection index='4' text='new'/></CurrentSelections></Page3>"));
+        QXmlStreamReader valid(QStringLiteral("<Page3 schemaVersion='2'><CurrentSelections><InputSelection index='4' text='new'/></CurrentSelections></Page3>"));
         valid.readNextStartElement();
         model.loadXml(valid);
-        if (model.dcSelection(0).index != -1 || model.dcSourceTab() != 0)
+        if (model.dcSelection(0).index != -1)
             throw std::runtime_error("legacy Page3 retained stale DC selections");
-        if (valid.hasError() || model.getSelectedInputIndex() != 4 || model.getInputTitles() != QStringList{"original"}
-                || model.getLoadRowsData().size() != 1)
-            throw std::runtime_error("partial Page3 document lost omitted state");
+        if (valid.hasError() || model.getSelectedInputIndex() != 4 || !model.getInputTitles().isEmpty()
+                || !model.getLoadRowsData().isEmpty())
+            throw std::runtime_error("Page3 document retained stale omitted state");
+        QXmlStreamReader old(QStringLiteral("<Page3><CurrentSelections/></Page3>"));
+        old.readNextStartElement(); model.loadXml(old);
+        if (!old.hasError()) throw std::runtime_error("Old Page3 format accepted");
         std::cout << "PASS: Page3 snapshot commit and partial document compatibility\n";
         return 0;
     } catch (const std::exception& error) {

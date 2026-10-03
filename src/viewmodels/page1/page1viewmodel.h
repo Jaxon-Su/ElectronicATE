@@ -19,6 +19,7 @@ public:
     QList<int>          channels()  const { return m_channels; }
     const Page1Config&  currentConfig() const { return m_model->getConfig(); }
     int                 loadOutputs() const { return m_model ? m_model->loadOutputs() : 1; }
+    int dcInputs() const { return m_model ? m_model->getConfig().dcInputs : 1; }
     int                 relayOutputs() const { return m_model ? m_model->relayOutputs() : 1; }
 
     QStringList         subModels(const QString &modelName) const;
@@ -34,7 +35,7 @@ public:
 public slots:
     void setLoadOutputs(int value);
     void setRelayOutputs(int value);
-    void onUiConfigChanged(const QList<InstrumentConfig>& configs, int loadOutputs, int relayOutputs);
+    void onUiConfigChanged(const QList<InstrumentConfig>& configs, int loadOutputs, int relayOutputs, int dcInputs = -1);
 
 signals:
     void dataChanged();

@@ -104,13 +104,14 @@ void Page1ViewModel::buildChannelList()
 // ==================== UI 配置變更處理 ====================
 
 void Page1ViewModel::onUiConfigChanged(const QList<InstrumentConfig>& configs,
-                                       int loadOutputs, int relayOutputs)
+                                       int loadOutputs, int relayOutputs, int dcInputs)
 {
     const bool loadChanged = m_model->loadOutputs() != loadOutputs;
     const bool relayChanged = m_model->relayOutputs() != relayOutputs;
     Page1Config updated = m_model->getConfig();
     updated.loadOutputs = loadOutputs;
     updated.relayOutputs = relayOutputs;
+    if (dcInputs != -1) updated.dcInputs = qBound(1, dcInputs, 3);
     updated.instruments = configs;
     enrichConfigsWithChannelNumbers(updated.instruments);
     m_model->setConfig(updated);

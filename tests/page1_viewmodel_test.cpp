@@ -38,7 +38,7 @@ int main(int argc, char** argv)
         });
         vm.onUiConfigChanged({instrument}, 3, 2);
         require(changes == 1 && model.loadOutputs() == 3, "UI configuration not applied");
-        QXmlStreamReader broken(QStringLiteral("<Page1><LoadOutputs>9</LoadOutputs>"));
+        QXmlStreamReader broken(QStringLiteral("<Page1 schemaVersion='2'><LoadOutputs>9</LoadOutputs>"));
         broken.readNextStartElement();
         vm.loadXml(broken);
         require(broken.hasError() && changes == 1 && model.loadOutputs() == 3, "failed load changed viewmodel");
@@ -59,7 +59,7 @@ int main(int argc, char** argv)
         int loadedUpdates = 0;
         QObject::connect(&loaded, &Page1ViewModel::dataChanged, [&] {
             if (loadedModel.loadOutputs() == 2) {
-                QXmlStreamReader newer(QStringLiteral("<Page1><LoadOutputs>8</LoadOutputs></Page1>"));
+                QXmlStreamReader newer(QStringLiteral("<Page1 schemaVersion='2'><LoadOutputs>8</LoadOutputs></Page1>"));
                 newer.readNextStartElement();
                 loaded.loadXml(newer);
             }
@@ -68,7 +68,7 @@ int main(int argc, char** argv)
             require(value.loadOutputs == 8, "old XML load published after nested load");
             ++loadedUpdates;
         });
-        QXmlStreamReader older(QStringLiteral("<Page1><LoadOutputs>2</LoadOutputs></Page1>"));
+        QXmlStreamReader older(QStringLiteral("<Page1 schemaVersion='2'><LoadOutputs>2</LoadOutputs></Page1>"));
         older.readNextStartElement();
         loaded.loadXml(older);
         require(loadedUpdates == 1, "nested XML load published twice");
@@ -76,7 +76,7 @@ int main(int argc, char** argv)
         auto* deleted = new Page1ViewModel(&deletedModel);
         QPointer<Page1ViewModel> alive(deleted);
         QObject::connect(deleted, &Page1ViewModel::dataChanged, [deleted] { delete deleted; });
-        QXmlStreamReader document(QStringLiteral("<Page1/>"));
+        QXmlStreamReader document(QStringLiteral("<Page1 schemaVersion='2'/>"));
         document.readNextStartElement();
         deleted->loadXml(document);
         require(alive.isNull() && !document.hasError(), "XML callback deletion failed");

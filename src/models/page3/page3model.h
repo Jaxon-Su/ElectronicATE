@@ -12,8 +12,6 @@ public:
     struct DcSelection { int index = -1; QString text; };
     DcSelection dcSelection(int source) const { return m_state.dcSelections[source]; }
     void setDcSelection(int source, int index, const QString& text) { m_state.dcSelections[source] = {index, text}; }
-    int dcSourceTab() const { return m_state.dcSourceTab; }
-    void setDcSourceTab(int tab) { m_state.dcSourceTab = qBound(0, tab, 2); }
     explicit Page3Model(QObject* parent = nullptr);
 
     void setInputTitles(const QStringList& titles) { m_state.m_inputTitles = titles; }
@@ -79,7 +77,7 @@ private:
     void writeCurrentSelections(QXmlStreamWriter& w) const;
     void writeLoadData(QXmlStreamWriter& w) const;
     void writeDynamicData(QXmlStreamWriter& w) const;
-    void writeRelayData(QXmlStreamWriter& w) const; // [建議新增]
+    void writeRelayData(QXmlStreamWriter& w) const;
 
     void readComboBoxTitles(QXmlStreamReader& r);
     void readCurrentSelections(QXmlStreamReader& r);
@@ -87,7 +85,7 @@ private:
     void readLoadRowsData(QXmlStreamReader& r);
     void readDynamicMetaData(QXmlStreamReader& r);
     void readDynamicRowsData(QXmlStreamReader& r);
-    void readRelayData(QXmlStreamReader& r); // [建議新增]
+    void readRelayData(QXmlStreamReader& r);
 
     // 通用工具
     static void writeTitleList(QXmlStreamWriter& w, const QString& tag, const QStringList& list);
@@ -100,7 +98,6 @@ private:
 private:
     struct State {
     DcSelection dcSelections[3];
-    int dcSourceTab = 0;
     QStringList m_inputTitles;
     QStringList m_loadTitles;
     QStringList m_dyloadTitles;

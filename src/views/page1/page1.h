@@ -24,7 +24,7 @@ public:
     void syncUIToViewModel();
 
 signals:
-    void uiConfigChanged(const QList<InstrumentConfig>& configs, int loadOutputs, int relayOutputs);
+    void uiConfigChanged(const QList<InstrumentConfig>& configs, int loadOutputs, int relayOutputs, int dcInputs);
 
 private slots:
     void onInstrumentToggled(int state);
@@ -39,6 +39,7 @@ private:
     QTableWidget *tableWidget          {nullptr};
     QSpinBox     *spinBox_Load_Outputs {nullptr};
     QSpinBox     *spinBox_Relay_Outputs{nullptr};
+    QSpinBox *spinBox_DcInputs{nullptr};
     QGroupBox    *groupBox             {nullptr};
     QVBoxLayout  *checkboxLayout       {nullptr};
     QMap<QString, QCheckBox*> instrumentCheckboxes;

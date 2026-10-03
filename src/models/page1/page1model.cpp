@@ -2,6 +2,7 @@
 #include <QFile>
 #include <QDomDocument>
 #include <QDebug>
+#include <QSet>
 
 Page1Model::Page1Model(QObject *parent)
     : QObject(parent) {}
@@ -33,6 +34,7 @@ bool Page1Model::loadBaseXml(const QString &fileName) {
 
     m_config.loadOutputs = 1;
     m_config.relayOutputs = 1;
+    m_config.dcInputs = 1;
     emit configLoaded(m_config);
 
     return true;
@@ -40,8 +42,10 @@ bool Page1Model::loadBaseXml(const QString &fileName) {
 
 void Page1Model::writeXml(QXmlStreamWriter& writer) const {
     writer.writeStartElement("Page1");
+    writer.writeAttribute("schemaVersion", "2");
     writer.writeTextElement("LoadOutputs", QString::number(m_config.loadOutputs));
     writer.writeTextElement("RelayOutputs", QString::number(m_config.relayOutputs));
+    writer.writeTextElement("DcInputs", QString::number(m_config.dcInputs));
     writeInstruments(writer);
     writer.writeEndElement(); // Page1
 }
@@ -51,7 +55,9 @@ void Page1Model::loadXml(QXmlStreamReader& reader) {
         reader.raiseError(QStringLiteral("Expected Page1 element"));
         return;
     }
+    if (reader.attributes().value("schemaVersion") != "2") { reader.raiseError("Unsupported Page1 schema; create a new configuration."); return; }
     Page1Config config;
+    QSet<QString> seen;
 
     while (!reader.atEnd() && !(reader.isEndElement() && reader.name() == "Page1")) {
         reader.readNext();
@@ -60,40 +66,42 @@ void Page1Model::loadXml(QXmlStreamReader& reader) {
             continue;
         }
 
+        const auto field = reader.name().toString();
+        if (seen.contains(field)) { reader.raiseError("Duplicate Page1 field: " + field); return; }
+        seen.insert(field);
         if (reader.name() == "LoadOutputs") {
             config.loadOutputs = reader.readElementText().toInt();
         }
         else if (reader.name() == "RelayOutputs") {
             config.relayOutputs = reader.readElementText().toInt();
         }
+        else if (reader.name() == "DcInputs") {
+            bool ok = false;
+            config.dcInputs = reader.readElementText().toInt(&ok);
+            if (!ok || config.dcInputs < 1 || config.dcInputs > 3) {
+                reader.raiseError("DcInputs must be between 1 and 3");
+                return;
+            }
+        }
         else if (reader.name() == "Instruments") {
             loadInstrumentsFromXml(reader, config);
         }
+        else { reader.raiseError("Unexpected Page1 field"); return; }
     }
 
     if (reader.hasError()) return;
 
-    bool hasDc = false;
-    for (auto& instrument : config.instruments) {
-        if (instrument.type != "InputDCSource") continue;
-        hasDc = true;
-        if (instrument.name == "DCSource" || instrument.name == "DC Source")
-            instrument.name = "DC Source1";
+    if (config.loadOutputs < 1 || config.loadOutputs > 20 || config.relayOutputs < 1 || config.relayOutputs > 20) {
+        reader.raiseError("Invalid output count"); return;
     }
-    if (hasDc) {
-        for (int source = 1; source <= 3; ++source) {
-            const QString name = QString("DC Source%1").arg(source);
-            bool found = false;
-            for (const auto& instrument : config.instruments)
-                found |= instrument.name == name;
-            if (!found) {
-                InstrumentConfig instrument;
-                instrument.name = name;
-                instrument.type = "InputDCSource";
-                instrument.enabled = false;
-                config.instruments.append(instrument);
-            }
+    QSet<QString> dcSources;
+    for (const auto& instrument : config.instruments) {
+        if (instrument.type != "InputDCSource") continue;
+        if (!QStringList{"DC Source1", "DC Source2", "DC Source3"}.contains(instrument.name)
+            || dcSources.contains(instrument.name)) {
+            reader.raiseError("Invalid or duplicate DC Source name"); return;
         }
+        dcSources.insert(instrument.name);
     }
     m_config = config;
     emit configLoaded(m_config);
@@ -246,13 +254,9 @@ void Page1Model::writeInstrument(QXmlStreamWriter& writer, const InstrumentConfi
     writer.writeAttribute("enabled", ic.enabled ? "true" : "false");
     writer.writeTextElement("ModelName", ic.modelName);
 
-    // 寫入地址（向後相容）
-    writer.writeTextElement("Address", ic.address);
-
-    // 新增：寫入完整的通訊配置
-    if (ic.commConfig.isValid()) {
-        ic.commConfig.writeXml(writer);
-    }
+    const auto communication = ic.commConfig.isValid()
+        ? ic.commConfig : CommunicationConfig::fromResourceString(ic.address);
+    communication.writeXml(writer);
 
     writeChannels(writer, ic);
     writer.writeEndElement(); // Instrument
@@ -305,9 +309,6 @@ InstrumentConfig Page1Model::loadInstrumentFromXml(QXmlStreamReader& reader)
         if (elementName == "ModelName") {
             ic.modelName = reader.readElementText();
         }
-        else if (elementName == "Address") {
-            ic.address = reader.readElementText();
-        }
         else if (elementName == "CommunicationConfig") {
             // 新增：讀取完整的通訊配置
             ic.commConfig.readXml(reader);
@@ -315,17 +316,10 @@ InstrumentConfig Page1Model::loadInstrumentFromXml(QXmlStreamReader& reader)
         else if (elementName == "Channels") {
             loadChannelsFromXml(reader, ic);
         }
+        else { reader.raiseError("Unexpected Instrument field: " + elementName); return ic; }
     }
 
-    // 如果沒有 CommunicationConfig，嘗試從 address 字串解析
-    if (!ic.commConfig.isValid() && !ic.address.isEmpty()) {
-        ic.commConfig = CommunicationConfig::fromResourceString(ic.address);
-    }
-
-    // 確保 address 與 commConfig 同步
-    if (ic.commConfig.isValid() && ic.address.isEmpty()) {
-        ic.address = ic.commConfig.toResourceString();
-    }
+    if (ic.commConfig.isValid()) ic.address = ic.commConfig.toResourceString();
 
     return ic;
 }

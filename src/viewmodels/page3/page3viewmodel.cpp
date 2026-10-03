@@ -376,7 +376,6 @@ void Page3ViewModel::updateUIAfterLoad()
 void Page3ViewModel::restoreUISelections()
 {
     refreshDcInputs();
-    emit dcTabRestored(m_model->dcSourceTab());
     for (auto it = m_selections.constBegin(); it != m_selections.constEnd(); ++it) {
         if (it.value().index >= 0)
             emit restoreSelections(it.key(), it.value().index, it.value().text);
@@ -389,19 +388,106 @@ void Page3ViewModel::onDcSelected(int source, int index, const QString& text)
         m_model->setDcSelection(source, index, text);
 }
 
+void Page3ViewModel::onDcInputToggled(int source, bool on)
+{
+    handleDcInput(source, on ? InputAction::PowerOn : InputAction::PowerOff);
+}
+
+void Page3ViewModel::onDcInputChanged(int source)
+{
+    handleDcInput(source, InputAction::Change);
+}
+
+void Page3ViewModel::handleDcInput(int source, InputAction action)
+{
+    if (source < 0 || source >= 3) return;
+    if (!m_controlAllowed || isConfigurationBusy() || m_dcBusy[source]) {
+        emit dcOutputStateChanged(source, m_dcOutputsOn[source]);
+        return;
+    }
+    DcRow row;
+    const auto& rows = m_conditions.dcSourceRows(source);
+    const bool grouped = bool(m_operations.dcGroup);
+    const int rowCount = grouped ? qMax(m_conditions.dcRows.size(), qMax(m_conditions.dcRows2.size(), m_conditions.dcRows3.size())) : rows.size();
+    const int index = m_model->dcSelection(source).index;
+    if (action != InputAction::PowerOff && (index < 0 || index >= rowCount)) {
+        QPointer<Page3ViewModel> alive(this);
+        emit dcOutputStateChanged(source, m_dcOutputsOn[source]);
+        if (alive) MessageService::instance().showWarning(tr("DC Input Selection Error"),
+            tr("Select a condition for DC Source%1 first.").arg(source + 1));
+        return;
+    }
+    DcGroup group;
+    if (action != InputAction::PowerOff) {
+        row = rows.value(index);
+        for (int i = 0; i < 3; ++i) group[i] = m_conditions.dcSourceRows(i).value(index);
+    }
+    if (!m_operations.dcInput && !m_operations.dcGroup) {
+        emit dcOutputStateChanged(source, m_dcOutputsOn[source]);
+        return;
+    }
+    const auto cfg = m_page1Config;
+    const auto run = m_operations.dcInput;
+    const auto runGroup = m_operations.dcGroup;
+    const bool wasOn = m_dcOutputsOn[source];
+    m_dcBusy[source] = true;
+    // Match AC ownership: a failed ON may have partially reached the instrument.
+    if (action == InputAction::PowerOn) m_dcOutputsOn[source] = true;
+    ++m_pendingOperations;
+    QPointer<Page3ViewModel> alive(this);
+    emit dcOperationBusyChanged(source, true);
+    if (!alive) return;
+    updateControlActivity();
+    if (!alive) return;
+    m_operationQueue.submit([cfg, source, row, group, action, run, runGroup] {
+        return runGroup ? runGroup(cfg, group, action) : run(cfg, source, row, action);
+    }, [this, source, action, wasOn](const InstrumentOperationResult& result) {
+        QPointer<Page3ViewModel> alive(this);
+        if (!result.success && result.outputUnchanged) m_dcOutputsOn[source] = wasOn;
+        if (result.success && action != InputAction::Change)
+            m_dcOutputsOn[source] = action == InputAction::PowerOn;
+        if (result.confirmedOutput) m_dcOutputsOn[source] = *result.confirmedOutput;
+        m_dcBusy[source] = false;
+        --m_pendingOperations;
+        emit dcOutputStateChanged(source, m_dcOutputsOn[source]);
+        if (!alive) return;
+        emit dcOperationBusyChanged(source, false);
+        if (!alive) return;
+        updateControlActivity();
+        if (alive && !result.success)
+            MessageService::instance().showWarning(tr("DC Source%1 Control Error").arg(source + 1), result.errorMessage);
+    });
+}
+
 void Page3ViewModel::refreshDcInputs()
 {
+    if (m_operations.dcGroup) {
+        QStringList titles;
+        const int count = qMax(m_conditions.dcRows.size(), qMax(m_conditions.dcRows2.size(), m_conditions.dcRows3.size()));
+        for (int group = 0; group < count; ++group) {
+            titles << m_conditions.dcNames.value(group);
+        }
+        int index = m_model->dcSelection(0).index;
+        if (index < 0 || index >= titles.size() || titles[index].isEmpty()) {
+            index = -1;
+            for (int i = 0; i < titles.size(); ++i) if (!titles[i].isEmpty()) { index = i; break; }
+        }
+        m_model->setDcSelection(0, index, index < 0 ? QString() : titles[index]);
+        emit dcInputUpdated(0, titles, index);
+        return;
+    }
     for (int source = 0; source < 3; ++source) {
         QStringList titles;
         const auto& rows = m_conditions.dcSourceRows(source);
-        for (const auto& row : rows) {
-            QString title = row.label;
-            if (title.isEmpty()) title = row.vin + " V";
-            if (!row.currentLimit.isEmpty()) title += " / " + row.currentLimit + " A";
-            titles.append(title);
-        }
+        for (const auto& row : rows) titles.append(dcInputTitle(row));
         const auto selection = m_model->dcSelection(source);
-        const int index = selection.index >= 0 && selection.index < titles.size() ? selection.index : -1;
+        int index = selection.index >= 0 && selection.index < titles.size() ? selection.index : -1;
+        if (index < 0 || titles[index].isEmpty()) {
+            for (int i = 0; i < titles.size(); ++i) {
+                if (!titles[i].isEmpty()) { index = i; break; }
+            }
+        }
+        m_model->setDcSelection(source, index, index < 0 ? QString() : titles[index]);
         emit dcInputUpdated(source, titles, index);
     }
 }
@@ -610,6 +696,7 @@ bool Page3ViewModel::isControlActive() const
 
 bool Page3ViewModel::hasActiveControl() const
 {
+    for (bool on : m_dcOutputsOn) if (on) return true;
     if (m_pendingOperations || m_capturePreparing || m_captureSession->isBusy()) return true;
     for (bool on : m_outputsOn) if (on) return true;
     return false;
@@ -658,6 +745,5 @@ void Page3ViewModel::publishXmlLoaded()
 {
     restoreFromModel();
     refreshDcInputs();
-    emit dcTabRestored(m_model->dcSourceTab());
     updateUIAfterLoad();
 }
