@@ -1,5 +1,5 @@
 #pragma once
-#include "page5resultrecord.h"
+#include "testsequenceresultrecord.h"
 #include <QObject>
 #include <functional>
 
@@ -13,11 +13,11 @@ class ReportWriter : public QObject
     Q_OBJECT
   public:
     using Save = std::function<ReportWriteResult(const QString &, const QString &,
-                                                 const QVector<Page5ResultRecord> &)>;
+                                                 const QVector<TestSequenceResultRecord> &)>;
     explicit ReportWriter(QObject *parent = nullptr);
     ReportWriter(Save save, QObject *parent);
     bool isBusy() const { return m_busy; }
-    bool submit(QString directory, QString name, QVector<Page5ResultRecord> records);
+    bool submit(QString directory, QString name, QVector<TestSequenceResultRecord> records);
   signals:
     void completed(bool success, const QString &path, const QString &error);
 

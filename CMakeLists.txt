@@ -34,7 +34,7 @@ set(ELECTRONICATE_APP_INCLUDE_DIRS
   ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/controller
 
   ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/table
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/page1/dialogs
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/instrumentsetup/dialogs
   ${CMAKE_CURRENT_SOURCE_DIR}/src/infrastructure/execution
   ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/style
   ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/widget
@@ -57,31 +57,31 @@ set(ELECTRONICATE_APP_INCLUDE_DIRS
   ${CMAKE_CURRENT_SOURCE_DIR}/src/service/oscilloscope
 
   ${CMAKE_CURRENT_SOURCE_DIR}/src/models/mainwindow
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/models/page1
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/models/page2
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/models/page3
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/models/page4
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/models/page5
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/models/instrumentsetup
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/models/testconditions
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/models/manualcontrol
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/models/commandconsole
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/models/testsequence
 
   ${CMAKE_CURRENT_SOURCE_DIR}/src/viewmodels/mainwindow
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/viewmodels/page1
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/viewmodels/page2
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/viewmodels/page3
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/viewmodels/page4
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/viewmodels/page5
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/viewmodels/instrumentsetup
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/viewmodels/testconditions
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/viewmodels/manualcontrol
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/viewmodels/commandconsole
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/viewmodels/testsequence
 
   ${CMAKE_CURRENT_SOURCE_DIR}/src/views/mainwindow
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/page1
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/page2
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/page3
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/page4
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/page5
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/page6
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/page5/dialogs/oscilloscopedialogs
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/page5/dialogs/turnonoffdialogs
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/page5/dialogs/delaydialogs
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/page5/dialogs/relaydialogs
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/page5/dialogs/stressdialogs
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/instrumentsetup
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/testconditions
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/manualcontrol
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/commandconsole
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/testsequence
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/waveformocr
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/testsequence/dialogs/oscilloscopedialogs
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/testsequence/dialogs/turnonoffdialogs
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/testsequence/dialogs/delaydialogs
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/testsequence/dialogs/relaydialogs
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/views/testsequence/dialogs/stressdialogs
 )
 
 # 自動蒐集所有來源檔案

@@ -1,8 +1,8 @@
-# Page5：量測策略
+# TestSequence：量測策略
 
-本頁說明各測試的事件順序、波形搜尋與結果語意。程式如何呼叫這些策略，見 [Page5：自動測試流程](PAGE5_FLOW.md)；型號與使用條件見 [支援儀器與限制](SUPPORTED_INSTRUMENTS.md)。
+本頁說明各測試的事件順序、波形搜尋與結果語意。程式如何呼叫這些策略，見 [TestSequence：自動測試流程](TEST_SEQUENCE_FLOW.md)；型號與使用條件見 [支援儀器與限制](SUPPORTED_INSTRUMENTS.md)。
 
-一般量測與 Brown Out 共用 `IMeasurementStrategy` 執行介面，再依測試方式分工。以下為一般量測的五類策略，Static／Dynamic 合併為一類，提供 Search direction：BOTH／Rise／Fall。BOTH 分別搜尋兩個方向，單邊模式未選的極值顯示 NA。四種暫態及其 Group 只保留 Max／Min；Static／Dynamic 與 Brown Out 保留 RMS／Mean。
+一般量測與 Brown Out 共用 `IMeasurementStrategy` 執行介面，再依測試方式分工。以下為一般量測的五類策略，Static／Dynamic 合併為一類，提供 Search direction：BOTH／Rise／Fall。BOTH 分別搜尋兩個方向；每筆有效事件保存 Max／Min／RMS／Mean，未選方向顯示 Not run。
 
 「單組測試」指測試一筆負載條件。示波器的 AUTO／NORMAL 是觸發模式，Single 是完成一次擷取後停止，以下以 **AUTO＋Single**、**NORMAL＋Single** 標示。
 
@@ -14,7 +14,7 @@ Load OFF → Input OFF → 關機等待 → 在 OFF 狀態設定條件 → Input
 
 接著執行 Auto Period（在各筆 Static／Dynamic 設定中勾選，預設關閉）：自動調整時間軸，目標顯示 **5 個週期**，重新擷取確認為 **3～8 個週期**即接受；未啟用則沿用目前時基。Write Oscilloscope 僅設定初始時基，不控制此開關。
 
-量測完成後 Scope STOP → Load OFF → Input OFF，清理成功才回報成功。Group 每筆也相同；三段等待的設定見 [Static／Dynamic 流程](PAGE5_FLOW.md#3-staticdynamic-量測)。
+量測完成後 Scope STOP → Load OFF → Input OFF，清理成功才回報成功。Group 每筆也相同；三段等待的設定見 [Static／Dynamic 流程](TEST_SEQUENCE_FLOW.md#3-staticdynamic-量測)。
 
 搜尋時以 AUTO＋Single 擷取新的穩態參考 → 切換 NORMAL＋Single → 分別進行 Rise／Fall 搜尋；每輪重新擷取一次並調整 Level，無觸發時 STOP，結束該方向搜尋。
 
@@ -42,7 +42,7 @@ Load OFF → Input OFF → 關機等待 → 在 OFF 狀態設定條件 → Input
 
 事件擷取完成（示波器 STOP）後，使用相同的短路退出流程，再讀取量測／保存 Capture。每次試驗重做完整流程，再測下一個 Level。
 
-兩種短路測試（含 Group）在無觸發、Stop、例外及最後結束時也執行退出流程。**任一 Input OFF 失敗，不釋放短路 Relay、不開始傳檔，也不自動重試或執行後續條件。** 放電 ON／OFF 失敗同樣不繼續解除短路；Scope STOP、Load OFF 仍會嘗試。錯誤狀態與當次設定交給 Page3。
+兩種短路測試（含 Group）在無觸發、Stop、例外及最後結束時也執行退出流程。**任一 Input OFF 失敗，不釋放短路 Relay、不開始傳檔，也不自動重試或執行後續條件。** 放電 ON／OFF 失敗同樣不繼續解除短路；Scope STOP、Load OFF 仍會嘗試。錯誤狀態與當次設定交給 ManualControl。
 
 關機等待為 300 ms，放電時間使用該任務的 `Discharge time`；這些等待不是 DUT 殘壓量測，仍須按治具與 DUT 驗證。
 
@@ -50,7 +50,7 @@ Load OFF → Input OFF → 關機等待 → 在 OFF 狀態設定條件 → Input
 
 ### 量測方式
 
-- BOTH 的每筆有效波形均累積 Max、Min；Rise／Fall 只決定觸發方向與門檻推進。四種暫態只量測 Max／Min；Static／Dynamic 的 RMS／Mean 使用最後一筆有效量測，並非跨次平均。單邊模式未選的極值顯示 NA。
+- 每筆有效 Trial 保存同一次事件的 Max／Min／RMS／Mean。Rise 選 Max 最高那筆、Fall 選 Min 最低那筆的完整四值；不跨 Trial 拼接數值。
 - Static／Dynamic 先量穩態，再調整觸發門檻；四種暫態則重複開關機或短路，逐步縮小搜尋範圍。
 - 波形超出垂直量程時，自動放大刻度後重測；任一量測欄位查詢通訊失敗或搜尋超過限制，均回報失敗。合法 NA 仍依原量測規則處理。
 
@@ -64,92 +64,21 @@ Load OFF → Input OFF → 關機等待 → 在 OFF 狀態設定條件 → Input
 | Turn on／Short then turn on | 保留另一側的有效事件；兩側都沒有事件則回報失敗（NA）。 |
 | Turn off／Turn on then short | 搜尋正常結束後，將穩態值與事件值合併，保留較大 Max、較小 Min；沒有事件時使用穩態值。 |
 
-### Page5 量測值的來源
+### TestSequence 量測值的來源
 
-**所有 Group 都逐負載保存及顯示各自的單組測試結果。** Static／Dynamic 保留 Max／Min／RMS／Mean，四種暫態只保留 Max／Min。Pass 表示策略與清理按目前規則完成，沒有另以量測值比對 DUT 規格上下限，也不保證每欄都有有效數字。
+每個 Attempt／Load／Direction／CH 分開保存逐次事件與方向代表結果。Pass 表示策略與清理按目前規則完成，並非 DUT 規格上下限比對，也不保證每欄都有數值。
 
-| 策略 | 最後顯示的 Max／Min | RMS／Mean | 來源是否同一張波形？ |
-| --- | --- | --- | --- |
-| Static／Dynamic | AUTO＋Single 參考與 NORMAL＋Single 有效搜尋波形的最大 Max／最小 Min。 | 最後有效 NORMAL＋Single 搜尋記錄；若無後續事件，保留 AUTO＋Single 參考值。 | 可來自不同波形。 |
-| Turn on／Short then turn on | 所有有效事件的最大 Max／最小 Min。 | 不量測、不顯示。 | Max／Min 可來自不同波形。 |
-| Turn off／Turn on then short | 有效事件與穩態參考合併後的極值；baseline 排除。 | 不量測、不顯示。 | Max／Min 可來自不同波形。 |
-| 四種暫態 Group | 每個 Load 各自保存 Max／Min，不跨負載合併。 | 不量測、不顯示。 | 同一列屬於同一 Load；Max／Min 仍可能來自該 Load 的不同波形。 |
-| Static／Dynamic Group | 每個 Load 各自保存 Max／Min，不跨負載合併。 | 每個 Load 各自保存自己的 RMS／Mean，規則與單組測試相同。 | 同一列屬於同一 Load；四值仍可能來自該 Load 的不同波形。 |
-| Brown Out Fixed Fall | 第一筆有效降壓事件的 Max／Min，穩態參考不合併。 | 同一筆事件。 | 同一筆有效事件記錄。 |
-| Brown Out Track Level | 所有接受的有效事件的最大 Max／最小 Min。 | 最後接受的有效事件。 | 可來自不同波形。 |
+| 方向 | 代表 Trial | 四值來源 |
+| --- | --- | --- |
+| Rise | Max 最高的有效 Trial | 該筆 Max／Min／RMS／Mean 整組複製 |
+| Fall | Min 最低的有效 Trial | 該筆 Max／Min／RMS／Mean 整組複製 |
 
-以同一負載條件的 Static／Dynamic 為例，三筆有效波形為：
+平手保留較早的 Trial；NA 不從其他記錄補值。未選方向為 Not run；選了但沒有有效事件為 NA。AUTO 參考、Baseline、截幅、未觸發與未完成查詢的事件不冒充有效 Trial。搜尋器內部的穩態 fallback 仍保留，但不作為 TestSequence 的方向代表值。
 
-| 波形 | Max | Min | RMS | Mean |
-| --- | ---: | ---: | ---: | ---: |
-| 第 1 筆 | 12 | 2 | 6 | 5 |
-| 第 2 筆 | 10 | -1 | 4 | 3 |
-| 第 3 筆 | 11 | 0 | 5 | 4 |
-| Page5 彙總 | **12（第 1 筆）** | **-1（第 2 筆）** | **5（第 3 筆）** | **4（第 3 筆）** |
+Static／Dynamic 每筆有效搜尋擷取各留一筆；暫態按每個 Step 的 Trial 保存；Brown Out Fixed 為 Fall，Track 沿設定方向。單組記錄實際負載條件，Group 依 TestConditions 行號與名稱逐負載保存，重試以 Attempt 分開。失敗／取消保留已取得資料，未執行條件為 Skipped。
 
-Static／Dynamic Group 的 Page5 結果與 Excel 逐負載、逐通道列出四值，例如：
+Tasks 顯示摘要；下方 Detail 提供 Summary／Trials 及目前所選 Task 的篩選器，Log 顯示執行訊息。Excel 使用 Results／Trials 兩張表，保存 Record、Step、Trial、Trigger Level 與四值；相同新格式檔案採追加，舊版單表不覆寫。Record 是有效事件序號，Step 是該方向的搜尋步驟，Trial 是該步驟的試驗次數；它們不是 Capture 檔案編號。
 
-| 負載條件 | 通道 | Max | Min | RMS | Mean | 狀態 |
-| --- | --- | ---: | ---: | ---: | ---: | --- |
-| Load row 1：100% | CH1 | 12 | -1 | 5 | 4 | Pass |
-| Load row 2：50% | CH1 | 11 | -2 | 4 | 3 | Pass |
-| Load row 3：10% | CH1 | 10 | -3 | 3 | 2 | Pass |
-
-Group 總列只保留完成數、狀態及說明，不再產生混合數值。失敗／取消成員保留已取得資料及狀態，後續條件標示 Skipped；沒有資料就顯示 NA，不借用前一個負載的值。重試保留各次執行紀錄。
-
-Turn on、Turn off、Short then turn on、Turn on then short 的 Group 也採相同分列方式，但每個負載只顯示 Max／Min，例如：
-
-| 負載條件 | 通道 | Max | Min | 狀態 |
-| --- | --- | ---: | ---: | --- |
-| Load row 1：100% | CH1 | 12 | -1 | Pass |
-| Load row 2：50% | CH1 | 11 | -2 | Pass |
-| Load row 3：10% | CH1 | 10 | -3 | Pass |
-
-一般策略在完成擷取後讀值，更新該負載的結果；單邊 Rise／Fall 將未選的極值顯示 NA。**目前沒有保存每次 trigger 的完整數值歷史表。** 各策略尚未記錄極值來自哪張 Capture。
-
-四種暫態的事件、AUTO＋Single 參考、baseline 及 Capture 路徑均不查詢 RMS／Mean。Excel 與其他策略共用欄位，暫態的單組、Group 摘要及成員列在 RMS／Mean 欄留空；Page5 與暫態量測日誌只呈現 Max／Min。
-
-Capture 開啟時，每筆完成記錄另保存勾選的 PNG／CSV／WFM，包含參考、baseline 與截幅診斷。CSV 是波形資料，不是逐次四值統計表；PNG 不額外產生 JSON。
-
-Brown Out Track 未開 Capture 時使用 NORMAL＋連續 RUN；開啟後改為逐筆 NORMAL＋Single，讀取／保存期間暫停降壓，重新 arm 並確認 READY 後繼續。
-
-來源：[一般搜尋](src/service/oscilloscopestrategy/steadystatesearchstrategy.cpp)、[暫態共用搜尋](src/service/oscilloscopestrategy/transientsearch.cpp)、[四種事件與清理入口](PAGE5_FLOW.md#暫態共用搜尋與事件流程)、[Group 逐負載執行與結果](src/service/testrun/testrunmeasurement.cpp)、[Brown Out](src/service/brownout/brownoutrunner.cpp)、[Capture 保存](src/service/capture/strategywaveformcapture.h)、[Page5 顯示](src/viewmodels/presentation/taskresultformatter.h)。
-
-### 技術細節
-
-#### 搜尋方式：穩態追蹤與暫態二元搜尋
-
-**Static／Dynamic** 先以 AUTO＋Single 擷取穩態參考，再以 NORMAL＋Single 分別搜尋正／負緣。目前不是二元搜尋：步距使用 `觸發 CH Scale × 0.04`，正緣以 `max(Level + 步距, 本次 Max + 步距)` 更新門檻，負緣以 `min(Level − 步距, 本次 Min − 步距)` 更新，直到正常等待逾時、沒有觸發。
-
-程式由 [SteadyDetail::Search](src/service/oscilloscopestrategy/steadysearch.cpp) 的 `captureReference()`、`searchDirection()`、`accumulateRecord()` 與 `finish()` 分別負責參考、搜尋、累積及結果清理。供電與負載的準備、最後 OFF 仍在 [Service 流程](PAGE5_FLOW.md#3-staticdynamic-量測)。
-
-**四種暫態** 使用以下流程：
-
-1. 在同一 Level 重複 `Trials per level` 次試驗；任一次事件觸發算 **HIT**，全部未觸發才算 **MISS**。
-2. 只有 HIT 時，向外擴張門檻尋找 MISS；首次只有 MISS 時，向內尋找事件。因此一次 MISS 不代表整個搜尋結束。
-3. 建立 HIT／MISS 邊界後，下一個 Level 取兩者中點：`(HIT Level + MISS Level) ÷ 2`。
-4. 反覆縮小區間，直到寬度不超過 `Search tolerance`。若新波形出現更大極值，會重新擴大搜尋邊界。
-
-負緣使用相同概念，向較低的 Level 搜尋。Turn off／Turn on then short 會先排除穩態觸發，只有施加關機／短路之後的擷取才算事件。
-
-**範例：** 已知 54 V 為 HIT、58 V 為 MISS，觸發 CH Scale 為 12.5 V/div，因此自動容差為 0.5 V：
-
-| 試探 Level | 結果 | 更新後區間 |
-| ---: | --- | --- |
-| 56 V | MISS | 54～56 V |
-| 55 V | HIT | 55～56 V |
-| 55.5 V | HIT | 55.5～56 V，寬度 0.5 V，結束 |
-
-以上假設事件可重現、峰值為 55.68 V，示範二分過程。最後回報的是波形實際量到的 Max，而非最後的 Level。
-
-#### 步距公式與收斂容差
-
-Static／Dynamic 與四種暫態均依觸發來源通道的垂直刻度換算步距：
-
-```text
-初始步距 = 觸發 CH Scale ÷ 25（正值）
-暫態搜尋容差 = 觸發 CH Scale ÷ 25（正值）
-```
 
 ## Short 測試流程與時間
 
@@ -224,7 +153,7 @@ flowchart TD
     D -->|"成功"| E["退出完成<br/>已完成記錄才讀值／保存"]
     B -->|"否"| F["保留短路保護<br/>停止後續 Relay 動作與測試"]
     D -->|"任一步失敗"| F
-    F --> G["仍嘗試 Scope STOP、Load OFF<br/>交由 Page3 恢復"]
+    F --> G["仍嘗試 Scope STOP、Load OFF<br/>交由 ManualControl 恢復"]
 ```
 
 **Input OFF 成功 → 0.3 秒 → 保持短路並放電 D 秒 → 解除放電 → 解除短路 → 讀值／保存。** 完成的波形保持 STOP，退出成功後才傳檔。
@@ -235,7 +164,7 @@ D＝10 秒時，一次退出等待為 **10.3 秒**，另加設備操作與傳檔
 
 ```mermaid
 flowchart TD
-    A["依 Page2 順序選取下一筆 Load"] --> B["起始準備<br/>Input OFF → 0.3 秒 → 放電 D 秒 → 解除 Relay"]
+    A["依 TestConditions 順序選取下一筆 Load"] --> B["起始準備<br/>Input OFF → 0.3 秒 → 放電 D 秒 → 解除 Relay"]
     B --> C["Input OFF 下設定 Load → Load ON"]
     C --> D["執行對應 Short 單組<br/>每次事件退出後才保存"]
     D --> E["完成搜尋 → Scope STOP → Load OFF<br/>保存本負載 Max／Min 與狀態"]
@@ -247,14 +176,14 @@ flowchart TD
 
 以 **100% → 50% → 10%** 為例，每個負載都完整執行「起始準備 → 單組搜尋 → 退出與 Load OFF」。前一筆成功才換下一筆；下一筆重新等待 0.3＋D 秒，成員之間沒有額外 Group 間隔。
 
-Page5 與 Excel 逐負載、逐通道記錄 **Max／Min** 及狀態，不混合不同負載；失敗／取消保留已取得資料。Capture 序號在同次 Group 內接續。
+TestSequence 與 Excel 逐負載、逐通道記錄 **Max／Min** 及狀態，不混合不同負載；失敗／取消保留已取得資料。Capture 序號在同次 Group 內接續。
 
 ## Brown Out（Dell/HP Test）
 
 選擇 AC／DC Input、Load 及降壓來源 → 等待穩定 → 逐步降低指定來源的 Vin，另一種輸入維持供電 → 由負載讀回 Vout 確認關機，同時擷取示波器波形。
 
 - **Fixed Fall (Vout)**：NORMAL＋Single，以指定輸出電壓通道與 Fall Level 擷取一次事件。
-- **Track Level**：未開 Capture 時為 NORMAL＋連續 RUN，開啟時為逐筆 NORMAL＋Single；在一次降壓中隨有效波形調整 Level，累積 Max／Min，RMS／Mean 取最後一筆有效記錄。
+- **Track Level**：未開 Capture 時為 NORMAL＋連續 RUN，開啟時為逐筆 NORMAL＋Single；在一次降壓中隨有效波形調整 Level，逐筆保存完整四值，依方向選出同一筆代表結果。
 - Step down 預設 0.5 V；Advanced 的 Ignore 預設勾選，使用內建等待與關機確認時間。
 
 Brown Out 沿用示波器目前時基與水平位置，不提供 Auto Period。Track 開啟 Capture 後，在查詢／讀取記錄前暫停新的降壓步進，等正在執行的電壓指令結束，才讀取／保存。保存完成、更新 Level、重新啟動 NORMAL＋Single 並確認 READY 後才恢復降壓；Vout 監測與異常清理持續執行。

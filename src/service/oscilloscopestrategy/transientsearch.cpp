@@ -51,7 +51,7 @@ private:
     enum class Probe { Hit, Miss, Baseline, Rescale };
     void captureSteadyReference();
     void arm();
-    double readEvent();
+    double readEvent(int trial);
     Probe probe(double candidate);
     Probe processBaseline(AcquisitionResult status, double candidate);
 
@@ -71,6 +71,7 @@ private:
     bool referenceInputAvailable = false;
     int acquisitions = 0;
     int scaleAdjustments = 0;
+    int searchStep = 0;
 };
 
 } // namespace
@@ -96,7 +97,7 @@ void runSearch(Execution &run, Event &event)
     vertical.includeRmsMean = false;
     initialSearchStep(run, trigger); // Validate before enabling hardware.
     run.touched = true;
-    // Configure the load while input is off. Hardware callbacks use the same executors as Page3.
+    // Configure the load while input is off. Hardware callbacks use the same executors as ManualControl.
     event.prepareRun(run);
     QString error;
     run.checked(run.ctx.load(true, error), error);
@@ -238,9 +239,12 @@ void DirectionSearch::arm()
     run.check();
 }
 
-double DirectionSearch::readEvent()
+double DirectionSearch::readEvent(int trial)
 {
     double peak = std::numeric_limits<double>::quiet_NaN();
+    MeasurementTrial record{int(run.result.trials.size()) + 1,
+                            maximum ? MeasurementDirection::Rise : MeasurementDirection::Fall,
+                            searchStep, trial, level, {}};
     for (auto it = run.channels.begin(); it != run.channels.end(); ++it) {
         run.check();
         if (run.scope->isClipping(it.key()))
@@ -252,6 +256,8 @@ double DirectionSearch::readEvent()
             return valid(v) ? v : std::numeric_limits<double>::quiet_NaN();
         };
         const double high = read(ScopeMeasurement::Maximum), low = read(ScopeMeasurement::Minimum);
+        const double rms = read(ScopeMeasurement::Rms), mean = read(ScopeMeasurement::Mean);
+        record.channels.append({it.key(), {}, high, low, rms, mean});
         if (valid(high))
             it->maxVal = valid(it->maxVal) ? std::max(it->maxVal, high) : high;
         if (valid(low))
@@ -265,6 +271,7 @@ double DirectionSearch::readEvent()
     }
     if (!valid(peak))
         throw std::runtime_error("Trigger measurement: NA");
+    run.result.trials.append(record);
     haveValidEvent = true;
     return peak;
 }
@@ -274,6 +281,7 @@ DirectionSearch::Probe DirectionSearch::probe(double candidate)
     if (!valid(candidate))
         throw std::runtime_error("Invalid search threshold");
     level = direction * candidate;
+    ++searchStep;
     bool hit = false;
     for (int trial = 0; trial < run.ctx.trialsPerLevel; ++trial) {
         run.check();
@@ -293,7 +301,7 @@ DirectionSearch::Probe DirectionSearch::probe(double candidate)
                 run.configure([&](QString &e) { return run.scope->stopAcquisition(e); });
                 return Probe::Rescale;
             }
-            observedPeak = std::max(observedPeak, direction * readEvent());
+            observedPeak = std::max(observedPeak, direction * readEvent(trial + 1));
             hit = true;
         }
         run.configure([&](QString &e) { return run.scope->stopAcquisition(e); });

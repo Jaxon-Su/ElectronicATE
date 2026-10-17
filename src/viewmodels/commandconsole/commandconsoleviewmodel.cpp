@@ -1,0 +1,372 @@
+#include "commandconsoleviewmodel.h"
+#include "commandconsolemodel.h"
+#include "icommunication.h"
+#include <QPointer>
+#include <QScopeGuard>
+#include <QDebug>
+#include "consoleexchange.h"
+#include "consolesession.h"
+#include "modbusrtucodec.h"
+#include "communicationconfig.h"
+#include <QThread>
+#include <cmath>
+
+#include <QCoreApplication>
+#include <QXmlStreamWriter>
+#include <QXmlStreamReader>
+
+CommandConsoleViewModel::CommandConsoleViewModel(CommandConsoleModel* model, CommunicationCreator create, QObject* parent)
+    : QObject(parent), m_model(model), m_revision(std::make_shared<std::atomic<quint64>>(0))
+{
+    m_thread = new QThread;
+    m_session = new ConsoleSession(std::move(create), m_revision);
+    m_session->moveToThread(m_thread);
+    connect(m_thread, &QThread::finished, m_session, &QObject::deleteLater);
+    connect(m_thread, &QThread::finished, m_thread, &QObject::deleteLater);
+    connect(m_session, &ConsoleSession::opened, this,
+            [this](quint64 revision, bool success, const QString& error) {
+                if (revision != m_connectionRevision)
+                    return;
+                m_connectionPending = false;
+                m_connected = success;
+                m_connectionActive = success;
+                const auto status = success ? ConnectionStatus::Connected : ConnectionStatus::Error;
+                QPointer<CommandConsoleViewModel> alive(this);
+                m_model->setConnectionStatus(status);
+                if (!alive)
+                    return;
+                if (success)
+                    m_model->addToAddressHistory(m_model->currentAddress());
+                if (!alive)
+                    return;
+                emit connectionStatusChanged(status, success ? tr("已連線") : tr("連線失敗"));
+                if (!alive || revision != m_connectionRevision)
+                    return;
+                emit controlActiveChanged(isControlActive());
+                if (alive && !success && revision == m_connectionRevision)
+                    emit errorOccurred(error);
+            });
+    connect(m_session, &ConsoleSession::closed, this, [this](quint64 revision) {
+        if (revision != m_connectionRevision)
+            return;
+        m_connectionPending = false;
+        m_connected = false;
+        m_connectionActive = false;
+        QPointer<CommandConsoleViewModel> alive(this);
+        m_model->setConnectionStatus(ConnectionStatus::Disconnected);
+        if (!alive)
+            return;
+        emit connectionStatusChanged(ConnectionStatus::Disconnected, tr("已斷線"));
+        if (alive)
+            emit controlActiveChanged(isControlActive());
+    });
+    connect(m_session, &ConsoleSession::completed, this,
+            [this](quint64 revision, const QString& command, int code, const QString& response,
+                   const QString& detail) {
+                if (revision != m_commandRevision)
+                    return;
+                QPointer<CommandConsoleViewModel> alive(this);
+                const auto finish = qScopeGuard([alive] {
+                    if (!alive)
+                        return;
+                    alive->m_commandInProgress = false;
+                    emit alive->controlActiveChanged(alive->isControlActive());
+                });
+                using Error = ConsoleExchangeResult::Error;
+                const auto error =
+                    revision == m_connectionRevision ? static_cast<Error>(code) : Error::Interrupted;
+                QString message;
+                switch (error) {
+                case Error::None:
+                    break;
+                case Error::Disconnected:
+                    message = tr("請先連線到儀器");
+                    break;
+                case Error::Write:
+                    message = tr("發送失敗: %1").arg(detail);
+                    break;
+                case Error::Read:
+                    message = tr("讀取失敗: %1").arg(detail);
+                    break;
+                case Error::Timeout:
+                    message = tr("回應逾時");
+                    break;
+                case Error::Interrupted:
+                    message = tr("連線已變更或操作已取消");
+                    break;
+                case Error::NoResponse:
+                    message = tr("無回應");
+                    break;
+                case Error::Exception:
+                    message = tr("通訊失敗: %1").arg(detail);
+                    break;
+                }
+                const bool success = error == Error::None;
+                m_model->recordCommand(
+                    command, success ? (command.endsWith('?') ? response : QStringLiteral("OK")) : message,
+                    success);
+                if (!alive)
+                    return;
+                if (success)
+                    emit responseReceived(command, command.endsWith('?') ? response : tr("OK (無需回應)"));
+                else
+                    emit errorOccurred(message);
+            });
+    connect(m_session, &ConsoleSession::modbusTransmitting, this, [this](quint64 revision, const QByteArray &tx) {
+        if (revision == m_commandRevision) emit modbusTransmitting(tx);
+    });
+    connect(m_session, &ConsoleSession::modbusCompleted, this,
+            [this](quint64 revision, const QByteArray &tx, const QByteArray &rx,
+                   const QString &summary, const QString &detail, bool connected) {
+                if (revision != m_commandRevision) return;
+                QPointer<CommandConsoleViewModel> alive(this);
+                const auto finish = qScopeGuard([alive] {
+                    if (!alive) return;
+                    alive->m_commandInProgress = false;
+                    emit alive->controlActiveChanged(alive->isControlActive());
+                });
+                const bool current = revision == m_connectionRevision;
+                const QString error = current ? detail : tr("Modbus 操作已取消");
+                if (current && !connected) {
+                    m_connected = false;
+                    m_connectionActive = false;
+                    m_model->setConnectionStatus(ConnectionStatus::Disconnected);
+                    if (!alive) return;
+                    emit connectionStatusChanged(ConnectionStatus::Disconnected, tr("已斷線"));
+                    if (!alive) return;
+                }
+                const QString command = "Modbus RTU TX Hex: " + QString::fromLatin1(tx.toHex(' ').toUpper());
+                const QString response = "RX Hex: " + QString::fromLatin1(rx.toHex(' ').toUpper())
+                    + '\n' + (error.isEmpty() ? summary : error);
+                m_model->addToFullHistory({QDateTime::currentDateTime().toString("hh:mm:ss.zzz"),
+                                          m_modbusCommandAddress, command, response, error.isEmpty()});
+                if (!alive) return;
+                emit modbusTraffic(tx, rx);
+                if (!alive) return;
+                if (error.isEmpty()) emit responseReceived(command, summary);
+                else emit errorOccurred(error + (current && !connected ? tr("；請重新 Connect 後再送出") : QString{}));
+            });
+    connect(m_model, &CommandConsoleModel::addressHistoryChanged, this, &CommandConsoleViewModel::historyUpdated);
+    connect(m_model, &CommandConsoleModel::commandHistoryChanged, this, &CommandConsoleViewModel::historyUpdated);
+    m_thread->start();
+}
+CommandConsoleViewModel::~CommandConsoleViewModel()
+{
+    ++*m_revision;
+    QMetaObject::invokeMethod(
+        m_session, [session = m_session] { session->shutdown(); }, Qt::QueuedConnection);
+}
+void CommandConsoleViewModel::connectToAddress(const QString& address)
+{
+    if (!m_controlAllowed)
+        return;
+    const QString target = address.trimmed();
+    if (target.isEmpty()) {
+        emit errorOccurred(tr("請輸入有效的地址"));
+        return;
+    }
+    int quietMs = 0;
+    int slave = 1;
+    if (m_mode == ConsoleMode::ModbusRtu) {
+        const auto config = CommunicationConfig::fromResourceString(target);
+        if (config.protocol != ProtocolType::Modbus_RTU || !config.isValid() ||
+            config.dataBits != 8 || config.slaveId > 247) {
+            emit errorOccurred(tr("Modbus RTU 請使用 MODBUS::COM3:9600:8:N:1::SLAVE:1 格式；8 data bits，Slave ID 1..247"));
+            return;
+        }
+        const double bits = 1 + 8 + (config.parity == "N" ? 0 : 1) + config.stopBits.toDouble();
+        quietMs = config.baudRate > 19200 ? 2 : int(std::ceil(3500.0 * bits / config.baudRate));
+        slave = config.slaveId;
+    }
+    const auto revision = ++m_connectionRevision;
+    m_revision->store(revision);
+    m_connected = false;
+    m_connectionPending = true;
+    m_connectionActive = true;
+    QPointer<CommandConsoleViewModel> alive(this);
+    // Queue before notifications, so reentrant requests retain FIFO order.
+    QMetaObject::invokeMethod(
+        m_session, [session = m_session, revision, target, quietMs] { session->open(revision, target, quietMs); },
+        Qt::QueuedConnection);
+    m_model->setCurrentAddress(target);
+    if (!alive || revision != m_connectionRevision)
+        return;
+    m_model->setConnectionStatus(ConnectionStatus::Connecting);
+    if (!alive || revision != m_connectionRevision)
+        return;
+    emit controlActiveChanged(true);
+    if (alive && revision == m_connectionRevision && m_mode == ConsoleMode::ModbusRtu)
+        emit modbusSlaveSelected(slave);
+    if (alive && revision == m_connectionRevision)
+        emit connectionStatusChanged(ConnectionStatus::Connecting, tr("連線中..."));
+}
+void CommandConsoleViewModel::disconnect()
+{
+    const auto revision = ++m_connectionRevision;
+    m_revision->store(revision);
+    m_connected = false;
+    m_connectionPending = true;
+    m_connectionActive = true;
+    QMetaObject::invokeMethod(
+        m_session, [session = m_session, revision] { session->close(revision); }, Qt::QueuedConnection);
+    emit controlActiveChanged(true);
+}
+bool CommandConsoleViewModel::isConnected() const
+{
+    return m_connected;
+}
+void CommandConsoleViewModel::sendCommand(const QString& command)
+{
+    if (!m_controlAllowed)
+        return;
+    if (m_mode != ConsoleMode::Scpi) {
+        emit errorOccurred(tr("目前為 Modbus RTU 模式，請使用 Modbus 讀寫欄位"));
+        return;
+    }
+    if (isOperationPending()) {
+        emit errorOccurred(tr("操作仍在執行中，請稍後再試"));
+        return;
+    }
+    const QString text = command.trimmed();
+    if (text.isEmpty()) {
+        emit errorOccurred(tr("請輸入指令"));
+        return;
+    }
+    if (!m_connected) {
+        emit errorOccurred(tr("請先連線到儀器"));
+        return;
+    }
+    m_commandInProgress = true;
+    m_commandRevision = m_connectionRevision;
+    const auto revision = m_commandRevision;
+    const int timeout = m_model->timeout();
+    QPointer<CommandConsoleViewModel> alive(this);
+    QMetaObject::invokeMethod(
+        m_session,
+        [session = m_session, revision, text, timeout] { session->command(revision, text, timeout); },
+        Qt::QueuedConnection);
+    m_model->addToCommandHistory(text);
+    if (!alive)
+        return;
+    emit controlActiveChanged(true);
+    if (alive)
+        emit commandSent(text);
+}
+
+void CommandConsoleViewModel::sendQuery(const QString& command)
+{
+    QString cmd = command.trimmed();
+    if (!cmd.endsWith('?')) {
+        cmd += '?';
+    }
+    sendCommand(cmd);
+}
+
+bool CommandConsoleViewModel::setMode(ConsoleMode mode)
+{
+    if (mode == m_mode) return true;
+    if (!m_controlAllowed || isControlActive() || isOperationPending()) return false;
+    if (mode != ConsoleMode::Scpi && mode != ConsoleMode::ModbusRtu) return false;
+    m_mode = mode;
+    emit modeChanged();
+    return true;
+}
+
+void CommandConsoleViewModel::sendModbusRequest(int slave, int function, int address, int count, const QString &values)
+{
+    if (!m_controlAllowed) return;
+    if (m_mode != ConsoleMode::ModbusRtu || !m_connected || isOperationPending()) {
+        emit errorOccurred(tr("請在 Modbus RTU 模式連線，並等待目前操作完成"));
+        return;
+    }
+    ModbusRequest request{slave, function, address, count, {}};
+    QString error;
+    if (!ModbusRtuCodec::parseValues(values, request.values, error) || ModbusRtuCodec::encode(request, error).isEmpty()) {
+        emit errorOccurred(error);
+        return;
+    }
+    m_commandInProgress = true;
+    m_commandRevision = m_connectionRevision;
+    m_modbusCommandAddress = m_model->currentAddress();
+    const auto revision = m_commandRevision;
+    const int deadline = timeout();
+    QMetaObject::invokeMethod(m_session, [session = m_session, revision, request, deadline] {
+        session->modbusCommand(revision, request, deadline);
+    }, Qt::QueuedConnection);
+    emit controlActiveChanged(true);
+}
+
+// 常用指令
+
+void CommandConsoleViewModel::sendIDN()
+{
+    sendCommand("*IDN?");
+}
+
+void CommandConsoleViewModel::sendRST()
+{
+    sendCommand("*RST");
+}
+
+void CommandConsoleViewModel::sendCLS()
+{
+    sendCommand("*CLS");
+}
+
+void CommandConsoleViewModel::sendOPC()
+{
+    sendCommand("*OPC?");
+}
+
+// 歷史管理
+
+void CommandConsoleViewModel::clearAllHistory()
+{
+    m_model->clearCommandHistory();
+    m_model->clearFullHistory();
+}
+
+// 配置
+
+void CommandConsoleViewModel::setTimeout(int ms)
+{
+    m_model->setTimeout(ms);
+}
+
+int CommandConsoleViewModel::timeout() const
+{
+    return m_model->timeout();
+}
+
+// XML 序列化
+
+void CommandConsoleViewModel::writeXml(QXmlStreamWriter& writer) const
+{
+    m_model->writeXml(writer);
+}
+
+void CommandConsoleViewModel::loadXml(QXmlStreamReader& reader)
+{
+    m_model->loadXml(reader);
+
+    // 載入後發送信號通知 UI 更新
+    emit historyUpdated();
+}
+
+// 內部方法
+
+void CommandConsoleViewModel::validateXml(QXmlStreamReader& reader) const
+{
+    CommandConsoleModel candidate;
+    candidate.loadXml(reader);
+}
+
+bool CommandConsoleViewModel::isControlActive() const
+{
+    return m_connectionActive || m_commandInProgress;
+}
+
+void CommandConsoleViewModel::publishXmlLoaded()
+{
+    emit historyUpdated();
+}

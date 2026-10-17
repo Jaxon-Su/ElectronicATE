@@ -1,5 +1,5 @@
 #pragma once
-#include "page5taskkind.h"
+#include "testsequencetaskkind.h"
 #include "tasksettingrules.h"
 #include "captureoptions.h"
 #include "oscilloscopesettings.h"
@@ -113,17 +113,17 @@ struct Transient : Measurement {
     }
 };
 struct Group {
-    Page5TaskKind::Kind kind;
+    TestSequenceTaskKind::Kind kind;
     std::variant<Steady, Transient> member;
     QVector<int> loads;
 
-    Group(Page5TaskKind::Kind taskKind, const QVariantMap &values)
-        : kind(taskKind), member(Page5TaskKind::isSteady(taskKind)
-              ? std::variant<Steady, Transient>{Steady(values, Page5TaskKind::singleKind(taskKind) == Page5TaskKind::Kind::Dynamic)}
+    Group(TestSequenceTaskKind::Kind taskKind, const QVariantMap &values)
+        : kind(taskKind), member(TestSequenceTaskKind::isSteady(taskKind)
+              ? std::variant<Steady, Transient>{Steady(values, TestSequenceTaskKind::singleKind(taskKind) == TestSequenceTaskKind::Kind::Dynamic)}
               : std::variant<Steady, Transient>{Transient(values)})
     {
-        if (!Page5TaskKind::isGroup(kind) ||
-            !GroupConditionSelection::decode(values.value(Page5TaskKind::loadKey(kind) + "_indices"), loads) || loads.isEmpty())
+        if (!TestSequenceTaskKind::isGroup(kind) ||
+            !GroupConditionSelection::decode(values.value(TestSequenceTaskKind::loadKey(kind) + "_indices"), loads) || loads.isEmpty())
             throw std::invalid_argument("Select one or more distinct Load conditions");
         std::sort(loads.begin(), loads.end());
     }
@@ -143,13 +143,13 @@ struct WriteScope {
 };
 using Settings = std::variant<Delay, Relay, Steady, Group, Transient, WriteScope, BrownOut::Settings>;
 struct PreparedTask {
-    Page5TaskKind::Kind kind;
+    TestSequenceTaskKind::Kind kind;
     Settings settings;
 };
 inline PreparedTask decode(const QString &name, const QVariantMap &values, OscilloscopeSettings configuration = {})
 {
-    using Kind = Page5TaskKind::Kind;
-    const auto kind = Page5TaskKind::fromName(name);
+    using Kind = TestSequenceTaskKind::Kind;
+    const auto kind = TestSequenceTaskKind::fromName(name);
     switch (kind) {
     case Kind::BrownOut:
         return {kind, BrownOut::Settings(values)};

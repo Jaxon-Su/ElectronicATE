@@ -6,6 +6,7 @@
 #include <QVariant>
 #include <cmath>
 #include <optional>
+#include <limits>
 
 namespace OscilloscopeSettingRules
 {
@@ -24,6 +25,7 @@ inline QStringList choices(const QString &key)
     const QMap<QString, QStringList> lists{
         {"horz_mode", MSO456_HORZ_MODES},
         {"horz_config", MSO456_HORZ_CONFIGS},
+        {"horz_limits", {"UNSPECIFIED", "MSO44B", "MSO44B_62M"}},
         {"acq_mode", ACQ_MODES},
         {"coupling", MSO456_COUPLINGS},
         {"termination", MSO456_TERMINATIONS},
@@ -44,22 +46,30 @@ inline std::optional<double> quantity(const QJsonValue &input, const QString &ki
         return {};
     QMap<QString, double> units{{"", 1}};
     if (kind == "time")
-        units.insert({{"s", 1}, {"ms", 1e-3}, {"us", 1e-6}, {"µs", 1e-6}, {"ns", 1e-9}});
+        units.insert({{"s", 1}, {"ms", 1e-3}, {"us", 1e-6}, {"µs", 1e-6}, {"ns", 1e-9}, {"ps", 1e-12}});
     else if (kind == "channel")
         units.insert({{"V", 1}, {"mV", 1e-3}, {"uV", 1e-6}, {"A", 1}, {"mA", 1e-3}, {"uA", 1e-6}});
     else if (kind == "frequency")
         units.insert({{"Hz", 1}, {"kHz", 1e3}, {"MHz", 1e6}, {"GHz", 1e9}});
     else if (kind == "rate")
-        units.insert({{"S/s", 1}, {"kS/s", 1e3}, {"MS/s", 1e6}, {"GS/s", 1e9}});
+        // Rate editors accept engineering shorthand as samples per second.
+        // Keep SI case sensitivity (M is mega); K is a common kilo alias.
+        units.insert({{"S/s", 1}, {"kS/s", 1e3}, {"KS/s", 1e3}, {"MS/s", 1e6}, {"GS/s", 1e9},
+                      {"k", 1e3}, {"K", 1e3}, {"M", 1e6}, {"G", 1e9}});
     else if (kind == "count")
-        units.insert({{"k", 1e3}, {"M", 1e6}, {"G", 1e9}});
+        units.insert({{"k", 1e3}, {"K", 1e3}, {"M", 1e6}, {"G", 1e9}});
     if (!units.contains(match.captured(2)))
         return {};
     bool ok = false;
-    const double value = match.captured(1).toDouble(&ok) * units.value(match.captured(2));
-    if (!ok || !std::isfinite(value) || value <= 0 || value >= 1e30 ||
-        (kind == "count" && std::floor(value) != value))
+    double value = match.captured(1).toDouble(&ok) * units.value(match.captured(2));
+    if (!ok || !std::isfinite(value) || value <= 0 || value >= 1e30)
         return {};
+    if (kind == "count") {
+        const double rounded = std::round(value);
+        if (std::abs(value - rounded) > 4 * std::numeric_limits<double>::epsilon() * value)
+            return {};
+        value = rounded;
+    }
     return QString::number(value, 'g', 15).toDouble();
 }
 

@@ -1,80 +1,80 @@
 #include "pageconnectioncoordinator.h"
-#include "page1viewmodel.h"
-#include "page2viewmodel.h"
-#include "page3viewmodel.h"
-#include "page5viewmodel.h"
+#include "instrumentsetupviewmodel.h"
+#include "testconditionsviewmodel.h"
+#include "manualcontrolviewmodel.h"
+#include "testsequenceviewmodel.h"
 #include <QDebug>
 #include <QPointer>
 
-void PageConnectionCoordinator::setupPageConnections(Page1ViewModel* vm1, Page2ViewModel* vm2,
-                                                     Page3ViewModel* vm3, Page5ViewModel* vm5)
+void PageConnectionCoordinator::setupPageConnections(InstrumentSetupViewModel* instrumentSetup, TestConditionsViewModel* testConditions,
+                                                     ManualControlViewModel* manualControl, TestSequenceViewModel* testSequence)
 {
-    if (!vm1 || !vm2 || !vm3 || !vm5) {
+    if (!instrumentSetup || !testConditions || !manualControl || !testSequence) {
         qWarning() << "PageConnectionCoordinator::setupPageConnections - null viewmodel pointer";
         return;
     }
 
-    vm5->setLoadSyncProvider([owner = QPointer<Page3ViewModel>(vm3)] {
+    testSequence->setLoadSyncProvider([owner = QPointer<ManualControlViewModel>(manualControl)] {
         return owner ? owner->loadSyncSettings() : LoadSyncSettings{};
     });
-    vm5->setOscilloscopeProvider([owner = QPointer<Page3ViewModel>(vm3)] {
+    testSequence->setOscilloscopeProvider([owner = QPointer<ManualControlViewModel>(manualControl)] {
         return owner ? owner->borrowOscilloscope() : std::shared_ptr<Oscilloscope>{};
     });
 
-    QObject::connect(vm5, &Page5ViewModel::outputsUncertain, vm3, &Page3ViewModel::adoptUncertainOutputs);
-    vm5->setOutputRecoveryCheck([owner = QPointer<Page3ViewModel>(vm3)] {
+    QObject::connect(testSequence, &TestSequenceViewModel::outputsUncertain, manualControl, &ManualControlViewModel::adoptUncertainOutputs);
+    testSequence->setOutputRecoveryCheck([owner = QPointer<ManualControlViewModel>(manualControl)] {
         return owner && !owner->hasActiveControl();
     });
 
-    connectPage1ToPage2(vm1, vm2);
-    connectPage1ToPage3(vm1, vm3);
-    connectPage2ToPage3(vm2, vm3);
-    connectPage1ToPage5(vm1, vm5);
-    connectPage2ToPage5(vm2, vm5);
+    connectInstrumentSetupToTestConditions(instrumentSetup, testConditions);
+    connectInstrumentSetupToManualControl(instrumentSetup, manualControl);
+    connectTestConditionsToManualControl(testConditions, manualControl);
+    connectInstrumentSetupToTestSequence(instrumentSetup, testSequence);
+    connectTestConditionsToTestSequence(testConditions, testSequence);
 }
 
-void PageConnectionCoordinator::connectPage1ToPage2(Page1ViewModel* vm1, Page2ViewModel* vm2)
+void PageConnectionCoordinator::connectInstrumentSetupToTestConditions(InstrumentSetupViewModel* instrumentSetup, TestConditionsViewModel* testConditions)
 {
-    // Page1 load 數量連動 Page2
-    QObject::connect(vm1, &Page1ViewModel::loadOutputsChanged, vm2, &Page2ViewModel::setMaxOutput);
+    // InstrumentSetup load 數量連動 TestConditions
+    QObject::connect(instrumentSetup, &InstrumentSetupViewModel::loadOutputsChanged, testConditions, &TestConditionsViewModel::setMaxOutput);
 
-    QObject::connect(vm1, &Page1ViewModel::relayOutputsChanged, vm2, &Page2ViewModel::setMaxRelayOutput);
+    QObject::connect(instrumentSetup, &InstrumentSetupViewModel::relayOutputsChanged, testConditions, &TestConditionsViewModel::setMaxRelayOutput);
 
-    QObject::connect(vm1, &Page1ViewModel::configUpdated, vm2, &Page2ViewModel::onPage1ConfigChanged);
+    QObject::connect(instrumentSetup, &InstrumentSetupViewModel::configUpdated, testConditions, &TestConditionsViewModel::onInstrumentSetupConfigChanged);
 }
 
-void PageConnectionCoordinator::connectPage1ToPage3(Page1ViewModel* vm1, Page3ViewModel* vm3)
+void PageConnectionCoordinator::connectInstrumentSetupToManualControl(InstrumentSetupViewModel* instrumentSetup, ManualControlViewModel* manualControl)
 {
-    // Page1 連動 Page3
-    QObject::connect(vm1, &Page1ViewModel::configUpdated, vm3, &Page3ViewModel::onPage1ConfigChanged);
+    // InstrumentSetup 連動 ManualControl
+    QObject::connect(instrumentSetup, &InstrumentSetupViewModel::configUpdated, manualControl, &ManualControlViewModel::onInstrumentSetupConfigChanged);
 }
 
-void PageConnectionCoordinator::connectPage2ToPage3(Page2ViewModel* vm2, Page3ViewModel* vm3)
+void PageConnectionCoordinator::connectTestConditionsToManualControl(TestConditionsViewModel* testConditions, ManualControlViewModel* manualControl)
 {
-    // Page2 tblinput 連動 Page3
-    QObject::connect(vm2, &Page2ViewModel::titleListChanged, vm3, &Page3ViewModel::updateTitles);
+    // TestConditions tblinput 連動 ManualControl
+    QObject::connect(testConditions, &TestConditionsViewModel::titleListChanged, manualControl, &ManualControlViewModel::updateTitles);
 
-    QObject::connect(vm2, &Page2ViewModel::conditionsChanged, vm3, &Page3ViewModel::onConditionsChanged);
+    QObject::connect(testConditions, &TestConditionsViewModel::conditionsChanged, manualControl, &ManualControlViewModel::onConditionsChanged);
 }
-void PageConnectionCoordinator::connectPage1ToPage5(Page1ViewModel* vm1, Page5ViewModel* vm5)
+void PageConnectionCoordinator::connectInstrumentSetupToTestSequence(InstrumentSetupViewModel* instrumentSetup, TestSequenceViewModel* testSequence)
 {
-    // Page1 儀器通訊設定 連動 Page5
-    QObject::connect(vm1, &Page1ViewModel::configUpdated, vm5, &Page5ViewModel::onPage1ConfigChanged);
+    // InstrumentSetup 儀器通訊設定 連動 TestSequence
+    QObject::connect(instrumentSetup, &InstrumentSetupViewModel::configUpdated, testSequence, &TestSequenceViewModel::onInstrumentSetupConfigChanged);
 }
 
-void PageConnectionCoordinator::connectPage2ToPage5(Page2ViewModel* vm2, Page5ViewModel* vm5)
+void PageConnectionCoordinator::connectTestConditionsToTestSequence(TestConditionsViewModel* testConditions, TestSequenceViewModel* testSequence)
 {
-    // 先注入委託指標，確保 Page5ViewModel 的 accessor 在 signal 抵達前已就緒
-    vm5->setConditionProvider(vm2);
-    QObject::connect(vm2, &Page2ViewModel::conditionsChanged, vm5, &Page5ViewModel::dcTableChanged);
+    // 先注入委託指標，確保 TestSequenceViewModel 的 accessor 在 signal 抵達前已就緒
+    testSequence->setConditionProvider(testConditions);
+    QObject::connect(testConditions, &TestConditionsViewModel::conditionsChanged, testSequence, &TestSequenceViewModel::dcTableChanged);
 
-    // Page2 各條件 Table 連動 Page5（signal 只觸發 UI 刷新，不傳資料副本）
-    QObject::connect(vm2, &Page2ViewModel::inputRowsStructChanged, vm5, &Page5ViewModel::onInputDataChanged);
-    QObject::connect(vm2, &Page2ViewModel::loadMetaStructChanged, vm5, &Page5ViewModel::onLoadMetaChanged);
-    QObject::connect(vm2, &Page2ViewModel::loadRowsStructChanged, vm5, &Page5ViewModel::onLoadRowsChanged);
-    QObject::connect(vm2, &Page2ViewModel::dynamicMetaStructChanged, vm5,
-                     &Page5ViewModel::onDynamicMetaChanged);
-    QObject::connect(vm2, &Page2ViewModel::dynamicRowsStructChanged, vm5,
-                     &Page5ViewModel::onDynamicRowsChanged);
-    QObject::connect(vm2, &Page2ViewModel::relayRowsStructChanged, vm5, &Page5ViewModel::onRelayRowsChanged);
+    // TestConditions 各條件 Table 連動 TestSequence（signal 只觸發 UI 刷新，不傳資料副本）
+    QObject::connect(testConditions, &TestConditionsViewModel::inputRowsStructChanged, testSequence, &TestSequenceViewModel::onInputDataChanged);
+    QObject::connect(testConditions, &TestConditionsViewModel::loadMetaStructChanged, testSequence, &TestSequenceViewModel::onLoadMetaChanged);
+    QObject::connect(testConditions, &TestConditionsViewModel::loadRowsStructChanged, testSequence, &TestSequenceViewModel::onLoadRowsChanged);
+    QObject::connect(testConditions, &TestConditionsViewModel::dynamicMetaStructChanged, testSequence,
+                     &TestSequenceViewModel::onDynamicMetaChanged);
+    QObject::connect(testConditions, &TestConditionsViewModel::dynamicRowsStructChanged, testSequence,
+                     &TestSequenceViewModel::onDynamicRowsChanged);
+    QObject::connect(testConditions, &TestConditionsViewModel::relayRowsStructChanged, testSequence, &TestSequenceViewModel::onRelayRowsChanged);
 }

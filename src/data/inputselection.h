@@ -5,7 +5,7 @@
 #include <limits>
 #include <stdexcept>
 
-// Independent Page2 indices. In a measurement, -1 (None) requires that source OFF.
+// Independent TestConditions indices. In a measurement, -1 (None) requires that source OFF.
 struct InputSelection {
     int ac = -1;
     int dc = -1;

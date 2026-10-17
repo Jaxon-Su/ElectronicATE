@@ -295,6 +295,7 @@ MeasurementResult runBrownOut(const BrownOut::Settings &cfg, IScopeBrownOut &sco
                             "Scope returned an old or empty event record");
                     previousSequence = record.sequence;
                     ++records;
+                    const double acquiredLevel = level;
                     for (const auto &v : record.channels) {
                         const auto reference = std::find_if(baseline.channels.cbegin(), baseline.channels.cend(),
                                                            [&](const auto &r) { return r.channel == v.channel; });
@@ -312,6 +313,10 @@ MeasurementResult runBrownOut(const BrownOut::Settings &cfg, IScopeBrownOut &sco
                             level = cfg.rising ? std::max(level + step, v.maximum + step)
                                                : std::min(level - step, v.minimum - step);
                     }
+                    result.trials.append({records,
+                        cfg.mode == BrownOut::Mode::Track && cfg.rising
+                            ? MeasurementDirection::Rise : MeasurementDirection::Fall,
+                        records, 1, acquiredLevel, record.channels});
                     if (cfg.mode == BrownOut::Mode::Track &&
                         !(cfg.captureEnabled && closedAt >= 0 && event.elapsed() - closedAt >= cfg.tailMs)) {
                         require(std::isfinite(level), "Trigger level overflow");
@@ -333,7 +338,7 @@ MeasurementResult runBrownOut(const BrownOut::Settings &cfg, IScopeBrownOut &sco
             QThread::msleep(100);
         }
         result.success = true;
-        result.summary = QString("%1 valid records; extrema of acquired records; RMS/Mean from latest record")
+        result.summary = QString("%1 valid trials; four values retained per acquisition")
                              .arg(records);
     } catch (...) {
         result.error = exceptionText();

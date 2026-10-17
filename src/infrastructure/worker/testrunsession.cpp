@@ -32,7 +32,7 @@ TestRunSession::TestRunSession(std::unique_ptr<TestRunService> service, std::uni
     connect(m_service, &TestRunService::logMessage, this, &TestRunSession::logMessage);
     connect(m_service, &TestRunService::outputsUncertain, this, &TestRunSession::outputsUncertain);
     connect(m_service, &TestRunService::resultRecordsReady, this,
-            [this](const QVector<Page5ResultRecord> &records) {
+            [this](const QVector<TestSequenceResultRecord> &records) {
                 emit resultRecordsReady(records);
                 if (m_report) {
                     emit logMessage("Saving Excel report...");
@@ -59,7 +59,7 @@ TestRunSession::~TestRunSession()
     m_thread->quit();
     m_thread->wait();
 }
-bool TestRunSession::start(const QVector<TaskPayload> &tasks, Page5ExecutionContext context,
+bool TestRunSession::start(const QVector<TaskPayload> &tasks, TestSequenceExecutionContext context,
                            std::shared_ptr<Oscilloscope> scope, bool report, QString name, QString directory)
 {
     if (m_running || m_shutdownRequested || tasks.isEmpty() || !m_service)

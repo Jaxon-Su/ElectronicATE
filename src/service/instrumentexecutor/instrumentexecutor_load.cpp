@@ -170,7 +170,7 @@ void InstrumentExecutor::applyLoadSettings(DCLoad *dcLoad, int index, double val
                            hasCvCurrentLimit);
 }
 
-InstrumentExecutor::Result InstrumentExecutor::runLoad(const Page1Config &cfg,
+InstrumentExecutor::Result InstrumentExecutor::runLoad(const InstrumentSetupConfig &cfg,
                                                        const QVector<LoadDataRow> &rows, int conditionIndex,
                                                        const LoadMetaRow &meta, LoadAction action,
                                                        bool syncEnabled)

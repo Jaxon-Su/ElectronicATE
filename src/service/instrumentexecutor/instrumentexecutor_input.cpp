@@ -51,7 +51,7 @@ bool executeACSourceAction(ACSource *source, InputAction action,
 }
 
 InstrumentExecutor::Result
-runInputWithParams(const Page1Config &cfg, const ParameterParser::InputParameters &params, InputAction action)
+runInputWithParams(const InstrumentSetupConfig &cfg, const ParameterParser::InputParameters &params, InputAction action)
 {
     if (action != InputAction::PowerOff && !params.valid)
         return {false, "Input parameter parse failed", true};
@@ -85,7 +85,7 @@ runInputWithParams(const Page1Config &cfg, const ParameterParser::InputParameter
 
 } // namespace
 
-InstrumentExecutor::Result InstrumentExecutor::runInput(const Page1Config &cfg, const QString &inputText,
+InstrumentExecutor::Result InstrumentExecutor::runInput(const InstrumentSetupConfig &cfg, const QString &inputText,
                                                         InputAction action)
 {
     try {
@@ -98,7 +98,7 @@ InstrumentExecutor::Result InstrumentExecutor::runInput(const Page1Config &cfg, 
     }
 }
 
-InstrumentExecutor::Result InstrumentExecutor::runInput(const Page1Config &cfg, const InputRow &inputRow,
+InstrumentExecutor::Result InstrumentExecutor::runInput(const InstrumentSetupConfig &cfg, const InputRow &inputRow,
                                                         InputAction action)
 {
     try {

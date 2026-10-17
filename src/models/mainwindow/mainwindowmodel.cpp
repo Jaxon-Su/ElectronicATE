@@ -1,13 +1,13 @@
 #include "mainwindowmodel.h"
-#include "page1model.h"
-#include "page2model.h"
-#include "page3model.h"
-#include "page4model.h"
-#include "page5model.h"
+#include "instrumentsetupmodel.h"
+#include "testconditionsmodel.h"
+#include "manualcontrolmodel.h"
+#include "commandconsolemodel.h"
+#include "testsequencemodel.h"
 
 MainWindowModel::MainWindowModel(QObject* parent)
-    : QObject(parent), m_page1Model(nullptr), m_page2Model(nullptr), m_page3Model(nullptr),
-      m_page4Model(nullptr), m_page5Model(nullptr)
+    : QObject(parent), m_instrumentSetupModel(nullptr), m_testConditionsModel(nullptr), m_manualControlModel(nullptr),
+      m_commandConsoleModel(nullptr), m_testSequenceModel(nullptr)
 {
     initializeSubModels();
 }
@@ -25,9 +25,9 @@ void MainWindowModel::setLastSavePath(const QString& path)
 
 void MainWindowModel::initializeSubModels()
 {
-    m_page1Model = new Page1Model(this);
-    m_page2Model = new Page2Model(this);
-    m_page3Model = new Page3Model(this);
-    m_page4Model = new Page4Model(this);
-    m_page5Model = new Page5Model(this);
+    m_instrumentSetupModel = new InstrumentSetupModel(this);
+    m_testConditionsModel = new TestConditionsModel(this);
+    m_manualControlModel = new ManualControlModel(this);
+    m_commandConsoleModel = new CommandConsoleModel(this);
+    m_testSequenceModel = new TestSequenceModel(this);
 }

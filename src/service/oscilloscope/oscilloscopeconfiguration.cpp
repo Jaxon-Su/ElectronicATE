@@ -1,5 +1,6 @@
 #include "oscilloscopeconfiguration.h"
 #include "oscilloscopesettingrules.h"
+#include "horizontalsettingslimits.h"
 #include <stdexcept>
 
 OscilloscopeSettings decodeOscilloscopeSettings(const QVariantMap &cfg, const QString &model,
@@ -32,12 +33,24 @@ OscilloscopeSettings decodeOscilloscopeSettings(const QVariantMap &cfg, const QS
     if (basic && !flag("ignore_horizontal")) {
         auto &h = result.horizontal;
         h.mode = token("horz_mode");
-        h.secondsPerDivision = numeric("timescale");
         h.positionPercent = numeric("horz_pos");
         if (h.mode == std::optional<QString>("MANUAL")) {
-            h.adjustment = token("horz_config");
+            // Existing CONFIGure values express the same two priorities. Only
+            // decode the independent inputs; a stored preview is never written.
+            h.adjustment = token("horz_config").value_or("HORIZONTALSCALE");
             h.sampleRate = numeric("sample_rate");
-            h.recordLength = numeric("record_length");
+            if (*h.adjustment == "RECORDLENGTH")
+                h.secondsPerDivision = numeric("timescale");
+            else
+                h.recordLength = numeric("record_length");
+        } else
+            h.secondsPerDivision = numeric("timescale");
+        if (const auto profile = token("horz_limits")) {
+            const auto preview = HorizontalSettingsLimits::evaluate(h.mode == std::optional<QString>("MANUAL"),
+                h.adjustment == std::optional<QString>("RECORDLENGTH"), h.secondsPerDivision,
+                h.sampleRate, h.recordLength, *profile);
+            if (!preview.error.isEmpty())
+                throw std::invalid_argument(preview.error.toStdString());
         }
     }
     if (basic && !flag("ignore_acquire")) {

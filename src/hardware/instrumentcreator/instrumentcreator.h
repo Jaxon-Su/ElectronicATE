@@ -5,8 +5,8 @@
 #include <QString>
 #include <utility>
 #include "resourcecleaner.h"
-#include "page1config.h"
-#include "page2config.h"
+#include "instrumentsetupconfig.h"
+#include "testconditionsconfig.h"
 
 class ACSource;
 class DCLoad;
@@ -116,16 +116,16 @@ class InstrumentCreator
         QMap<QString, ICommunication *> m_commMap;
     };
 
-    static ACSourceResult createACSource(const Page1Config &config);
+    static ACSourceResult createACSource(const InstrumentSetupConfig &config);
 
-    static DCLoadResult createDCLoads(const Page1Config &config, TableKind kind);
+    static DCLoadResult createDCLoads(const InstrumentSetupConfig &config, TableKind kind);
     // Retains reachable channels and aggregates failures so OFF can continue.
-    static DCLoadResult createDCLoadsForShutdown(const Page1Config &config, TableKind kind);
+    static DCLoadResult createDCLoadsForShutdown(const InstrumentSetupConfig &config, TableKind kind);
 
-    static RelayResult createRelays(const Page1Config &config);
+    static RelayResult createRelays(const InstrumentSetupConfig &config);
 
   private:
-    static DCLoadResult createDCLoads(const Page1Config &config, TableKind kind, bool forShutdown);
+    static DCLoadResult createDCLoads(const InstrumentSetupConfig &config, TableKind kind, bool forShutdown);
     InstrumentCreator() = delete;
     ~InstrumentCreator() = delete;
     InstrumentCreator(const InstrumentCreator &) = delete;

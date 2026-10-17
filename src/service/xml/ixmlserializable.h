@@ -10,7 +10,7 @@ class IXmlSerializable {
   public:
     virtual ~IXmlSerializable() = default;
 
-    // 回傳此 ViewModel 對應的 XML 元素名稱（如 "Page1"）
+    // 回傳此 ViewModel 對應的 XML 元素名稱（如 "InstrumentSetup"）
     virtual QString xmlTagName() const = 0;
 
     virtual void writeXml(QXmlStreamWriter& writer) const = 0;

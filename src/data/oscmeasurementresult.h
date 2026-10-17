@@ -2,6 +2,7 @@
 #include <QString>
 #include <QVector>
 #include <limits>
+#include "measurementtrial.h"
 
 // Values reported by the regular scope measurement strategies.
 struct OscChannelMeasure {
@@ -17,4 +18,5 @@ struct OscMeasureResult {
     bool cleanupFailed = false;
     QVector<OscChannelMeasure> channels;
     QString errorMessage;
+    QVector<MeasurementTrial> trials;
 };

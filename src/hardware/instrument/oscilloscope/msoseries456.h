@@ -6,7 +6,8 @@ class MSOSeries456 : public Oscilloscope
 {
   public:
     std::unique_ptr<IScopeBrownOutSession> beginBrownOut(const BrownOut::Settings &, QAtomicInt &, QString &) override;
-    bool applySettings(const OscilloscopeSettings &settings, QAtomicInt &stop, QString &error) override;
+    bool applySettings(const OscilloscopeSettings &settings, QAtomicInt &stop, QString &error,
+                       OscilloscopeConfigurationResult *result = nullptr) override;
     ScopeCaptureSource captureSource() override;
     QString captureSlope() override;
     bool readChannelOffset(int channel, double &offset, QString &error) override;

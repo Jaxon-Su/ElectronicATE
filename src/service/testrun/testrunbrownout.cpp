@@ -38,7 +38,8 @@ bool TestRunService::executeBrownOut(const BrownOut::Settings &settings)
         m_unreleasedOutputs.remove(TableKind::DyLoad);
     }
     const bool success = result.success && !result.cleanupFailed;
-    m_attemptResult.channels = toPage5Channels(result.channels);
+    m_attemptResult.trials = result.trials;
+    m_attemptResult.channels = representativeChannels(result.trials);
     m_actionResults << result.summary;
     if (!success)
         failTask(result.error.isEmpty() ? "Brown Out failed" : result.error);

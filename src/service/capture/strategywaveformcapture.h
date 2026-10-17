@@ -2,7 +2,7 @@
 #include "capturefile.h"
 #include "../../hardware/communication/transfercancellation.h"
 #include "captureoptions.h"
-#include "page5resultrecord.h"
+#include "testsequenceresultrecord.h"
 #include "scopecapturerecord.h"
 #include <QDateTime>
 #include <QDir>
@@ -19,7 +19,7 @@ class StrategyWaveformCapture
 {
   public:
     struct Attempt {
-        int taskNumber; // 1-based Page5 row
+        int taskNumber; // 1-based TestSequence row
         int attemptNumber; // 1 = first execution, 2 = first retry
         QDateTime startedAt;
     };
@@ -42,7 +42,7 @@ class StrategyWaveformCapture
     }
 
     void record(IScopeCapture *scope, const ScopeCaptureRecord &record,
-                const Page5ConditionSource &condition)
+                const TestSequenceConditionSource &condition)
     {
         const TransferCancellation cancellation(m_stop);
         check();

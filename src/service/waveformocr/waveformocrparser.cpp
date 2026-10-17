@@ -101,6 +101,69 @@ void saveOriginal(Row &row)
     row.originalValues = parts.join("; ");
 }
 
+Value parseMeasurementValue(const QString &text)
+{
+    // Tektronix badges prefix displayed values with mu/prime. GLM-OCR can read
+    // the prime as a superscript 1. Keep that evidence without guessing scope.
+    static const QRegularExpression statisticPrefix(QStringLiteral(R"(^[µμ]\s*['′’¹]?\s*:\s*)"));
+    QString number = text.trimmed();
+    number.remove(statisticPrefix);
+    auto value = parseValue(number);
+    value.raw = text.trimmed();
+    return value;
+}
+
+QString measurementCardLines(const QString &text)
+{
+    static const QRegularExpression cardRe(R"(^\s*Meas(?:urement)?\s+\d+\b(.*)$)",
+                                           QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression sourceRe(R"(^\s*(?:(?:CH|C)\s*)?([1-9]\d*)\s*$)",
+                                             QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression inlineTypeRe(R"(\b(Maximum|Minimum|Max|Min|RMS|Mean)\b)",
+                                                 QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression labelOnlyRe(
+        R"(^\s*(?:(?:CH|C)\s*\d+\s+)?(?:Maximum|Minimum|Max|Min|RMS|Mean)(?:\s*\((?:CH|C)\s*\d+\))?\s*[:=]?\s*$)",
+        QRegularExpression::CaseInsensitiveOption);
+    const auto lines = text.split('\n');
+    QStringList output;
+    for (int i = 0; i < lines.size(); ++i)
+    {
+        QString line = lines[i].trimmed();
+        const auto card = cardRe.match(line);
+        if (card.hasMatch())
+        {
+            // "Meas 3 2" means measurement #3, source CH2. Never use the
+            // measurement index as a channel or inherit a missing badge source.
+            const auto tail = card.captured(1);
+            const auto type = inlineTypeRe.match(tail);
+            const auto source = sourceRe.match(type.hasMatch() ? tail.left(type.capturedStart()) : tail);
+            output << (source.hasMatch() ? "CH" + source.captured(1) : "[unknown channel]");
+            output << "[unspecified scope]";
+            // GLM can put the type on the header: "Meas 1 RMS" or
+            // "Meas 3 2 Maximum". Retain it for the value on this/next line.
+            if (!type.hasMatch())
+                continue;
+            line = tail.mid(type.capturedStart());
+        }
+        // Join only an adjacent, complete value after a standalone measurement
+        // label. Do this before table normalization so omitted table rows cannot
+        // bring an unrelated number next to a label. Never search past UI text,
+        // another measurement, or a statistics header for a candidate value.
+        int next = i + 1;
+        while (next < lines.size() && next <= i + 3 && lines[next].trimmed().isEmpty())
+            ++next;
+        if (labelOnlyRe.match(line).hasMatch() && next < lines.size() && next <= i + 3 &&
+            parseMeasurementValue(lines[next]).number)
+        {
+            output << line.trimmed() + " " + lines[next].trimmed();
+            i = next;
+        }
+        else
+            output << line;
+    }
+    return output.join('\n');
+}
+
 QString measurementLines(QString text)
 {
     // Preserve table columns before stripping presentation markup. A measurement type
@@ -267,13 +330,13 @@ QVector<Row> parseText(const QString &path, const QString &root, const QString &
     }
     else
     {
-        // SmartWaveform text fallback, bounded to individual lines and explicit channel contexts.
+        // Normalize adjacent badge lines, then use explicit channel contexts.
         static const QRegularExpression channelRe(R"(\b(?:CH|C)\s*(\d+)\b)",
                                                   QRegularExpression::CaseInsensitiveOption);
         static const QRegularExpression labelRe(R"(\b(Maximum|Minimum|Max|Min|RMS|Mean)\b)",
                                                 QRegularExpression::CaseInsensitiveOption);
         QString channel, scope = "unspecified";
-        for (QString line : measurementLines(transcription).split('\n'))
+        for (QString line : measurementLines(measurementCardLines(transcription)).split('\n'))
         {
             if (line == "[unknown channel]")
                 channel.clear();
@@ -334,14 +397,19 @@ QVector<Row> parseText(const QString &path, const QString &root, const QString &
                 rowIndex = rows.size() - 1;
             }
             auto &field = rows[rowIndex].values[index];
+            const auto candidate = parseMeasurementValue(value);
             if (!field.raw.isEmpty())
             {
+                // Repeated OCR text with the same value is not a conflict.
+                if (field.number && candidate.number && field.number == candidate.number &&
+                    field.unit == candidate.unit)
+                    continue;
                 field.raw += " | " + value;
                 field.number.reset();
                 field.issue = "多個候選值，請對照原圖";
             }
             else
-                field = parseValue(value);
+                field = candidate;
         }
         for (auto &row : rows)
             saveOriginal(row);
@@ -358,12 +426,8 @@ QVector<Row> parseText(const QString &path, const QString &root, const QString &
 QStringList issues(const Row &row)
 {
     QStringList result;
-    if (!row.error.isEmpty())
+    if (!row.error.isEmpty() && !row.modified)
         result << row.error;
-    if (row.channel.trimmed().isEmpty())
-        result << "通道未確認";
-    if (row.scope.isEmpty() || row.scope == "unspecified")
-        result << "統計範圍未確認";
     QString unit;
     for (int i = 0; i < 4; ++i)
     {
@@ -389,10 +453,10 @@ QString status(const Row &row)
         any |= value.number.has_value();
         all &= value.number.has_value();
     }
-    if (!row.error.isEmpty())
+    if (!row.error.isEmpty() && !row.modified)
         return "辨識失敗";
     return (any ? (all ? QString("四值齊全") : QString("部分缺值")) : QString("無有效數值")) +
-           (row.reviewed ? "／已核對" : "／待核對");
+           (row.modified ? "／已修改" : "") + (row.reviewed ? "／已核對" : "");
 }
 QString displayValue(const Value &value)
 {

@@ -2,9 +2,9 @@
 
 #include <QString>
 #include <QVector>
-#include "page2config.h"
+#include "testconditionsconfig.h"
 
-// Looks up zero-based Page2 condition rows without changing them.
+// Looks up zero-based TestConditions condition rows without changing them.
 class ConditionLookup {
   public:
     struct LoadDataResult {

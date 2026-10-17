@@ -1,6 +1,6 @@
 #pragma once
-#include "page5taskpayload.h"
-#include "page5resultrecord.h"
+#include "testsequencetaskpayload.h"
+#include "testsequenceresultrecord.h"
 #include "taskstatus.h"
 #include <QObject>
 #include <memory>
@@ -16,19 +16,19 @@ class TestRunSession : public QObject
   public:
     TestRunSession(std::unique_ptr<TestRunService> service, std::unique_ptr<ReportWriter> writer);
     ~TestRunSession() override;
-    bool start(const QVector<TaskPayload> &tasks, Page5ExecutionContext context,
+    bool start(const QVector<TaskPayload> &tasks, TestSequenceExecutionContext context,
                std::shared_ptr<Oscilloscope> scope, bool report, QString name, QString directory);
     void stop();
     void requestShutdown();
     bool isShutdownComplete() const { return m_shutdownComplete; }
   signals:
-    void outputsUncertain(const Page1Config &config, const QVector<TableKind> &outputs,
+    void outputsUncertain(const InstrumentSetupConfig &config, const QVector<TableKind> &outputs,
                           const ShortCircuitProtection &protection = {});
     void taskStatusChanged(int index, TaskStatus status);
     void retryCountChanged(int index, int attempt);
     void taskResultChanged(int index, const QString &text);
-    void measurementReady(int index, const Page5ResultRecord &record, bool complete);
-    void resultRecordsReady(const QVector<Page5ResultRecord> &records);
+    void measurementReady(int index, const TestSequenceResultRecord &record, bool complete);
+    void resultRecordsReady(const QVector<TestSequenceResultRecord> &records);
     void logMessage(const QString &text);
     void reportCompleted(bool success, const QString &path, const QString &error);
     void runningChanged(bool running);

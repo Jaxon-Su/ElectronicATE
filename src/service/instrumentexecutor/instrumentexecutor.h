@@ -1,15 +1,15 @@
 #pragma once
 #include <QString>
 #include <QVector>
-#include "page1config.h"
-#include "page2config.h"
+#include "instrumentsetupconfig.h"
+#include "testconditionsconfig.h"
 #include "conditionlookup.h"
 #include "instrumentcreator.h"
 #include "instrumentoperationresult.h"
 #include "instrumentactions.h"
 
-//  Action 枚舉（原定義於 page3viewmodel.h，移此共用）
-//  Page3ViewModel 與 TestRunService 都需要這些枚舉
+//  Action 枚舉（原定義於 manualcontrolviewmodel.h，移此共用）
+//  ManualControlViewModel 與 TestRunService 都需要這些枚舉
 
 class DCLoad;
 class ACSource;
@@ -19,7 +19,7 @@ class RelayBase;
 //
 //  職責：
 //    封裝 Input / Load / DyLoad / Relay 的同步硬體執行邏輯
-//    供 Page3ViewModel（包在 QtConcurrent::run）與
+//    供 ManualControlViewModel（包在 QtConcurrent::run）與
 //    TestRunService（直接呼叫，已在 worker thread）共用
 //
 //  Result.success = false 時：
@@ -32,20 +32,20 @@ class InstrumentExecutor
     using Result = InstrumentOperationResult;
 
     // 主要執行方法
-    static Result runInput(const Page1Config &cfg, const QString &inputText, InputAction action);
-    static Result runInput(const Page1Config &cfg, const InputRow &inputRow, InputAction action);
+    static Result runInput(const InstrumentSetupConfig &cfg, const QString &inputText, InputAction action);
+    static Result runInput(const InstrumentSetupConfig &cfg, const InputRow &inputRow, InputAction action);
 
-    static Result runLoad(const Page1Config &cfg, const QVector<LoadDataRow> &rows, int conditionIndex,
+    static Result runLoad(const InstrumentSetupConfig &cfg, const QVector<LoadDataRow> &rows, int conditionIndex,
                           const LoadMetaRow &meta, LoadAction action, bool syncEnabled = false);
 
-    static Result runDynamicLoad(const Page1Config &cfg, const QVector<DynamicDataRow> &rows, int conditionIndex,
+    static Result runDynamicLoad(const InstrumentSetupConfig &cfg, const QVector<DynamicDataRow> &rows, int conditionIndex,
                             const DynamicMetaRow &meta, DynamicLoadAction action, bool syncEnabled = false,
                             bool syncDirty = false);
 
-    static Result runRelay(const Page1Config &cfg, const QVector<RelayDataRow> &rows, int conditionIndex,
+    static Result runRelay(const InstrumentSetupConfig &cfg, const QVector<RelayDataRow> &rows, int conditionIndex,
                            RelayAction action);
 
-    // apply* helpers（Page3ViewModel public API 代理來源）
+    // apply* helpers（ManualControlViewModel public API 代理來源）
     static void applyLoadVonSetting(DCLoad *dcLoad, int index, const QVector<QString> &vons);
 
     static void applyLoadValueSettings(DCLoad *dcLoad, int index, double value, const QString &mode,

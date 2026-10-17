@@ -36,7 +36,7 @@
 
 - 示波器目前支援 MSO 4/5/6 系列；策略、Brown Out、Auto Period、Capture 與同步控制仍需實機驗證。
 - Brown Out 的輸入支援 Chroma 61505／61509／6530／62000H，Vout 監測支援 6310／6310A／63600／63200A。
-- Page3 顯示 `UNKNOWN` 代表輸出狀態未確認；關閉程式不代表已關閉儀器輸出。
+- ManualControl 顯示 `UNKNOWN` 代表輸出狀態未確認；關閉程式不代表已關閉儀器輸出。
 - Chroma 6310／6310A／63600 的 CV 設定尚未完成；型號列入清單不代表所有模式均已支援。
 
 [返回文件導覽](README.md#文件導覽)

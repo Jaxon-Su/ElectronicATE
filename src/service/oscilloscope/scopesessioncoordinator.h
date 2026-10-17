@@ -12,10 +12,10 @@ class ScopeSessionCoordinator : public QObject
 {
     Q_OBJECT
   public:
-    using Connect = std::function<OscilloscopeManager::OscMap(const Page1Config &)>;
+    using Connect = std::function<OscilloscopeManager::OscMap(const InstrumentSetupConfig &)>;
     explicit ScopeSessionCoordinator(Connect connectScopes, QObject *parent = nullptr);
     ~ScopeSessionCoordinator() override;
-    void queueConfiguration(const Page1Config &config);
+    void queueConfiguration(const InstrumentSetupConfig &config);
     void setBlocked(bool blocked);
     bool isConfigurationBusy() const { return m_updates.isRunning(); }
     bool hasPendingConfiguration() const { return m_updates.hasPending(); }
@@ -29,7 +29,7 @@ class ScopeSessionCoordinator : public QObject
     std::shared_ptr<CaptureSession> captureSession() const { return m_capture; }
     void observeLeases();
   signals:
-    void configurationAccepted(const Page1Config &config);
+    void configurationAccepted(const InstrumentSetupConfig &config);
     void scopesAboutToReset();
     void scopesChanged();
     void stateChanged();
@@ -42,7 +42,7 @@ class ScopeSessionCoordinator : public QObject
     Connect m_connect;
     OscilloscopeManager m_scopes;
     PendingConfigUpdate m_updates;
-    Page1Config m_config;
+    InstrumentSetupConfig m_config;
     QTimer m_debounce, m_leaseObserver;
     quint64 m_revision = 0;
     bool m_blocked = false, m_observedBusy = false;

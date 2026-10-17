@@ -145,7 +145,7 @@ QByteArray sheet(const QVector<Row> &rows, const QList<int> &indices, const Canc
     xml.writeStartElement("cols");
     xml.writeEmptyElement("col");
     xml.writeAttribute("min", "1");
-    xml.writeAttribute("max", "19");
+    xml.writeAttribute("max", "21");
     xml.writeAttribute("width", "20");
     xml.writeAttribute("customWidth", "1");
     xml.writeEndElement();
@@ -153,7 +153,7 @@ QByteArray sheet(const QVector<Row> &rows, const QList<int> &indices, const Canc
     QStringList headings{"Folder", "Image",    "Channel",  "Scope",           "Max",          "Max unit",
                          "Min",    "Min unit", "RMS",      "RMS unit",        "Mean",         "Mean unit",
                          "Status", "Issues",   "Reviewed", "Original values", "Raw response", "Source path",
-                         "Note"};
+                         "Note", "Manually edited", "Original OCR error"};
     xml.writeStartElement("row");
     xml.writeAttribute("r", "1");
     for (int i = 0; i < headings.size(); ++i)
@@ -184,13 +184,15 @@ QByteArray sheet(const QVector<Row> &rows, const QList<int> &indices, const Canc
         cell(xml, r, 16, row.rawResponse);
         cell(xml, r, 17, row.imagePath);
         cell(xml, r, 18, row.note);
+        cell(xml, r, 19, row.modified ? "Yes" : "No");
+        cell(xml, r, 20, row.error);
         xml.writeEndElement();
         if (bytes.size() > 128 * 1024 * 1024)
             return {};
     }
     xml.writeEndElement();
     xml.writeEmptyElement("autoFilter");
-    xml.writeAttribute("ref", QString("A1:S%1").arg(r));
+    xml.writeAttribute("ref", QString("A1:U%1").arg(r));
     xml.writeEndElement();
     xml.writeEndDocument();
     return bytes;

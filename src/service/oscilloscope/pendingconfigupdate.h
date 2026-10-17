@@ -1,5 +1,5 @@
 #pragma once
-#include "page1config.h"
+#include "instrumentsetupconfig.h"
 #include <optional>
 #include <utility>
 
@@ -7,11 +7,11 @@
 // The caller supplies external blockers such as an active capture.
 class PendingConfigUpdate {
   public:
-    void enqueue(const Page1Config& config) { m_pending = config; }
+    void enqueue(const InstrumentSetupConfig& config) { m_pending = config; }
     bool hasPending() const { return m_pending.has_value(); }
     bool isRunning() const { return m_running; }
 
-    std::optional<Page1Config> tryStart(bool blocked)
+    std::optional<InstrumentSetupConfig> tryStart(bool blocked)
     {
         if (blocked || m_running || !m_pending)
             return std::nullopt;
@@ -25,6 +25,6 @@ class PendingConfigUpdate {
     void complete() { m_running = false; }
 
   private:
-    std::optional<Page1Config> m_pending;
+    std::optional<InstrumentSetupConfig> m_pending;
     bool m_running = false;
 };

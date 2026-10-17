@@ -113,7 +113,8 @@ deploy-complete.bat
 # ============================================================
 
 # Local-only tests
-/tests/
+/tests/*
+!/tests/waveformocr/
 
 # Local documentation and agent skill
 /docs/

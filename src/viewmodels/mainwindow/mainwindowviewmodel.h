@@ -6,12 +6,12 @@
 #include "ixmlserializable.h"
 
 class MainWindowModel;
-class Page1ViewModel;
-class Page2ViewModel;
-class Page3ViewModel;
-class Page4ViewModel;
-class Page5ViewModel;
-class Page6ViewModel;
+class InstrumentSetupViewModel;
+class TestConditionsViewModel;
+class ManualControlViewModel;
+class CommandConsoleViewModel;
+class TestSequenceViewModel;
+class WaveformOcrViewModel;
 struct XmlOperationResult;
 
 class MainWindowViewModel : public QObject
@@ -23,17 +23,19 @@ class MainWindowViewModel : public QObject
     ~MainWindowViewModel();
 
     // Getter
-    Page1ViewModel *page1ViewModel() const { return m_page1ViewModel; }
-    Page2ViewModel *page2ViewModel() const { return m_page2ViewModel; }
-    Page3ViewModel *page3ViewModel() const { return m_page3ViewModel; }
-    Page4ViewModel *page4ViewModel() const { return m_page4ViewModel; }
-    Page5ViewModel *page5ViewModel() const { return m_page5ViewModel; }
-    Page6ViewModel *page6ViewModel() const { return m_page6ViewModel; }
+    InstrumentSetupViewModel *instrumentSetupViewModel() const { return m_instrumentSetupViewModel; }
+    TestConditionsViewModel *testConditionsViewModel() const { return m_testConditionsViewModel; }
+    ManualControlViewModel *manualControlViewModel() const { return m_manualControlViewModel; }
+    CommandConsoleViewModel *commandConsoleViewModel() const { return m_commandConsoleViewModel; }
+    TestSequenceViewModel *testSequenceViewModel() const { return m_testSequenceViewModel; }
+    WaveformOcrViewModel *waveformOcrViewModel() const { return m_waveformOcrViewModel; }
 
     // 檔案操作
     void saveConfig();
     void saveConfigAs();
     void loadConfig();
+    // Reapply the existing interlocks after cancelling a window-close attempt.
+    void updateControlPermissions();
 
   signals:
     void controlStateChanged();
@@ -49,16 +51,15 @@ class MainWindowViewModel : public QObject
     MainWindowModel *m_model;
 
     // 子 ViewModels
-    Page1ViewModel *m_page1ViewModel;
-    Page2ViewModel *m_page2ViewModel;
-    Page3ViewModel *m_page3ViewModel;
-    Page4ViewModel *m_page4ViewModel;
-    Page5ViewModel *m_page5ViewModel;
-    Page6ViewModel *m_page6ViewModel = nullptr;
+    InstrumentSetupViewModel *m_instrumentSetupViewModel;
+    TestConditionsViewModel *m_testConditionsViewModel;
+    ManualControlViewModel *m_manualControlViewModel;
+    CommandConsoleViewModel *m_commandConsoleViewModel;
+    TestSequenceViewModel *m_testSequenceViewModel;
+    WaveformOcrViewModel *m_waveformOcrViewModel = nullptr;
 
     void initializeViewModels();
     void setupPageConnections();
-    void updateControlPermissions();
     QList<IXmlSerializable *> xmlPages() const;
     bool reportXmlResult(const XmlOperationResult &result, const QString &fileName, bool saving);
 };

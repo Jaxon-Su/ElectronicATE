@@ -6,7 +6,7 @@
 #include "transientstrategy.h"
 #include "measurementresultmapping.h"
 #include "../operations/configuredinputs.h"
-#include "page5conditionmapping.h"
+#include "testsequenceconditionmapping.h"
 #include <QScopeGuard>
 #include <QDir>
 #include <QDateTime>
@@ -16,7 +16,7 @@
 
 namespace
 {
-InputSelection selectedInputs(const Page5ExecutionContext &context, const TaskSettings::Measurement &settings)
+InputSelection selectedInputs(const TestSequenceExecutionContext &context, const TaskSettings::Measurement &settings)
 {
     const auto inputs = settings.inputs;
     if (!inputs.valid(context.inputs.size(), context.dcInputs.size()))
@@ -62,9 +62,9 @@ bool TestRunService::executeDynamicTest(const TaskSettings::Steady &cfg)
 
 bool TestRunService::executeGroupTest(const TaskSettings::Group &cfg)
 {
-    const auto single = Page5TaskKind::singleKind(cfg.kind);
-    const bool dynamic = single == Page5TaskKind::Kind::Dynamic;
-    const QString groupName = Page5TaskKind::name(cfg.kind);
+    const auto single = TestSequenceTaskKind::singleKind(cfg.kind);
+    const bool dynamic = single == TestSequenceTaskKind::Kind::Dynamic;
+    const QString groupName = TestSequenceTaskKind::name(cfg.kind);
     auto capture = prepareStrategyCapture(cfg.measurement(), groupName);
     for (int index : cfg.loads)
         m_attemptResult.conditions.append({{index, dynamic ? m_context.dynamics[index].label : m_context.loads[index].label,
@@ -90,7 +90,7 @@ bool TestRunService::executeGroupTest(const TaskSettings::Group &cfg)
                 if constexpr (std::is_same_v<Settings, TaskSettings::Steady>)
                     return executeSteadyTest(settings, dynamic, &condition, capture);
                 else
-                    return executeTransient(Page5TaskKind::name(single), settings, &condition, capture);
+                    return executeTransient(TestSequenceTaskKind::name(single), settings, &condition, capture);
             }, member);
         } catch (const std::exception &error) {
             failTask(groupName + ": " + QString::fromUtf8(error.what()));
@@ -122,7 +122,7 @@ bool TestRunService::executeGroupTest(const TaskSettings::Group &cfg)
 }
 
 bool TestRunService::executeSteadyTest(const TaskSettings::Steady &cfg, bool dynamic,
-                                      Page5ConditionResult *condition,
+                                      TestSequenceConditionResult *condition,
                                       const std::shared_ptr<StrategyWaveformCapture> &groupCapture)
 {
     const QString strategyName = dynamic ? "Dynamic Test" : "Static Test";
@@ -156,7 +156,7 @@ bool TestRunService::executeSteadyTest(const TaskSettings::Steady &cfg, bool dyn
         if (capture)
             request.capture =
                 [capture, instrument = m_context.scope,
-                 source = condition ? condition->condition : Page5ConditionSource{cfg.load, dynamic ? m_context.dynamics[cfg.load].label : m_context.loads[cfg.load].label, dynamic ? LoadConditionKind::Dynamic : LoadConditionKind::Static}](const ScopeCaptureRecord &record) {
+                 source = condition ? condition->condition : TestSequenceConditionSource{cfg.load, dynamic ? m_context.dynamics[cfg.load].label : m_context.loads[cfg.load].label, dynamic ? LoadConditionKind::Dynamic : LoadConditionKind::Static}](const ScopeCaptureRecord &record) {
                     capture->record(instrument, record, source);
                 };
         auto strategy = m_dependencies.strategy(request);
@@ -176,21 +176,24 @@ bool TestRunService::executeSteadyTest(const TaskSettings::Steady &cfg, bool dyn
             m_cleanupFailed = true;
         if (condition) {
             condition->error = result.error;
-            condition->channels += toPage5Channels(result.channels);
+            condition->trials = result.trials;
+            condition->channels = representativeChannels(result.trials);
         } else {
             m_attemptResult.error = result.error;
-            m_attemptResult.channels += toPage5Channels(result.channels);
+            m_attemptResult.trials = result.trials;
+            m_attemptResult.channels = representativeChannels(result.trials);
             m_attemptResult.summary = m_actionResults.join("\n");
             emit measurementReady(m_currentTaskIndex, m_attemptResult, false);
         }
         checkStop();
         if (!result.success || result.cleanupFailed)
             throw std::runtime_error(result.error.toStdString());
-        for (const auto &ch : result.channels)
-            emit logMessage(QString("    CH%1 Max=%2 Min=%3 RMS=%4 Mean=%5")
+        for (const auto &ch : representativeChannels(result.trials))
+            emit logMessage(QString("    CH%1 Max=%2 Min=%3 RMS=%4 Mean=%5 [%6, record %7]")
                                 .arg(ch.channel)
                                 .arg(formatOscMeasurement(ch.maximum), formatOscMeasurement(ch.minimum),
-                                     formatOscMeasurement(ch.rms), formatOscMeasurement(ch.mean)));
+                                     formatOscMeasurement(ch.rms), formatOscMeasurement(ch.mean))
+                                .arg(measurementDirectionName(ch.direction)).arg(ch.sourceSequence));
         checkStop();
         const bool cleaned = cleanupSteadyOutputs(input, loadIndex, dynamic);
         outputsAttempted = false;
@@ -226,11 +229,11 @@ bool TestRunService::prepareSteadyOutputs(const TaskSettings::Steady &cfg, bool 
     auto load = [&](LoadAction action) {
         if (!dynamic)
             return m_dependencies.instruments.load(
-                m_context.page1, m_context.loads, loadIndex, m_context.loadMeta,
+                m_context.instrumentSetup, m_context.loads, loadIndex, m_context.loadMeta,
                 action, m_context.loadSync.enabled);
         const bool dirty = m_context.loadSync.dirty;
         auto result = m_dependencies.instruments.dynamic(
-            m_context.page1, m_context.dynamics, loadIndex, m_context.dynamicMeta,
+            m_context.instrumentSetup, m_context.dynamics, loadIndex, m_context.dynamicMeta,
             action == LoadAction::LoadOn ? DynamicLoadAction::LoadOn : DynamicLoadAction::Change,
             m_context.loadSync.enabled, dirty);
         // Preparation does not start/restore the complete sync plan. Consume only after ON succeeds.
@@ -307,11 +310,11 @@ InstrumentOperationResult TestRunService::runSelectedInputs(InputSelection input
     // including after cancellation or an exception from the first source.
     if (inputs.ac >= 0)
         operate("AC Input", [&] {
-            return m_dependencies.instruments.input(m_context.page1, m_context.inputs[inputs.ac], action);
+            return m_dependencies.instruments.input(m_context.instrumentSetup, m_context.inputs[inputs.ac], action);
         });
     if (inputs.dc >= 0 && (!turningOn || errors.isEmpty()))
         operate("DC Input", [&] {
-            return m_dependencies.instruments.dcGroup(m_context.page1, m_context.dcInputs[inputs.dc], action);
+            return m_dependencies.instruments.dcGroup(m_context.instrumentSetup, m_context.dcInputs[inputs.dc], action);
         });
     return {errors.isEmpty(), errors.join(';')};
 }
@@ -331,10 +334,10 @@ bool TestRunService::turnOffUnselectedInputs(InputSelection inputs)
         m_cleanupFailed = true;
         failTask(name + " None → OFF failed: " + error);
     };
-    if (inputs.ac < 0 && hasConfiguredAc(m_context.page1))
-        off("AC", [&] { return m_dependencies.instruments.input(m_context.page1, {}, InputAction::PowerOff); });
-    if (inputs.dc < 0 && hasConfiguredDc(m_context.page1))
-        off("DC", [&] { return m_dependencies.instruments.dcGroup(m_context.page1, {}, InputAction::PowerOff); });
+    if (inputs.ac < 0 && hasConfiguredAc(m_context.instrumentSetup))
+        off("AC", [&] { return m_dependencies.instruments.input(m_context.instrumentSetup, {}, InputAction::PowerOff); });
+    if (inputs.dc < 0 && hasConfiguredDc(m_context.instrumentSetup))
+        off("DC", [&] { return m_dependencies.instruments.dcGroup(m_context.instrumentSetup, {}, InputAction::PowerOff); });
     return success;
 }
 
@@ -366,10 +369,10 @@ bool TestRunService::cleanupSteadyOutputs(InputSelection input, int loadIndex, b
     });
     cleanup("Load OFF", [&] {
         return dynamic
-                   ? m_dependencies.instruments.dynamic(m_context.page1, m_context.dynamics, loadIndex,
+                   ? m_dependencies.instruments.dynamic(m_context.instrumentSetup, m_context.dynamics, loadIndex,
                                                         m_context.dynamicMeta, DynamicLoadAction::LoadOff,
                                                         m_context.loadSync.enabled, m_context.loadSync.dirty)
-                   : m_dependencies.instruments.load(m_context.page1, m_context.loads, loadIndex,
+                   : m_dependencies.instruments.load(m_context.instrumentSetup, m_context.loads, loadIndex,
                                                      m_context.loadMeta, LoadAction::LoadOff,
                                                      m_context.loadSync.enabled);
     });
@@ -388,7 +391,7 @@ bool TestRunService::executeShortThenTurnOn(const TaskSettings::Transient &cfg)
 }
 
 bool TestRunService::executeTransient(const QString &name, const TaskSettings::Transient &cfg,
-                                      Page5ConditionResult *condition,
+                                      TestSequenceConditionResult *condition,
                                       const std::shared_ptr<StrategyWaveformCapture> &groupCapture)
 {
     if (!m_context.scope) {
@@ -399,7 +402,7 @@ bool TestRunService::executeTransient(const QString &name, const TaskSettings::T
     if (load < 0 || load >= m_context.loads.size()) {
         return failTask(name + ": select a valid load condition");
     }
-    const auto masks = transientRelayConditions(m_context, Page5TaskKind::fromName(name), cfg);
+    const auto masks = transientRelayConditions(m_context, TestSequenceTaskKind::fromName(name), cfg);
     const auto &shortMask = masks.shortMask;
     const auto &dischargeMask = masks.dischargeMask;
     const bool needsShort = masks.needsShort, needsDischarge = masks.needsDischarge;
@@ -424,7 +427,7 @@ bool TestRunService::executeTransient(const QString &name, const TaskSettings::T
     };
     context.load = [this, load](bool on, QString &error) {
         const auto result = m_dependencies.instruments.load(
-            m_context.page1, m_context.loads, load, m_context.loadMeta,
+            m_context.instrumentSetup, m_context.loads, load, m_context.loadMeta,
             on ? LoadAction::LoadOn : LoadAction::LoadOff, m_context.loadSync.enabled);
         error = result.errorMessage;
         return result.success;
@@ -441,7 +444,7 @@ bool TestRunService::executeTransient(const QString &name, const TaskSettings::T
             if ((shorted && shortMask[i] == "ON") || (discharge && dischargeMask[i] == "ON"))
                 row.values[i] = "ON";
         // RelayOn applies the whole row (ON and OFF); never use RelayOff to release only discharge.
-        const auto result = m_dependencies.instruments.relay(m_context.page1, {row}, 0, RelayAction::RelayOn);
+        const auto result = m_dependencies.instruments.relay(m_context.instrumentSetup, {row}, 0, RelayAction::RelayOn);
         error = result.errorMessage;
         if (needsShort && result.success && !shorted && !discharge) m_shortCircuit = {};
         return result.success;
@@ -453,7 +456,7 @@ bool TestRunService::executeTransient(const QString &name, const TaskSettings::T
     if (capture)
         request.capture =
             [capture, instrument = m_context.scope,
-             source = condition ? condition->condition : Page5ConditionSource{cfg.load, m_context.loads[cfg.load].label, LoadConditionKind::Static}](const ScopeCaptureRecord &record) {
+             source = condition ? condition->condition : TestSequenceConditionSource{cfg.load, m_context.loads[cfg.load].label, LoadConditionKind::Static}](const ScopeCaptureRecord &record) {
                 capture->record(instrument, record, source);
             };
     auto strategy = m_dependencies.strategy(request);
@@ -484,19 +487,24 @@ bool TestRunService::executeTransient(const QString &name, const TaskSettings::T
         m_cleanupFailed = true;
     if (condition) {
         condition->error = result.error;
-        condition->channels += toPage5Channels(result.channels, false);
+        condition->trials = result.trials;
+        condition->channels = representativeChannels(result.trials);
         if (!result.success || result.cleanupFailed)
             failTask(name + ": " + result.error);
     } else {
         m_attemptResult.error = result.error;
-        m_attemptResult.channels += toPage5Channels(result.channels, false);
+        m_attemptResult.trials = result.trials;
+        m_attemptResult.channels = representativeChannels(result.trials);
         m_attemptResult.summary = m_actionResults.join("\n");
         emit measurementReady(m_currentTaskIndex, m_attemptResult, result.success && !result.cleanupFailed);
     }
-    for (const auto &ch : result.channels)
-        emit logMessage(QString("  CH%1 Max=%2 Min=%3")
+    for (const auto &ch : representativeChannels(result.trials))
+        emit logMessage(QString("  %1 CH%2 record %3: Max=%4 Min=%5 RMS=%6 Mean=%7")
+                            .arg(measurementDirectionName(ch.direction))
                             .arg(ch.channel)
-                             .arg(formatOscMeasurement(ch.maximum), formatOscMeasurement(ch.minimum)));
+                            .arg(ch.sourceSequence)
+                            .arg(formatOscMeasurement(ch.maximum), formatOscMeasurement(ch.minimum),
+                                 formatOscMeasurement(ch.rms), formatOscMeasurement(ch.mean)));
     emit logMessage(name + (result.success ? ": done" : ": failed — " + result.error));
     return result.success && !result.cleanupFailed;
 }
@@ -506,7 +514,7 @@ TestRunService::prepareStrategyCapture(bool enabled, const CaptureOptions &setti
 {
     if (!enabled)
         return {};
-    const auto labels = Page5Conditions::inputOptions(m_context);
+    const auto labels = TestSequenceConditions::inputOptions(m_context);
     return std::make_shared<StrategyWaveformCapture>(
         settings, m_context.reportDirectory,
         m_stopRequested,

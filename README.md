@@ -10,18 +10,20 @@ ElectronicATE 是一套用於電源供應器、電子負載、示波器與繼電
 
 | 文件 | 內容 |
 | --- | --- |
-| [操作與畫面](USER_GUIDE.md) | Page1–6 功能、任務與報表、負載同步、本機 Ollama 圖片辨識與 Excel 匯出、畫面截圖。 |
+| [操作與畫面](USER_GUIDE.md) | InstrumentSetup／TestConditions／ManualControl／CommandConsole／TestSequence／WaveformOcr 功能、任務與報表、負載同步、本機 Ollama 圖片辨識與 Excel 匯出、畫面截圖。 |
 | [支援儀器與限制](SUPPORTED_INSTRUMENTS.md) | 各類儀器型號、尚未支援的模式及實機驗證限制。 |
 | [整體架構](ARCHITECTURE.md) | 跨頁接線與互鎖、完整架構圖及分層職責。 |
-| [Page3：手動控制流程](PAGE3_FLOW.md) | 手動控制、示波器連線、擷取與借用。 |
-| [Page5：自動測試流程](PAGE5_FLOW.md) | Session 管理背景執行、整批預檢、量測、Stop、清理與報表。 |
-| [Page5：量測策略](MEASUREMENT_STRATEGIES.md) | Static／Dynamic、暫態與 Short 流程、Group 逐負載結果、Auto Period 與 Brown Out。 |
+| [ManualControl：手動控制流程](MANUAL_CONTROL_FLOW.md) | 手動控制、示波器連線、擷取與借用。 |
+| [TestSequence：自動測試流程](TEST_SEQUENCE_FLOW.md) | Session 管理背景執行、整批預檢、量測、Stop、清理與報表。 |
+| [TestSequence：量測策略](MEASUREMENT_STRATEGIES.md) | Static／Dynamic、暫態與 Short 流程、Group 逐負載結果、Auto Period 與 Brown Out。 |
 
-使用者可先讀「操作與畫面」與「支援儀器與限制」；閱讀程式可先讀「Page3：手動控制流程」與「Page5：自動測試流程」，再對照「整體架構」。
+使用者可先讀「操作與畫面」與「支援儀器與限制」；閱讀程式可先讀「ManualControl：手動控制流程」與「TestSequence：自動測試流程」，再對照「整體架構」。
 
 ## 版本與下載
 
 版本與發布檔案請見 [GitHub Releases](https://github.com/Jaxon-Su/ElectronicATE/releases)。
+
+程式模組與文件統一使用 InstrumentSetup、TestConditions、ManualControl、CommandConsole、TestSequence、WaveformOcr 功能名稱。設定檔也採用功能名稱作為 XML 區段；請使用本版重新建立設定，舊數字區段格式不再支援。既有操作流程與儀器控制行為維持不變。
 
 ## 使用前確認
 

@@ -1,5 +1,5 @@
 #pragma once
-#include "page5resultrecord.h"
+#include "testsequenceresultrecord.h"
 #include "testrundependencies.h"
 #include "tasksettings.h"
 #include <QObject>
@@ -10,7 +10,7 @@
 #include <memory>
 #include "instrumentactions.h"
 #include "instrumentoperationresult.h"
-#include "page5taskpayload.h"
+#include "testsequencetaskpayload.h"
 #include "taskstatus.h"
 
 class StrategyWaveformCapture;
@@ -25,7 +25,7 @@ class TestRunService : public QObject
     ~TestRunService() override = default;
 
   public slots:
-    void startTasks(const QVector<TaskPayload> &payloads, const Page5ExecutionContext &context);
+    void startTasks(const QVector<TaskPayload> &payloads, const TestSequenceExecutionContext &context);
     void stop();
 
   signals:
@@ -33,9 +33,9 @@ class TestRunService : public QObject
     void retryCountChanged(int runPanelIndex, int attempt);
     void logMessage(const QString &msg);
     void taskResultChanged(int runPanelIndex, const QString &result);
-    void measurementReady(int runPanelIndex, const Page5ResultRecord &record, bool complete);
-    void resultRecordsReady(const QVector<Page5ResultRecord> &records);
-    void outputsUncertain(const Page1Config &config, const QVector<TableKind> &outputs,
+    void measurementReady(int runPanelIndex, const TestSequenceResultRecord &record, bool complete);
+    void resultRecordsReady(const QVector<TestSequenceResultRecord> &records);
+    void outputsUncertain(const InstrumentSetupConfig &config, const QVector<TableKind> &outputs,
                           const ShortCircuitProtection &protection = {});
     void finished();
 
@@ -56,7 +56,7 @@ class TestRunService : public QObject
     bool executeDelay(int totalMs);
     bool executeWriteOscilloscope(const TaskSettings::WriteScope &cfg);
     bool executeTransient(const QString &name, const TaskSettings::Transient &cfg,
-                          Page5ConditionResult *condition = nullptr,
+                          TestSequenceConditionResult *condition = nullptr,
                           const std::shared_ptr<StrategyWaveformCapture> &groupCapture = {});
     bool executeTurnOn(const TaskSettings::Transient &cfg);
     bool executeTurnOff(const TaskSettings::Transient &cfg);
@@ -74,7 +74,7 @@ class TestRunService : public QObject
     bool cleanupSteadyOutputs(InputSelection inputs, int load, bool dynamic, bool stopScope = true);
     QVector<std::function<void()>> m_pendingCleanups;
     bool executeSteadyTest(const TaskSettings::Steady &cfg, bool dynamic,
-                           Page5ConditionResult *condition = nullptr,
+                           TestSequenceConditionResult *condition = nullptr,
                            const std::shared_ptr<StrategyWaveformCapture> &groupCapture = {});
     bool executeStaticTest(const TaskSettings::Steady &cfg);
     bool executeDynamicTest(const TaskSettings::Steady &cfg);
@@ -83,12 +83,12 @@ class TestRunService : public QObject
     bool executeShortThenTurnOn(const TaskSettings::Transient &cfg);
 
     TestRunDependencies m_dependencies;
-    Page5ExecutionContext m_context;
+    TestSequenceExecutionContext m_context;
     QAtomicInt m_stopRequested = 0;
     bool m_cleanupFailed = false;
     bool m_attemptActive = false;
     int m_currentTaskIndex = -1;
     QStringList m_actionResults;
-    Page5ResultRecord m_attemptResult;
-    QVector<Page5ResultRecord> m_runResults;
+    TestSequenceResultRecord m_attemptResult;
+    QVector<TestSequenceResultRecord> m_runResults;
 };

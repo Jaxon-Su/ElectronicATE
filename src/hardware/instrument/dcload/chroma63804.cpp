@@ -119,7 +119,7 @@ void Chroma63804::setStaticCurrent(const StaticCurrentParam& param)
 //    動態電流切換靠「重新發送 CURR:DC 指令」或「外部 TTL 觸發」實現。
 //    本方法模擬單次切換：先設定初始電流，再切換到目標電流。
 //
-//  DynamicCurrentParam 語意（接受 Page3ViewModel 傳入格式，驅動層內部換算）：
+//  DynamicCurrentParam 語意（接受 ManualControlViewModel 傳入格式，驅動層內部換算）：
 //    levels[0]   = 初始電流 I₀ (A)          → CURR:DC <I₀>
 //    levels[1]   = 目標電流 I₁ (A)          → CURR:DC <I₁>（單次切換）
 //    timings[0]  = T1 停留時間 (s)          → 內部換算為上升斜率 (A/ms)
@@ -131,9 +131,9 @@ void Chroma63804::setStaticCurrent(const StaticCurrentParam& param)
 //    結果 clamp 至 [4, 600] A/ms（手冊限制）
 //
 //  ⚠ 換算說明：
-//    Page3 傳入 T1/T2 秒，代表「希望電流在 T 秒內完成切換」
+//    ManualControl 傳入 T1/T2 秒，代表「希望電流在 T 秒內完成切換」
 //    63804 需要的是斜率（每毫秒幾安培），由驅動層自行換算
-//    上層 Page3ViewModel 不需要任何修改
+//    上層 ManualControlViewModel 不需要任何修改
 void Chroma63804::setDynamicCurrent(const DynamicCurrentParam& param)
 {
     if (param.levels.isEmpty())

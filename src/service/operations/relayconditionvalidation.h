@@ -1,10 +1,10 @@
 #pragma once
-#include "page1config.h"
-#include "page2config.h"
+#include "instrumentsetupconfig.h"
+#include "testconditionsconfig.h"
 #include <QSet>
 
 // Pure validation for applying a condition; emergency OFF must not depend on it.
-inline QString validateRelayCondition(const Page1Config &config, const QVector<RelayDataRow> &rows, int index)
+inline QString validateRelayCondition(const InstrumentSetupConfig &config, const QVector<RelayDataRow> &rows, int index)
 {
     if (index < 0 || index >= rows.size())
         return "Selected relay row is out of range";

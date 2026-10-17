@@ -8,12 +8,12 @@
 class MainWindowViewModel;
 class MainWindowModel;
 class MainPageTabs;
-class Page1;
-class Page2;
-class Page3;
-class Page4;
-class Page5;
-class Page6;
+class InstrumentSetupPage;
+class TestConditionsPage;
+class ManualControlPage;
+class CommandConsolePage;
+class TestSequencePage;
+class WaveformOcrPage;
 
 class MainWindow : public QMainWindow
 {
@@ -23,12 +23,12 @@ class MainWindow : public QMainWindow
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
-    Page1 *page1() const { return m_page1; }
-    Page2 *page2() const { return m_page2; }
-    Page3 *page3() const { return m_page3; }
-    Page4 *page4() const { return m_page4; }
-    Page5 *page5() const { return m_page5; }
-    Page6 *page6() const { return m_page6; }
+    InstrumentSetupPage *instrumentSetup() const { return m_instrumentSetup; }
+    TestConditionsPage *testConditions() const { return m_testConditions; }
+    ManualControlPage *manualControl() const { return m_manualControl; }
+    CommandConsolePage *commandConsole() const { return m_commandConsole; }
+    TestSequencePage *testSequence() const { return m_testSequence; }
+    WaveformOcrPage *waveformOcr() const { return m_waveformOcr; }
 
   protected:
     void closeEvent(QCloseEvent *event) override;
@@ -48,15 +48,20 @@ class MainWindow : public QMainWindow
     MainPageTabs *m_pageTabs = nullptr; // 儲存指標供 run 鎖定使用
 
     // Pages - 初始化為 nullptr
-    Page1 *m_page1 = nullptr;
-    Page2 *m_page2 = nullptr;
-    Page3 *m_page3 = nullptr;
-    Page4 *m_page4 = nullptr;
-    Page5 *m_page5 = nullptr;
-    Page6 *m_page6 = nullptr;
+    InstrumentSetupPage *m_instrumentSetup = nullptr;
+    TestConditionsPage *m_testConditions = nullptr;
+    ManualControlPage *m_manualControl = nullptr;
+    CommandConsolePage *m_commandConsole = nullptr;
+    TestSequencePage *m_testSequence = nullptr;
+    WaveformOcrPage *m_waveformOcr = nullptr;
 
     bool m_closeRequested = false;
     bool m_outputExitConfirmed = false;
+    enum class WaveformOcrCloseState { Undecided, Prompting, Exporting, Discarded };
+    WaveformOcrCloseState m_waveformOcrCloseState = WaveformOcrCloseState::Undecided;
+    bool prepareWaveformOcrClose();
+    void cancelClose();
+    void disableClosingUi();
     void updateControlPageLock();
     void setupUI();
     void setupMenuBar();
