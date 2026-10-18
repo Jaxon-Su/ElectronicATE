@@ -3,7 +3,7 @@
 #include <QDebug>
 #include <exception>
 
-OscilloscopeManager::OscMap buildConnectedOscilloscopes(const Page1Config& config,
+OscilloscopeManager::OscMap buildConnectedOscilloscopes(const InstrumentSetupConfig& config,
                                                         const OscilloscopeCreator& create)
 {
     OscilloscopeManager::OscMap result;

@@ -36,9 +36,21 @@ inline bool prepareMsoSteadyAcquisition(Oscilloscope &scope, QAtomicInt &stop, Q
     const auto source = QRegularExpression("(?:^|[ :])CH(\\d+)$", QRegularExpression::CaseInsensitiveOption)
                             .match(scope.getTriggerSource().trimmed());
     const int channel = source.hasMatch() ? source.captured(1).toInt() : -1;
-    if (channel < 1 || channel > scope.getTotalChannel() || !scope.isChannelEnabled(channel))
+    if (channel < 1 || channel > scope.getTotalChannel())
     {
         error = "Steady startup requires an enabled analog trigger channel";
+        return false;
+    }
+    const bool enabled = scope.isChannelEnabled(channel);
+    const QString stateError = scope.lastError();
+    if (!stateError.isEmpty())
+    {
+        error = QString("Steady startup CH%1 display STATE query failed: %2").arg(channel).arg(stateError);
+        return false;
+    }
+    if (!enabled)
+    {
+        error = QString("Steady startup requires enabled CH%1").arg(channel);
         return false;
     }
     const double level = scope.getChannelScale(channel) * 0.04;

@@ -72,6 +72,14 @@ bool MSOSeries456::selectEdgeTrigger(QString &error)
     return writeConfigurationCommand("TRIGger:A:TYPe EDGE", error);
 }
 
+bool MSOSeries456::setEdgeTriggerChannel(int channel, QString &error)
+{
+    if (channel < 1 || channel > getTotalChannel())
+        return unsupportedSetting("setEdgeTriggerChannel: invalid channel", error);
+    // 4/5/6 MSO programmer manual 077130526, p.1758.
+    return writeConfigurationCommand(QString("TRIGger:A:EDGE:SOUrce CH%1").arg(channel), error);
+}
+
 bool MSOSeries456::setEdgeSlope(ScopeTriggerSlope slope, QString &error)
 {
     switch (slope) {

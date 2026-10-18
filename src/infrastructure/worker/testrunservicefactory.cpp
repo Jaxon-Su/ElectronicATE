@@ -13,13 +13,13 @@ namespace
 InstrumentOperations hardwareOperations()
 {
     InstrumentOperations operations;
-    operations.input = [](const Page1Config &config, const InputRow &row, InputAction action) {
+    operations.input = [](const InstrumentSetupConfig &config, const InputRow &row, InputAction action) {
         return InstrumentExecutor::runInput(config, row, action);
     };
     operations.relay = &InstrumentExecutor::runRelay;
     operations.load = &InstrumentExecutor::runLoad;
     operations.dynamic = &InstrumentExecutor::runDynamicLoad;
-    operations.dcGroup = [](const Page1Config &config, const DcGroup &group, InputAction action) {
+    operations.dcGroup = [](const InstrumentSetupConfig &config, const DcGroup &group, InputAction action) {
         return runDcGroup(config, group, action, &CommunicationFactory::create);
     };
     return operations;
@@ -42,7 +42,7 @@ TestRunDependencies productionDependencies(InstrumentOperations instruments)
         return prepareOscilloscopeSettings(values, model, channels, configuration, error);
     };
     result.autoPeriod = &adjustOscilloscopeAutoPeriod;
-    result.prepareBrownOut = [operations = result.instruments](const Page5ExecutionContext &context,
+    result.prepareBrownOut = [operations = result.instruments](const TestSequenceExecutionContext &context,
                                                                const BrownOut::Settings &settings) {
         return prepareBrownOutIo(context, settings, operations, &CommunicationFactory::create);
     };

@@ -1,5 +1,5 @@
 #pragma once
-#include "page5taskpayload.h"
+#include "testsequencetaskpayload.h"
 #include "tasksettings.h"
 
 struct TransientRelayConditions {
@@ -8,19 +8,19 @@ struct TransientRelayConditions {
 };
 
 // Pure validation shared by whole-run preflight and execution. No device access.
-inline TransientRelayConditions transientRelayConditions(const Page5ExecutionContext &context,
-                                                         Page5TaskKind::Kind kind,
+inline TransientRelayConditions transientRelayConditions(const TestSequenceExecutionContext &context,
+                                                         TestSequenceTaskKind::Kind kind,
                                                          const TaskSettings::Transient &settings)
 {
-    using Kind = Page5TaskKind::Kind;
-    const auto single = Page5TaskKind::singleKind(kind);
-    const bool shorted = single == Kind::OnShort || single == Kind::ShortOn;
+    using Kind = TestSequenceTaskKind::Kind;
+    const auto single = TestSequenceTaskKind::singleKind(kind);
+    const bool shorted = single == Kind::OnShort || single == Kind::ShortOn || single == Kind::OnShortDescent;
     const bool discharge = single == Kind::TurnOn || shorted;
     TransientRelayConditions result{shorted, discharge, {}, {}};
     if (!shorted && !discharge) return result;
-    if (context.page1.relayOutputs <= 0)
+    if (context.instrumentSetup.relayOutputs <= 0)
         throw std::invalid_argument("Select relay conditions with mapped ON outputs (short/discharge)");
-    result.shortMask.fill("OFF", context.page1.relayOutputs);
+    result.shortMask.fill("OFF", context.instrumentSetup.relayOutputs);
     result.dischargeMask = result.shortMask;
     auto read = [&](int index, bool required, QVector<QString> &mask) {
         if (!required) return;
@@ -34,7 +34,7 @@ inline TransientRelayConditions transientRelayConditions(const Page5ExecutionCon
             if (mask[i] != "ON") continue;
             hasOn = true;
             bool mapped = false;
-            for (const auto &instrument : context.page1.instruments) {
+            for (const auto &instrument : context.instrumentSetup.instruments) {
                 if (instrument.type != "Relay" || !instrument.enabled || instrument.getResourceString().isEmpty())
                     continue;
                 for (const auto &channel : instrument.channels)

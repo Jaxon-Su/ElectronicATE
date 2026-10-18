@@ -24,3 +24,13 @@ struct OscilloscopeSettings {
         std::optional<QString> source, slope;
     } trigger;
 };
+
+// A fresh snapshot after all settings have been applied. Never reuse a previous
+// run's values when a query fails; the driver publishes only a complete snapshot.
+struct OscilloscopeConfigurationResult {
+    struct Horizontal {
+        QString mode, adjustment;
+        double secondsPerDivision = 0, sampleRate = 0, recordLength = 0, divisions = 0;
+    };
+    std::optional<Horizontal> horizontal;
+};

@@ -15,7 +15,7 @@ namespace OscSharedData {
 
 // 通用時間軸（1ns ~ 10s，所有型號共用）
 inline const QStringList TIMESCALES = {"1ns",   "2ns",   "5ns",   "10ns", "20ns", "50ns", "100ns", "200ns",
-                                       "500ns", "1us",   "2us",   "5us",  "10us", "20us", "50us",  "100us",
+                                       "500ns", "1us",   "2us",   "5us",  "10us", "16us", "20us", "50us",  "100us",
                                        "200us", "500us", "1ms",   "2ms",  "5ms",  "10ms", "20ms",  "50ms",
                                        "100ms", "200ms", "500ms", "1s",   "2s",   "5s",   "10s"};
 
@@ -52,16 +52,18 @@ inline const QStringList MSO456_HORZ_MODES = {"AUTO", "MANual"};
 //   RECORDLength    → Record Length 跟著 SR 變，Timescale 盡量維持
 inline const QStringList MSO456_HORZ_CONFIGS = {"HORIZontalscale", "RECORDLength"};
 //
-// Sample Rate 常用預設值（MSO44B 最大 6.25 GS/s）
+// Sample Rate presets, not a hardware capability table. The dialog also keeps
+// custom values; the Driver reads back the rate accepted by the instrument.
 //   HORizontal:MODe:SAMPLERate <NR1>（單位：S/s）
 //   ViewModel 送出前轉換顯示字串 → NR1：
 //     "6.25GS/s"  → 6.25e9
 //     "312.5MS/s" → 312.5e6
 //     "1.25MS/s"  → 1.25e6
 //   MANual 模式下才可設定；AUTO 模式時 UI 禁用
-inline const QStringList MSO456_SAMPLE_RATES = {"6.25GS/s",  "3.125GS/s",  "1.5625GS/s", "625MS/s",
+inline const QStringList MSO456_SAMPLE_RATES = {"6.25GS/s",  "3.125GS/s",  "1.5625GS/s", "1.25GS/s", "625MS/s",
                                                 "312.5MS/s", "156.25MS/s", "62.5MS/s",   "31.25MS/s",
-                                                "12.5MS/s",  "6.25MS/s",   "3.125MS/s",  "1.25MS/s"};
+                                                "12.5MS/s",  "6.25MS/s",   "3.125MS/s",  "1.25MS/s",
+                                                "1MS/s", "625kS/s", "100kS/s"};
 //
 // Record Length 常用預設值
 //   HORizontal:MODe:RECOrdlength <NR1>（單位：samples）

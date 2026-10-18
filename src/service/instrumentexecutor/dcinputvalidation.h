@@ -1,6 +1,6 @@
 #pragma once
-#include "page1config.h"
-#include "page2config.h"
+#include "instrumentsetupconfig.h"
+#include "testconditionsconfig.h"
 #include "dcsourcespec/chroma62000spec.h"
 #include <array>
 #include <cmath>
@@ -12,7 +12,7 @@ struct DcInputPlan {
 };
 
 // Pure validation shared by batch preflight and the executor. No transports.
-inline QString prepareDcInputs(const Page1Config &config, const DcGroup &rows, DcInputPlan &plan)
+inline QString prepareDcInputs(const InstrumentSetupConfig &config, const DcGroup &rows, DcInputPlan &plan)
 {
     for (int source = 0; source < qBound(1, config.dcInputs, 3); ++source) {
         const QString name = QString("DC Source%1").arg(source + 1);
@@ -25,7 +25,7 @@ inline QString prepareDcInputs(const Page1Config &config, const DcGroup &rows, D
         if (!instrument || !instrument->enabled) { plan.sources[source] = nullptr; continue; }
         const auto spec = Chroma62000Spec::forModel(instrument->modelName);
         const auto resource = instrument->getResourceString().trimmed();
-        if (!spec || resource.isEmpty()) return name + ": configure model and address in Page1.";
+        if (!spec || resource.isEmpty()) return name + ": configure model and address in InstrumentSetup.";
         if (plan.resources.contains(resource, Qt::CaseInsensitive)) return name + ": DC Sources must use distinct addresses.";
         plan.resources << resource;
         bool vOk = false, iOk = false;
@@ -34,7 +34,7 @@ inline QString prepareDcInputs(const Page1Config &config, const DcGroup &rows, D
         if (!vOk || !iOk || !std::isfinite(plan.volts[source]) || !std::isfinite(plan.amps[source]) ||
             plan.volts[source] < 0 || plan.volts[source] > spec->maxVoltage ||
             plan.amps[source] < 0 || plan.amps[source] > spec->maxCurrent)
-            return name + ": invalid Vin or I Limit in the selected Page2 Index.";
+            return name + ": invalid Vin or I Limit in the selected TestConditions Index.";
     }
-    return plan.resources.isEmpty() ? "Enable at least one DC Source in Page1." : QString{};
+    return plan.resources.isEmpty() ? "Enable at least one DC Source in InstrumentSetup." : QString{};
 }

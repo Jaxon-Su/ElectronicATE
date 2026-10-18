@@ -27,6 +27,7 @@ struct Row
     QString error;
     QString note;
     bool reviewed = false;
+    bool modified = false; // Manual value edits; originalValues/rawResponse/error retain OCR evidence.
 };
 struct ExportResult
 {

@@ -7,7 +7,7 @@
 #include <stdexcept>
 
 InstrumentOperationResult
-runDcInput(const Page1Config& config, int source, const DcRow& row, InputAction action,
+runDcInput(const InstrumentSetupConfig& config, int source, const DcRow& row, InputAction action,
            const std::function<ICommunication*(const QString&)>& createCommunication)
 {
     bool outputWriteAttempted = false;
@@ -25,7 +25,7 @@ runDcInput(const Page1Config& config, int source, const DcRow& row, InputAction 
             }
         }
         if (!selected || !selected->enabled)
-            return {false, name + ": enable the instrument in Page1 first.", true};
+            return {false, name + ": enable the instrument in InstrumentSetup first.", true};
         const auto spec = Chroma62000Spec::forModel(selected->modelName);
         if (!spec)
             return {false, name + ": unsupported DC Source model.", true};
@@ -40,7 +40,7 @@ runDcInput(const Page1Config& config, int source, const DcRow& row, InputAction 
             if (!voltageOk || !currentOk || !std::isfinite(voltage) || !std::isfinite(current) ||
                 voltage < 0 || voltage > spec->maxVoltage || current < 0 || current > spec->maxCurrent)
                 return {false,
-                        name + ": enter valid Vin (V) and I Limit (A) within the model ratings in Page2.",
+                        name + ": enter valid Vin (V) and I Limit (A) within the model ratings in TestConditions.",
                         true};
         }
         // Destruction order matters: the driver borrows the transport.
@@ -79,7 +79,7 @@ runDcInput(const Page1Config& config, int source, const DcRow& row, InputAction 
 }
 
 InstrumentOperationResult
-runDcGroup(const Page1Config& config, const DcGroup& rows, InputAction action,
+runDcGroup(const InstrumentSetupConfig& config, const DcGroup& rows, InputAction action,
            const std::function<ICommunication*(const QString&)>& createCommunication)
 {
     if (action == InputAction::PowerOff) {
@@ -99,7 +99,7 @@ runDcGroup(const Page1Config& config, const DcGroup& rows, InputAction action,
                 errors.append(result.errorMessage);
         }
         if (!attempted)
-            return {false, "Enable at least one DC Source in Page1.", true};
+            return {false, "Enable at least one DC Source in InstrumentSetup.", true};
         if (!errors.isEmpty())
             return {false, errors.join('\n')};
         return {true, {}, false, false};

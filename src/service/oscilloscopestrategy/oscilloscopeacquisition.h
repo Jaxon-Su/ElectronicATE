@@ -30,14 +30,18 @@ struct VerticalScaleState {
 
 // Preserve legal NA, but capture transport/setup errors before another query clears them.
 double readMeasurementChecked(IScopeMeasurement *scope, int channel, ScopeMeasurement type);
+// Distinguish a disabled channel from a failed query before any later IO clears it.
+bool channelEnabledChecked(IScopeMeasurement *scope, int channel);
 
 // 呼叫前須成功啟動 Single，並確保儀器由呼叫端獨占且存活。
 // 僅等待狀態，不負責啟動、停止或釋放儀器；呼叫端處理結果與清理。
 // timeoutMs 是擷取輪詢期限；晚到的完成記錄仍交給呼叫端保存並判失敗。
 // 通訊仍受底層 I/O timeout 約束；不額外加入固定資料更新等待。
 // AUTO trigger captures one reference record; always returns to STOP/NORMAL. Does not AutoSet.
+enum class ReferenceMetrics { CaptureDefault, Quartet };
 OscMeasureResult captureAutoReference(IScopeMeasurement *scope, QAtomicInt &stop, int timeoutMs,
-                                      VerticalScaleState *vertical = nullptr);
+                                      VerticalScaleState *vertical = nullptr,
+                                      ReferenceMetrics metrics = ReferenceMetrics::CaptureDefault);
 
 // Recover clipping with 2x expansion; preserve Position and Offset.
 // Unclipped records are never automatically fitted or centered.

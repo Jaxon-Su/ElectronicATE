@@ -35,9 +35,6 @@ AboutDialog::AboutDialog(QWidget *parent) : QDialog(parent)
     details->addRow(tr("版本："), new QLabel("v" + QString::fromUtf8(ApplicationInfo::Version), this));
     details->addRow(tr("作者："), new QLabel(QString::fromUtf8(ApplicationInfo::Author), this));
     layout->addLayout(details);
-    auto *copyright = new QLabel(QString::fromUtf8(ApplicationInfo::Copyright), this);
-    copyright->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    layout->addWidget(copyright);
 
     const QString url = QString::fromUtf8(ApplicationInfo::GitHubUrl);
     auto *github = new QLabel(QString("<a href=\"%1\">%1</a>").arg(url.toHtmlEscaped()), this);

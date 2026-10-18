@@ -29,13 +29,13 @@ void checkRating(const std::optional<Range> &range, double current, double volta
 }
 } // namespace
 
-void validateMeasurementConditions(const Page5ExecutionContext &context, InputSelection inputs,
+void validateMeasurementConditions(const TestSequenceExecutionContext &context, InputSelection inputs,
                                    int loadIndex, bool dynamic)
 {
     require(inputs.valid(context.inputs.size(), context.dcInputs.size()), "Select valid AC/DC conditions");
     QStringList inputResources;
     const InstrumentConfig *ac = nullptr;
-    for (const auto &instrument : context.page1.instruments) {
+    for (const auto &instrument : context.instrumentSetup.instruments) {
         if (!instrument.enabled || instrument.type != "InputSource" || instrument.name != "ACSource") continue;
         require(!ac, "Duplicate ACSource configuration");
         ac = &instrument;
@@ -52,11 +52,11 @@ void validateMeasurementConditions(const Page5ExecutionContext &context, InputSe
     }
     DcInputPlan dc;
     if (inputs.dc >= 0) {
-        checkError(prepareDcInputs(context.page1, context.dcInputs[inputs.dc], dc));
+        checkError(prepareDcInputs(context.instrumentSetup, context.dcInputs[inputs.dc], dc));
     } else {
         // OFF does not depend on a DC condition, but all configured sources must be reachable by a driver.
-        for (int source = 0; source < qBound(1, context.page1.dcInputs, 3); ++source)
-            for (const auto &instrument : context.page1.instruments) {
+        for (int source = 0; source < qBound(1, context.instrumentSetup.dcInputs, 3); ++source)
+            for (const auto &instrument : context.instrumentSetup.instruments) {
                 if (!instrument.enabled || instrument.type != "InputDCSource" ||
                     instrument.name != QString("DC Source%1").arg(source + 1)) continue;
                 require(!dc.sources[source], "Duplicate DC Source configuration");
@@ -87,7 +87,7 @@ void validateMeasurementConditions(const Page5ExecutionContext &context, InputSe
     }
     int mapped = 0;
     QSet<QString> physicalChannels;
-    for (const auto &instrument : context.page1.instruments) {
+    for (const auto &instrument : context.instrumentSetup.instruments) {
         if (!instrument.enabled || instrument.type != "Load") continue;
         const auto resource = instrument.getResourceString().trimmed();
         require(!resource.isEmpty() && !instrument.modelName.isEmpty(), instrument.name + ": configure Load model/address");

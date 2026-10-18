@@ -1,49 +1,33 @@
 #pragma once
-#include "page5resultrecord.h"
-#include "page5taskkind.h"
-#include <cmath>
+#include "testsequenceresultrecord.h"
+#include "testsequencetaskkind.h"
+#include <QSet>
 
-namespace TaskResultFormatter
+namespace TaskResultFormatter {
+inline QString measurement(const TestSequenceResultRecord &record, bool complete)
 {
-inline QString measurement(const Page5ResultRecord &record, bool complete)
-{
-    const auto number = [](double value) {
-        return std::isfinite(value) ? QString::number(value, 'g', 8) : QStringLiteral("NA");
-    };
-    QStringList rows;
-    const auto kind = Page5TaskKind::fromName(record.taskName);
-    const bool extremaOnly = Page5TaskKind::isTransient(kind);
-    const bool perCondition = Page5TaskKind::isGroup(kind);
-    if (!complete)
-        rows << "Incomplete / NA";
-    const auto channelLine = [&](const Page5ChannelResult &ch) {
-        QString line = QString("CH%1   Max %2   Min %3")
-                    .arg(ch.channel)
-                    .arg(number(ch.maximum), number(ch.minimum));
-        if (!extremaOnly)
-            line += QString("   RMS %1   Mean %2").arg(number(ch.rms), number(ch.mean));
-        return line;
-    };
-    if (perCondition) {
-        for (const auto &condition : record.conditions) {
-            rows << QString("%1 row %2 (%3) — %4")
-                        .arg(condition.condition.typeName()).arg(condition.condition.index + 1)
-                        .arg(condition.condition.label, condition.status);
-            if (condition.channels.isEmpty())
-                rows << "  NA";
-            for (const auto &ch : condition.channels)
-                rows << "  " + channelLine(ch);
-            if (!condition.error.isEmpty())
-                rows << "  " + condition.error;
+    if (!TestSequenceTaskKind::isMeasurement(record.taskName))
+        return record.summary.simplified().left(160);
+    QSet<int> channels, directions;
+    int count = 0;
+    const auto include = [&](const QVector<MeasurementTrial> &trials,
+                             const QVector<TestSequenceChannelResult> &results) {
+        count += trials.size();
+        for (const auto &trial : trials) {
+            directions.insert(int(trial.direction));
+            for (const auto &channel : trial.channels) channels.insert(channel.channel);
         }
-    } else {
-        for (const auto &ch : record.channels)
-            rows << channelLine(ch);
-    }
-    if (rows.isEmpty())
-        rows << "NA";
-    if (!record.summary.isEmpty())
-        rows << record.summary;
-    return rows.join('\n');
+        for (const auto &channel : results)
+            if (channel.source == MeasurementSource::SteadyReference) {
+                directions.insert(int(channel.direction));
+                channels.insert(channel.channel);
+            }
+    };
+    include(record.trials, record.channels);
+    for (const auto &condition : record.conditions) include(condition.trials, condition.channels);
+    QString text = QString("%1 directions · %2 CH · %3 trials").arg(directions.size()).arg(channels.size()).arg(count);
+    if (!record.conditions.isEmpty()) text += QString(" · %1 loads").arg(record.conditions.size());
+    if (!complete) text += " · Incomplete";
+    return text + " · View details";
 }
 } // namespace TaskResultFormatter

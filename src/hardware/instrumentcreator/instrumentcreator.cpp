@@ -26,7 +26,7 @@ void releaseConstruction(QVector<RelayBase *> &drivers, QMap<QString, ICommunica
 
 // Create AC Source
 
-InstrumentCreator::ACSourceResult InstrumentCreator::createACSource(const Page1Config &config)
+InstrumentCreator::ACSourceResult InstrumentCreator::createACSource(const InstrumentSetupConfig &config)
 {
     for (const auto &instrument : config.instruments) {
         if (instrument.name != "ACSource" || instrument.type != "InputSource")
@@ -53,17 +53,17 @@ InstrumentCreator::ACSourceResult InstrumentCreator::createACSource(const Page1C
 
 // Create DC Loads
 
-InstrumentCreator::DCLoadResult InstrumentCreator::createDCLoads(const Page1Config &config, TableKind kind)
+InstrumentCreator::DCLoadResult InstrumentCreator::createDCLoads(const InstrumentSetupConfig &config, TableKind kind)
 {
     return createDCLoads(config, kind, false);
 }
 
-InstrumentCreator::DCLoadResult InstrumentCreator::createDCLoadsForShutdown(const Page1Config &config, TableKind kind)
+InstrumentCreator::DCLoadResult InstrumentCreator::createDCLoadsForShutdown(const InstrumentSetupConfig &config, TableKind kind)
 {
     return createDCLoads(config, kind, true);
 }
 
-InstrumentCreator::DCLoadResult InstrumentCreator::createDCLoads(const Page1Config &config, TableKind kind,
+InstrumentCreator::DCLoadResult InstrumentCreator::createDCLoads(const InstrumentSetupConfig &config, TableKind kind,
                                                                bool forShutdown)
 {
     Q_UNUSED(kind)
@@ -141,7 +141,7 @@ InstrumentCreator::DCLoadResult InstrumentCreator::createDCLoads(const Page1Conf
 
 // Create Relays
 
-InstrumentCreator::RelayResult InstrumentCreator::createRelays(const Page1Config &config)
+InstrumentCreator::RelayResult InstrumentCreator::createRelays(const InstrumentSetupConfig &config)
 {
     RelayResult result;
     result.success = false;

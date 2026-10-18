@@ -2,6 +2,34 @@
 #include "oscilloscope.h"
 #include <QThread>
 #include <stdexcept>
+#include <cmath>
+
+namespace {
+QString number(double value) { return QString::number(value, 'g', 15); }
+QString requestedHorizontal(const OscilloscopeSettings::Horizontal &h)
+{
+    QStringList fields;
+    if (h.mode) fields << "Mode=" + *h.mode;
+    if (h.adjustment)
+        fields << (*h.adjustment == "RECORDLENGTH" ? "Inputs=Time Scale + Sample Rate" : "Inputs=Sample Rate + RL");
+    if (h.secondsPerDivision) fields << "Time Scale=" + number(*h.secondsPerDivision) + " s/div";
+    if (h.sampleRate) fields << "Sample Rate=" + number(*h.sampleRate) + " S/s";
+    if (h.recordLength) fields << "RL=" + number(*h.recordLength) + " samples";
+    return fields.join("; ");
+}
+bool adjusted(const OscilloscopeSettings::Horizontal &requested,
+              const OscilloscopeConfigurationResult::Horizontal &actual)
+{
+    auto differs = [](const std::optional<double> &wanted, double value) {
+        return wanted && std::abs(*wanted - value) > std::abs(*wanted) * 1e-6;
+    };
+    return (requested.mode && *requested.mode != actual.mode) ||
+           (requested.adjustment && *requested.adjustment != actual.adjustment) ||
+           differs(requested.secondsPerDivision, actual.secondsPerDivision) ||
+           differs(requested.sampleRate, actual.sampleRate) ||
+           (requested.recordLength && *requested.recordLength != actual.recordLength);
+}
+}
 
 bool TestRunService::executeDelay(int totalMs)
 {
@@ -31,11 +59,31 @@ bool TestRunService::executeWriteOscilloscope(const TaskSettings::WriteScope &cf
     if (m_stopRequested.loadAcquire())
         return failTask("Stopped by user");
     IScopeConfiguration *configuration = m_context.scope;
-    if (!configuration->applySettings(cfg.configuration, m_stopRequested, error))
+    const QString requested = requestedHorizontal(cfg.configuration.horizontal);
+    if (!requested.isEmpty())
+        emit logMessage("  Write Oscilloscope requested: " + requested);
+    OscilloscopeConfigurationResult result;
+    if (!configuration->applySettings(cfg.configuration, m_stopRequested, error, &result))
         return failTask("Write Oscilloscope: " + error);
     if (m_stopRequested.loadAcquire())
         return failTask("Stopped by user");
-    m_actionResults << "Oscilloscope settings applied";
+    if (!requested.isEmpty() && !result.horizontal)
+        return failTask("Write Oscilloscope: missing horizontal readback");
+    bool wasAdjusted = false;
+    if (result.horizontal) {
+        const auto &actual = *result.horizontal;
+        const QString mode = actual.mode == "MANUAL"
+            ? actual.mode + (actual.adjustment == "RECORDLENGTH" ? " (Inputs=Time Scale + Sample Rate)" : " (Inputs=Sample Rate + RL)")
+            : actual.mode;
+        emit logMessage(QString("  Write Oscilloscope actual: Mode=%1; Time Scale=%2 s/div; "
+                                "Sample Rate=%3 S/s; RL=%4 samples; Divisions=%5")
+                            .arg(mode, number(actual.secondsPerDivision), number(actual.sampleRate),
+                                 number(actual.recordLength), number(actual.divisions)));
+        wasAdjusted = adjusted(cfg.configuration.horizontal, actual);
+        if (wasAdjusted)
+            emit logMessage("  Write Oscilloscope: adjusted by instrument; see requested and actual values above.");
+    }
+    m_actionResults << (wasAdjusted ? "Oscilloscope settings applied (adjusted)" : "Oscilloscope settings applied");
     emit logMessage("  Write Oscilloscope: done");
     return true;
 }
@@ -57,7 +105,7 @@ bool TestRunService::executeRelay(int relayIndex)
         }
         QString error;
         try {
-            const auto result = m_dependencies.instruments.relay(m_context.page1, m_context.relays,
+            const auto result = m_dependencies.instruments.relay(m_context.instrumentSetup, m_context.relays,
                                                                  relayIndex, RelayAction::RelayOff);
             if (result.success)
                 return;
@@ -73,7 +121,7 @@ bool TestRunService::executeRelay(int relayIndex)
         emit taskStatusChanged(taskIndex, TaskStatus::Fail);
     };
     try {
-        const auto result = m_dependencies.instruments.relay(m_context.page1, m_context.relays, relayIndex,
+        const auto result = m_dependencies.instruments.relay(m_context.instrumentSetup, m_context.relays, relayIndex,
                                                              RelayAction::RelayOn);
         if (!result.success)
             throw std::runtime_error(result.errorMessage.toStdString());

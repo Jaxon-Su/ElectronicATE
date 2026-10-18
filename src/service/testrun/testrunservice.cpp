@@ -1,5 +1,5 @@
 #include "testrunservice.h"
-#include "page5scopepolicy.h"
+#include "testsequencescopepolicy.h"
 #include "transientrelayconditions.h"
 #include "oscilloscope.h"
 #include "../operations/configuredinputs.h"
@@ -13,6 +13,28 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+
+namespace {
+TestSequenceConditionSource singleLoadSource(const TaskSettings::PreparedTask &task,
+                                     const TestSequenceExecutionContext &context)
+{
+    return std::visit([&](const auto &settings) -> TestSequenceConditionSource {
+        using Settings = std::decay_t<decltype(settings)>;
+        if constexpr (std::is_same_v<Settings, TaskSettings::Steady> ||
+                      std::is_same_v<Settings, TaskSettings::Transient> ||
+                      std::is_same_v<Settings, BrownOut::Settings>) {
+            const int index = settings.load;
+            if (task.kind == TestSequenceTaskKind::Kind::Dynamic) {
+                if (index >= 0 && index < context.dynamics.size())
+                    return {index, context.dynamics[index].label, LoadConditionKind::Dynamic};
+            } else if (index >= 0 && index < context.loads.size()) {
+                return {index, context.loads[index].label, LoadConditionKind::Static};
+            }
+        }
+        return {}; // Group members have their own sources; non-measurement tasks have no load.
+    }, task.settings);
+}
+} // namespace
 
 TestRunService::TestRunService(TestRunDependencies dependencies, QObject *parent)
     : QObject(parent), m_dependencies(std::move(dependencies))
@@ -63,7 +85,7 @@ InstrumentOperationResult TestRunService::trackOutput(
         }
     } else if (!previouslyActive && !result.confirmedOutput.value_or(false) && result.outputUnchanged) {
         // No earlier output to recover and no output write in this operation.
-        // Keep the failure, without manufacturing an UNKNOWN handoff to Page3.
+        // Keep the failure, without manufacturing an UNKNOWN handoff to ManualControl.
         m_unreleasedOutputs.remove(kind);
     }
     return result;
@@ -72,7 +94,7 @@ InstrumentOperationResult TestRunService::trackOutput(
 void TestRunService::stop() { m_stopRequested.storeRelease(1); }
 
 //  startTasks：主執行迴圈（worker thread）
-void TestRunService::startTasks(const QVector<TaskPayload> &payloads, const Page5ExecutionContext &context)
+void TestRunService::startTasks(const QVector<TaskPayload> &payloads, const TestSequenceExecutionContext &context)
 {
     m_context = context;
     m_cleanupFailed = false;
@@ -89,7 +111,7 @@ void TestRunService::startTasks(const QVector<TaskPayload> &payloads, const Page
 
     auto makeRecord = [&](int index, int attempt) {
         const auto &payload = payloads[index];
-        Page5ResultRecord record;
+        TestSequenceResultRecord record;
         record.runId = runId;
         record.taskIndex = index;
         record.dutUid = payload.task.dutUid;
@@ -127,7 +149,7 @@ void TestRunService::startTasks(const QVector<TaskPayload> &payloads, const Page
             if (!TaskSettingRules::retry.accepts(payload.retry))
                 throw std::invalid_argument("Invalid Fail Retry: expected 0..100");
             OscilloscopeSettings configuration;
-            if (Page5TaskKind::fromName(payload.task.name) == Page5TaskKind::Kind::WriteScope) {
+            if (TestSequenceTaskKind::fromName(payload.task.name) == TestSequenceTaskKind::Kind::WriteScope) {
                 QString error;
                 if (!m_context.scope || !m_dependencies.prepareConfiguration ||
                     !m_dependencies.prepareConfiguration(m_context.scope->model(), m_context.scope->getTotalChannel(),
@@ -137,24 +159,24 @@ void TestRunService::startTasks(const QVector<TaskPayload> &payloads, const Page
             }
             prepared.append(TaskSettings::decode(payload.task.name, payload.settings, std::move(configuration)));
             if (const auto *relay = std::get_if<TaskSettings::Relay>(&prepared.last().settings)) {
-                const QString error = validateRelayCondition(m_context.page1, m_context.relays, relay->index);
+                const QString error = validateRelayCondition(m_context.instrumentSetup, m_context.relays, relay->index);
                 if (!error.isEmpty()) throw std::invalid_argument(error.toStdString());
             }
-            if (Page5TaskKind::isMeasurement(payload.task.name) && payload.settings.value("capture_enabled").toBool()) {
+            if (TestSequenceTaskKind::isMeasurement(payload.task.name) && payload.settings.value("capture_enabled").toBool()) {
                 const CaptureOptions capture(payload.settings.value("capture_settings").toMap(), true);
                 const QString directory = capture.directory.isEmpty() ? m_context.reportDirectory : capture.directory;
                 if (!QDir::isAbsolutePath(directory) || !QFileInfo(directory).isDir() || !QFileInfo(directory).isWritable())
                     throw std::invalid_argument("Capture: select an existing writable directory in Capture settings or Report File Path");
             }
-            if (Page5TaskKind::isMeasurement(payload.task.name)) {
+            if (TestSequenceTaskKind::isMeasurement(payload.task.name)) {
                 if (!m_dependencies.validateMeasurement)
                     throw std::invalid_argument("Measurement preflight adapter is unavailable");
-                const auto single = Page5TaskKind::singleKind(prepared.last().kind);
+                const auto single = TestSequenceTaskKind::singleKind(prepared.last().kind);
                 std::visit([&](const auto &settings) {
                     using Settings = std::decay_t<decltype(settings)>;
                     auto validate = [&](InputSelection inputs, int load, bool dynamic) {
-                        if ((inputs.ac < 0 && hasConfiguredAc(m_context.page1) && !m_dependencies.instruments.input) ||
-                            (inputs.dc < 0 && hasConfiguredDc(m_context.page1) && !m_dependencies.instruments.dcGroup))
+                        if ((inputs.ac < 0 && hasConfiguredAc(m_context.instrumentSetup) && !m_dependencies.instruments.input) ||
+                            (inputs.dc < 0 && hasConfiguredDc(m_context.instrumentSetup) && !m_dependencies.instruments.dcGroup))
                             throw std::invalid_argument("None input OFF adapter is unavailable");
                         m_dependencies.validateMeasurement(m_context, inputs, load, dynamic);
                     };
@@ -162,13 +184,13 @@ void TestRunService::startTasks(const QVector<TaskPayload> &payloads, const Page
                         if (const auto *transient = std::get_if<TaskSettings::Transient>(&settings.member))
                             transientRelayConditions(m_context, single, *transient);
                         for (int load : settings.loads)
-                            validate(settings.measurement().inputs, load, single == Page5TaskKind::Kind::Dynamic);
+                            validate(settings.measurement().inputs, load, single == TestSequenceTaskKind::Kind::Dynamic);
                     } else if constexpr (std::is_same_v<Settings, TaskSettings::Steady> ||
                                          std::is_same_v<Settings, TaskSettings::Transient> ||
                                          std::is_same_v<Settings, BrownOut::Settings>) {
                         if constexpr (std::is_same_v<Settings, TaskSettings::Transient>)
                             transientRelayConditions(m_context, single, settings);
-                        validate(settings.inputs, settings.load, single == Page5TaskKind::Kind::Dynamic);
+                        validate(settings.inputs, settings.load, single == TestSequenceTaskKind::Kind::Dynamic);
                     }
                 }, prepared.last().settings);
             }
@@ -182,7 +204,7 @@ void TestRunService::startTasks(const QVector<TaskPayload> &payloads, const Page
             if (const auto *group = std::get_if<TaskSettings::Group>(&prepared.last().settings)) {
                 if (!group->measurement().inputs.valid(m_context.inputs.size(), m_context.dcInputs.size()))
                     throw std::invalid_argument("Group: select a valid input condition");
-                const bool dynamic = Page5TaskKind::singleKind(group->kind) == Page5TaskKind::Kind::Dynamic;
+                const bool dynamic = TestSequenceTaskKind::singleKind(group->kind) == TestSequenceTaskKind::Kind::Dynamic;
                 auto validateLoads = [&](const auto &rows) {
                     for (int index : group->loads)
                         if (index < 0 || index >= rows.size() ||
@@ -206,24 +228,24 @@ void TestRunService::startTasks(const QVector<TaskPayload> &payloads, const Page
 
     // Missing adapters are configuration errors, never a reason to begin output control.
     for (int i = 0; i < payloads.size(); ++i) {
-        const auto kind = Page5TaskKind::fromName(payloads[i].task.name);
-        const bool measurement = Page5TaskKind::isMeasurement(payloads[i].task.name);
+        const auto kind = TestSequenceTaskKind::fromName(payloads[i].task.name);
+        const bool measurement = TestSequenceTaskKind::isMeasurement(payloads[i].task.name);
         const auto &operations = m_dependencies.instruments;
         QString error;
-        if (kind == Page5TaskKind::Kind::Relay && !operations.relay)
+        if (kind == TestSequenceTaskKind::Kind::Relay && !operations.relay)
             error = "Relay operation is unavailable";
-        else if (kind == Page5TaskKind::Kind::WriteScope && !m_dependencies.prepareConfiguration)
+        else if (kind == TestSequenceTaskKind::Kind::WriteScope && !m_dependencies.prepareConfiguration)
             error = "Oscilloscope configuration is unavailable";
         else if (measurement) {
             if (!m_dependencies.strategy)
                 error = "Strategy factory is unavailable";
-            else if (kind != Page5TaskKind::Kind::BrownOut) {
+            else if (kind != TestSequenceTaskKind::Kind::BrownOut) {
                 try {
                     const auto *steady = std::get_if<TaskSettings::Steady>(&prepared[i].settings);
                     const auto *group = std::get_if<TaskSettings::Group>(&prepared[i].settings);
                     if (group)
                         steady = std::get_if<TaskSettings::Steady>(&group->member);
-                    const auto single = Page5TaskKind::singleKind(kind);
+                    const auto single = TestSequenceTaskKind::singleKind(kind);
                     const TaskSettings::Measurement &config =
                         group ? group->measurement() : steady ? static_cast<const TaskSettings::Measurement &>(*steady)
                                : static_cast<const TaskSettings::Measurement &>(
@@ -233,13 +255,13 @@ void TestRunService::startTasks(const QVector<TaskPayload> &payloads, const Page
                     else if ((config.inputs.ac >= 0 && !operations.input) ||
                              (config.inputs.dc >= 0 && !operations.dcGroup))
                         error = "Input operation is unavailable";
-                    else if ((single == Page5TaskKind::Kind::Dynamic)
+                    else if ((single == TestSequenceTaskKind::Kind::Dynamic)
                                  ? !operations.dynamic : !operations.load)
                         error = "Load operation is unavailable";
                     else if (steady && steady->autoPeriod && !m_dependencies.autoPeriod)
                         error = "Auto Period operation is unavailable";
-                    else if ((single == Page5TaskKind::Kind::TurnOn || single == Page5TaskKind::Kind::OnShort ||
-                              single == Page5TaskKind::Kind::ShortOn) &&
+                    else if ((single == TestSequenceTaskKind::Kind::TurnOn || single == TestSequenceTaskKind::Kind::OnShort ||
+                              single == TestSequenceTaskKind::Kind::ShortOn || single == TestSequenceTaskKind::Kind::OnShortDescent) &&
                              !operations.relay)
                         error = "Relay operation is unavailable";
                 } catch (const std::exception &exception) {
@@ -254,13 +276,29 @@ void TestRunService::startTasks(const QVector<TaskPayload> &payloads, const Page
     }
 
     // Validate the whole batch before any relay, source or load can be switched.
-    const int scopeTask = Page5ScopePolicy::firstScopeTask(payloads);
+    const int scopeTask = TestSequenceScopePolicy::firstScopeTask(payloads);
     if (!m_stopRequested.loadAcquire() && scopeTask >= 0) {
         const QString error =
-            Page5ScopePolicy::unavailableReason(m_context.scope ? m_context.scope->model() : QString{});
+            TestSequenceScopePolicy::unavailableReason(m_context.scope ? m_context.scope->model() : QString{});
         if (!error.isEmpty()) {
             rejectRun(scopeTask, error);
             return;
+        }
+        // Physical capability is stable across the batch. Enabled state is not:
+        // an earlier Write Oscilloscope task may enable the selected channel.
+        const int channelCount = m_context.scope->getTotalChannel();
+        for (int i = 0; i < prepared.size(); ++i) {
+            int channel = 0;
+            if (const auto *brownOut = std::get_if<BrownOut::Settings>(&prepared[i].settings))
+                channel = brownOut->triggerChannel;
+            else if (const auto *transient = std::get_if<TaskSettings::Transient>(&prepared[i].settings)) {
+                if (transient->descent) channel = transient->descent->channel;
+            }
+            if (channel > channelCount) {
+                rejectRun(i, QString("Trigger CH%1 is unavailable on this %2-channel oscilloscope")
+                                 .arg(channel).arg(channelCount));
+                return;
+            }
         }
     }
 
@@ -289,12 +327,13 @@ void TestRunService::startTasks(const QVector<TaskPayload> &payloads, const Page
                 emit logMessage(QString("[%1] Retry %2/%3").arg(i + 1).arg(attempt).arg(p.retry));
                 emit retryCountChanged(i, attempt);
             }
-            const bool measures = Page5TaskKind::isMeasurement(p.task.name);
+            const bool measures = TestSequenceTaskKind::isMeasurement(p.task.name);
             emit taskResultChanged(i, measures ? QStringLiteral("NA") : QString{});
             m_actionResults.clear();
             m_attemptResult = makeRecord(i, attempt + 1);
             m_attemptActive = true;
             try {
+                m_attemptResult.loadCondition = singleLoadSource(prepared[i], m_context);
                 pass = executeTask(prepared[i]);
             } catch (const std::exception &ex) {
                 emit logMessage(QString("Task exception: %1").arg(ex.what()));
@@ -326,6 +365,7 @@ void TestRunService::startTasks(const QVector<TaskPayload> &payloads, const Page
                 m_attemptResult.error =
                     m_stopRequested.loadAcquire() ? "Stopped by user" : "Task failed; see log for details";
             m_runResults.append(m_attemptResult);
+            emit measurementReady(i, m_attemptResult, pass);
             if (pass)
                 break;
             if (m_stopRequested.loadAcquire() || m_cleanupFailed)
@@ -355,8 +395,8 @@ void TestRunService::startTasks(const QVector<TaskPayload> &payloads, const Page
     if (m_cleanupFailed)
         emit logMessage("Run ended with cleanup failure; verify instrument output states.");
     if (!m_unreleasedOutputs.isEmpty()) {
-        emit logMessage("Output state is UNKNOWN. Use Page3 OFF to recover before the next Run.");
-        emit outputsUncertain(m_context.page1, m_unreleasedOutputs.values(), m_shortCircuit);
+        emit logMessage("Output state is UNKNOWN. Use ManualControl OFF to recover before the next Run.");
+        emit outputsUncertain(m_context.instrumentSetup, m_unreleasedOutputs.values(), m_shortCircuit);
     }
     emit resultRecordsReady(m_runResults);
     emit logMessage("=== Test finished ===");
@@ -394,7 +434,7 @@ bool TestRunService::failTask(const QString &error)
 
 bool TestRunService::executeTask(const TaskSettings::PreparedTask &task)
 {
-    using Kind = Page5TaskKind::Kind;
+    using Kind = TestSequenceTaskKind::Kind;
     const auto &cfg = task.settings;
     switch (task.kind) {
     case Kind::BrownOut:
@@ -424,6 +464,9 @@ bool TestRunService::executeTask(const TaskSettings::PreparedTask &task)
         return executeTurnOnThenShort(std::get<TaskSettings::Transient>(cfg));
     case Kind::ShortOn:
         return executeShortThenTurnOn(std::get<TaskSettings::Transient>(cfg));
+    case Kind::TurnOffDescent:
+    case Kind::OnShortDescent:
+        return executeTransient(TestSequenceTaskKind::name(task.kind), std::get<TaskSettings::Transient>(cfg));
     default:
         return failTask("Unknown task");
     }

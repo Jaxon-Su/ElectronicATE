@@ -1,11 +1,13 @@
 #pragma once
-#include "page5taskkind.h"
+#include "testsequencetaskkind.h"
 #include "tasksettingrules.h"
 #include "captureoptions.h"
 #include "oscilloscopesettings.h"
 #include "groupconditionselection.h"
 #include "brownoutsettings.h"
 #include "inputselection.h"
+#include "descentsettings.h"
+#include <optional>
 #include <QVariantMap>
 #include <QStringList>
 #include <stdexcept>
@@ -102,28 +104,31 @@ struct Steady : Measurement {
 };
 struct Transient : Measurement {
     int relay, discharge, triggerTimeoutMs, phaseTimeoutMs, dischargeMs, trialsPerLevel;
-    explicit Transient(const QVariantMap &values)
+    std::optional<DescentSettings::Settings> descent;
+    explicit Transient(const QVariantMap &values, bool fixedDescent = false)
         : Measurement(values), relay(integer(values, "relay_index", -1)),
           discharge(integer(values, "discharge_index", -1)),
           triggerTimeoutMs(bounded(values, TaskSettingRules::triggerTimeout)),
           phaseTimeoutMs(bounded(values, TaskSettingRules::phaseTimeout)),
           dischargeMs(bounded(values, TaskSettingRules::discharge)),
-          trialsPerLevel(bounded(values, TaskSettingRules::trials))
+          trialsPerLevel(fixedDescent ? bounded(values, "trials_per_level", 1, 1, 10)
+                                     : bounded(values, TaskSettingRules::trials))
     {
+        if (fixedDescent) descent.emplace(values);
     }
 };
 struct Group {
-    Page5TaskKind::Kind kind;
+    TestSequenceTaskKind::Kind kind;
     std::variant<Steady, Transient> member;
     QVector<int> loads;
 
-    Group(Page5TaskKind::Kind taskKind, const QVariantMap &values)
-        : kind(taskKind), member(Page5TaskKind::isSteady(taskKind)
-              ? std::variant<Steady, Transient>{Steady(values, Page5TaskKind::singleKind(taskKind) == Page5TaskKind::Kind::Dynamic)}
+    Group(TestSequenceTaskKind::Kind taskKind, const QVariantMap &values)
+        : kind(taskKind), member(TestSequenceTaskKind::isSteady(taskKind)
+              ? std::variant<Steady, Transient>{Steady(values, TestSequenceTaskKind::singleKind(taskKind) == TestSequenceTaskKind::Kind::Dynamic)}
               : std::variant<Steady, Transient>{Transient(values)})
     {
-        if (!Page5TaskKind::isGroup(kind) ||
-            !GroupConditionSelection::decode(values.value(Page5TaskKind::loadKey(kind) + "_indices"), loads) || loads.isEmpty())
+        if (!TestSequenceTaskKind::isGroup(kind) ||
+            !GroupConditionSelection::decode(values.value(TestSequenceTaskKind::loadKey(kind) + "_indices"), loads) || loads.isEmpty())
             throw std::invalid_argument("Select one or more distinct Load conditions");
         std::sort(loads.begin(), loads.end());
     }
@@ -143,13 +148,13 @@ struct WriteScope {
 };
 using Settings = std::variant<Delay, Relay, Steady, Group, Transient, WriteScope, BrownOut::Settings>;
 struct PreparedTask {
-    Page5TaskKind::Kind kind;
+    TestSequenceTaskKind::Kind kind;
     Settings settings;
 };
 inline PreparedTask decode(const QString &name, const QVariantMap &values, OscilloscopeSettings configuration = {})
 {
-    using Kind = Page5TaskKind::Kind;
-    const auto kind = Page5TaskKind::fromName(name);
+    using Kind = TestSequenceTaskKind::Kind;
+    const auto kind = TestSequenceTaskKind::fromName(name);
     switch (kind) {
     case Kind::BrownOut:
         return {kind, BrownOut::Settings(values)};
@@ -173,6 +178,9 @@ inline PreparedTask decode(const QString &name, const QVariantMap &values, Oscil
     case Kind::OnShort:
     case Kind::ShortOn:
         return {kind, Transient(values)};
+    case Kind::TurnOffDescent:
+    case Kind::OnShortDescent:
+        return {kind, Transient(values, true)};
     case Kind::WriteScope:
         return {kind, WriteScope{std::move(configuration)}};
     default:

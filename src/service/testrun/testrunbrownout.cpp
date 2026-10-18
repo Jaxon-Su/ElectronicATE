@@ -10,7 +10,7 @@ bool TestRunService::executeBrownOut(const BrownOut::Settings &settings)
     emit logMessage(settings.mode == BrownOut::Mode::FixedFall
                         ? "Brown Out: Run + Single, fixed Fall threshold, one voltage descent"
                         : settings.captureEnabled
-                            ? "Brown Out: Normal + repeated Single; save each record before rearming; voltage descent continues"
+                            ? "Brown Out: Normal + repeated Single; pause voltage descent during read/save/rearm; resume after READY; Vout monitoring continues"
                             : "Brown Out: Normal + Run, track new records during one voltage descent");
     auto capture = prepareStrategyCapture(settings.captureEnabled, settings.captureSettings, settings.inputs, "Brown Out");
     auto publish = qScopeGuard([&] { publishStrategyCapture(capture); });
@@ -38,7 +38,8 @@ bool TestRunService::executeBrownOut(const BrownOut::Settings &settings)
         m_unreleasedOutputs.remove(TableKind::DyLoad);
     }
     const bool success = result.success && !result.cleanupFailed;
-    m_attemptResult.channels = toPage5Channels(result.channels);
+    m_attemptResult.trials = result.trials;
+    m_attemptResult.channels = representativeChannels(result.trials);
     m_actionResults << result.summary;
     if (!success)
         failTask(result.error.isEmpty() ? "Brown Out failed" : result.error);

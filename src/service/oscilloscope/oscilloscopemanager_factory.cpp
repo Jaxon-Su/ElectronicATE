@@ -5,7 +5,7 @@
 #include "communicationfactory.h"
 #include "oscilloscopefactory.h"
 
-OscilloscopeManager::OscMap OscilloscopeManager::buildFromConfig(const Page1Config& config)
+OscilloscopeManager::OscMap OscilloscopeManager::buildFromConfig(const InstrumentSetupConfig& config)
 {
     return buildConnectedOscilloscopes(
         config, [](const QString& model, const QString& resource) -> std::shared_ptr<Oscilloscope> {

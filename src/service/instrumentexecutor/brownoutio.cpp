@@ -13,7 +13,7 @@ namespace {
 void require(bool ok, const QString &error)
 { if (!ok) throw std::invalid_argument(error.toStdString()); }
 struct Plan {
-    Page5ExecutionContext context;
+    TestSequenceExecutionContext context;
     BrownOut::Settings settings;
     InstrumentConfig ac, monitor;
     int channel = 0;
@@ -59,7 +59,7 @@ class BrownOutIo final : public IBrownOutIo
         }
         check();
         const auto &ctx = m_plan.context;
-        auto loaded = m_operations.load(ctx.page1, ctx.loads, m_plan.settings.load, ctx.loadMeta,
+        auto loaded = m_operations.load(ctx.instrumentSetup, ctx.loads, m_plan.settings.load, ctx.loadMeta,
                                         LoadAction::LoadOn, ctx.loadSync.enabled);
         require(loaded.success, loaded.errorMessage);
         check();
@@ -134,7 +134,7 @@ class BrownOutIo final : public IBrownOutIo
         // before reaching this source or the load in the current task.
         attempt([&] {
             const auto &ctx = m_plan.context;
-            const auto off = m_operations.load(ctx.page1, ctx.loads, m_plan.settings.load, ctx.loadMeta,
+            const auto off = m_operations.load(ctx.instrumentSetup, ctx.loads, m_plan.settings.load, ctx.loadMeta,
                                                LoadAction::LoadOff, ctx.loadSync.enabled);
             require(off.success, off.errorMessage);
         });
@@ -175,7 +175,7 @@ class BrownOutIo final : public IBrownOutIo
 };
 }
 
-BrownOutIoFactory prepareBrownOutIo(const Page5ExecutionContext &context, const BrownOut::Settings &cfg,
+BrownOutIoFactory prepareBrownOutIo(const TestSequenceExecutionContext &context, const BrownOut::Settings &cfg,
                                    const InstrumentOperations &operations,
                                    std::function<ICommunication *(const QString &)> create)
 {
@@ -190,7 +190,7 @@ BrownOutIoFactory prepareBrownOutIo(const Page5ExecutionContext &context, const 
     require((plan.rampAc ? cfg.inputs.ac : cfg.inputs.dc) >= 0, "Select the Brown Out ramp source input condition");
     auto instrument = [&](const QString &name, const QString &type) {
         InstrumentConfig found; int count = 0;
-        for (const auto &item : context.page1.instruments)
+        for (const auto &item : context.instrumentSetup.instruments)
             if (item.enabled && item.type == type && (name.isEmpty() || item.name == name)) {
                 found = item; ++count;
             }
@@ -221,10 +221,10 @@ BrownOutIoFactory prepareBrownOutIo(const Page5ExecutionContext &context, const 
     if (cfg.inputs.dc >= 0) {
         const auto &group = context.dcInputs[cfg.inputs.dc];
         bool anyDc = false;
-        for (int i = 0; i < qBound(1, context.page1.dcInputs, 3); ++i) {
+        for (int i = 0; i < qBound(1, context.instrumentSetup.dcInputs, 3); ++i) {
             const auto name = QString("DC Source%1").arg(i + 1);
             bool enabled = false;
-            for (const auto &item : context.page1.instruments)
+            for (const auto &item : context.instrumentSetup.instruments)
                 enabled |= item.enabled && item.type == "InputDCSource" && item.name == name;
             if (!enabled) continue;
             plan.dc[i] = instrument(name, "InputDCSource"); plan.useDc[i] = true; anyDc = true;
@@ -250,7 +250,7 @@ BrownOutIoFactory prepareBrownOutIo(const Page5ExecutionContext &context, const 
     require(std::isfinite(plan.initial) && plan.initial > cfg.minimumVin,
             "Initial Vin must exceed minimum Vin");
     int matches = 0;
-    for (const auto &load : context.page1.instruments) {
+    for (const auto &load : context.instrumentSetup.instruments) {
         if (!load.enabled || load.type != "Load") continue;
         for (int slot = 0; slot < load.channels.size(); ++slot) {
             if (load.channels[slot].index != cfg.monitorOutput) continue;
@@ -259,7 +259,7 @@ BrownOutIoFactory prepareBrownOutIo(const Page5ExecutionContext &context, const 
         }
     }
     require(matches == 1 && plan.channel > 0 && !plan.monitor.getResourceString().isEmpty(),
-            "Map the monitor Load output Index to exactly one enabled channel in Page1");
+            "Map the monitor Load output Index to exactly one enabled channel in InstrumentSetup");
     require(!resources.contains(plan.monitor.getResourceString(), Qt::CaseInsensitive), "Input and monitor must use distinct addresses");
     const bool is6310 = LoadCapabilityCatalog::Chroma6310Models.contains(plan.monitor.modelName) ||
                         LoadCapabilityCatalog::Chroma6310AModels.contains(plan.monitor.modelName);

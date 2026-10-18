@@ -42,6 +42,16 @@ double readReadyMeasurement(IScopeMeasurement *scope, QAtomicInt &stop, int chan
 namespace OscilloscopeAcquisition
 {
 
+bool channelEnabledChecked(IScopeMeasurement *scope, int channel)
+{
+    const bool enabled = scope->isChannelEnabled(channel);
+    const QString error = scope->lastError();
+    if (!error.isEmpty())
+        throw std::runtime_error(
+            QString("CH%1 display state query failed: %2").arg(channel).arg(error).toStdString());
+    return enabled;
+}
+
 double readMeasurementChecked(IScopeMeasurement *scope, int channel, ScopeMeasurement type)
 {
     const double value = scope->readMeasurement(channel, type);
@@ -208,7 +218,7 @@ bool OscilloscopeAcquisition::expandClippedChannels(IScopeMeasurement *scope, QA
     // transfer must not depend on those queries succeeding.
     for (int ch = 1; ch <= scope->getTotalChannel(); ++ch) {
         check();
-        if (scope->isChannelEnabled(ch)) {
+        if (channelEnabledChecked(scope, ch)) {
             OscChannelMeasure value;
             value.channel = ch;
             record.channels.append(value);
@@ -259,7 +269,8 @@ bool OscilloscopeAcquisition::expandClippedChannels(IScopeMeasurement *scope, QA
 }
 
 OscMeasureResult OscilloscopeAcquisition::captureAutoReference(IScopeMeasurement *scope, QAtomicInt &stop,
-                                                               int timeoutMs, VerticalScaleState *vertical)
+                                                               int timeoutMs, VerticalScaleState *vertical,
+                                                               ReferenceMetrics metrics)
 {
     OscMeasureResult result;
     if (!scope || timeoutMs <= 0) {
@@ -278,7 +289,7 @@ OscMeasureResult OscilloscopeAcquisition::captureAutoReference(IScopeMeasurement
         check();
         QString error;
         const int channel = scope->triggerChannel();
-        if (channel < 1 || channel > scope->getTotalChannel() || !scope->isChannelEnabled(channel))
+        if (channel < 1 || channel > scope->getTotalChannel() || !channelEnabledChecked(scope, channel))
             throw std::runtime_error("AUTO reference requires an enabled analog trigger channel");
         const double level = scope->getChannelScale(channel) * 0.04;
         if (!std::isfinite(level) || level <= 0 || level >= 1e19)
@@ -321,7 +332,7 @@ OscMeasureResult OscilloscopeAcquisition::captureAutoReference(IScopeMeasurement
         }
         for (int ch = 1; ch <= scope->getTotalChannel(); ++ch) {
             check();
-            if (!scope->isChannelEnabled(ch))
+            if (!channelEnabledChecked(scope, ch))
                 continue;
             if (scope->isClipping(ch))
                 throw std::runtime_error("AUTO reference clipped; adjust channel scale");
@@ -341,7 +352,8 @@ OscMeasureResult OscilloscopeAcquisition::captureAutoReference(IScopeMeasurement
             value.channel = ch;
             value.maxVal = read(ScopeMeasurement::Maximum);
             value.minVal = read(ScopeMeasurement::Minimum);
-            if (vertical->includeRmsMean) {
+            // Reference results can request a quartet independently of Capture's contract.
+            if (vertical->includeRmsMean || metrics == ReferenceMetrics::Quartet) {
                 value.rms = read(ScopeMeasurement::Rms);
                 value.mean = read(ScopeMeasurement::Mean);
             }

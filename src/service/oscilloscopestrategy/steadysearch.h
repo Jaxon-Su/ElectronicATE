@@ -15,7 +15,7 @@ class Search
     bool initializeChannels();
     bool captureReference();
     bool searchDirection(bool maximum);
-    bool accumulateRecord(bool maximum, double &peak);
+    bool accumulateRecord(bool maximum, int step, double level, double &peak);
     OscMeasureResult finish();
 
     IScopeMeasurement *scope;

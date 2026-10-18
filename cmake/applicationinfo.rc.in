@@ -24,7 +24,6 @@ BEGIN
             VALUE "FileDescription", "ElectronicATE - Automatic test system\0"
             VALUE "FileVersion", "@ELECTRONICATE_VERSION@\0"
             VALUE "InternalName", "ElectronicATE\0"
-            VALUE "LegalCopyright", "@ELECTRONICATE_COPYRIGHT@\0"
             VALUE "OriginalFilename", "ElectronicATE.exe\0"
             VALUE "ProductName", "ElectronicATE\0"
             VALUE "ProductVersion", "@ELECTRONICATE_VERSION@\0"

@@ -4,6 +4,7 @@
 #include "turnoffstrategy.h"
 #include "turnonthenshortstrategy.h"
 #include "shortthenturnonstrategy.h"
+#include "descentstrategy.h"
 IOscilloscopeMeasureStrategy* OscilloscopeStrategyFactory::create(const QString& taskName,
                                                                   const TransientContext* context)
 {
@@ -11,6 +12,10 @@ IOscilloscopeMeasureStrategy* OscilloscopeStrategyFactory::create(const QString&
         return new SteadyStateSearchStrategy(10000, 900000, 100, context ? context->target : "BOTH");
     if (!context)
         return nullptr;
+    if (taskName == "Turn off (descent)")
+        return new DescentStrategy(false, *context);
+    if (taskName == "Turn on then short (descent)")
+        return new DescentStrategy(true, *context);
     if (taskName == "Turn on")
         return new TurnOnStrategy(*context);
     if (taskName == "Turn off")

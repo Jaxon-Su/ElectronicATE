@@ -1,21 +1,21 @@
 #include "reportwriter.h"
-#include "page5excelreport.h"
+#include "testsequenceexcelreport.h"
 #include <QFutureWatcher>
 #include <QtConcurrent/QtConcurrentRun>
 #include <exception>
 
 ReportWriter::ReportWriter(QObject *parent)
     : ReportWriter(
-          [](const QString &directory, const QString &name, const QVector<Page5ResultRecord> &records) {
+          [](const QString &directory, const QString &name, const QVector<TestSequenceResultRecord> &records) {
               ReportWriteResult result;
-              result.success = Page5ExcelReport::save(directory, name, records, result.path, result.error);
+              result.success = TestSequenceExcelReport::save(directory, name, records, result.path, result.error);
               return result;
           },
           parent)
 {
 }
 ReportWriter::ReportWriter(Save save, QObject *parent) : QObject(parent), m_save(std::move(save)) {}
-bool ReportWriter::submit(QString directory, QString name, QVector<Page5ResultRecord> records)
+bool ReportWriter::submit(QString directory, QString name, QVector<TestSequenceResultRecord> records)
 {
     if (m_busy || !m_save)
         return false;

@@ -40,10 +40,10 @@ class DirectionSearch {
 public:
     DirectionSearch(Execution &run, Event &event, VerticalScaleState &vertical,
                     QMap<int, OscChannelMeasure> &steadyChannels, bool &haveValidEvent,
-                    int trigger, bool maximum)
+                    int trigger, bool maximum, bool retainSteadyReference)
         : run(run), event(event), vertical(vertical), steadyChannels(steadyChannels),
           haveValidEvent(haveValidEvent), trigger(trigger), maximum(maximum),
-          direction(maximum ? 1.0 : -1.0) {}
+          direction(maximum ? 1.0 : -1.0), retainSteadyReference(retainSteadyReference) {}
 
     void execute();
 
@@ -51,7 +51,7 @@ private:
     enum class Probe { Hit, Miss, Baseline, Rescale };
     void captureSteadyReference();
     void arm();
-    double readEvent();
+    double readEvent(int trial);
     Probe probe(double candidate);
     Probe processBaseline(AcquisitionResult status, double candidate);
 
@@ -63,6 +63,8 @@ private:
     const int trigger;
     const bool maximum;
     const double direction;
+    const bool retainSteadyReference;
+    MeasurementReference steadyReference;
     double tolerance = 0;
     double level = 0;
     double referenceFloor = -std::numeric_limits<double>::infinity();
@@ -71,11 +73,12 @@ private:
     bool referenceInputAvailable = false;
     int acquisitions = 0;
     int scaleAdjustments = 0;
+    int searchStep = 0;
 };
 
 } // namespace
 
-void runSearch(Execution &run, Event &event)
+void runSearch(Execution &run, Event &event, bool retainSteadyReference)
 {
     QMap<int, OscChannelMeasure> steadyChannels;
     bool haveValidEvent = false;
@@ -83,7 +86,7 @@ void runSearch(Execution &run, Event &event)
     const int trigger = run.scope->triggerChannel();
     for (int ch = 1; ch <= run.scope->getTotalChannel(); ++ch) {
         run.check();
-        if (run.scope->isChannelEnabled(ch)) {
+        if (OscilloscopeAcquisition::channelEnabledChecked(run.scope, ch)) {
             OscChannelMeasure value;
             value.channel = ch;
             run.channels[ch] = value;
@@ -96,14 +99,15 @@ void runSearch(Execution &run, Event &event)
     vertical.includeRmsMean = false;
     initialSearchStep(run, trigger); // Validate before enabling hardware.
     run.touched = true;
-    // Configure the load while input is off. Hardware callbacks use the same executors as Page3.
+    // Configure the load while input is off. Hardware callbacks use the same executors as ManualControl.
     event.prepareRun(run);
     QString error;
     run.checked(run.ctx.load(true, error), error);
     for (bool maximum : {true, false}) {
         if ((maximum && run.ctx.target == "MIN") || (!maximum && run.ctx.target == "MAX"))
             continue;
-        DirectionSearch(run, event, vertical, steadyChannels, haveValidEvent, trigger, maximum).execute();
+        DirectionSearch(run, event, vertical, steadyChannels, haveValidEvent, trigger, maximum,
+                        retainSteadyReference).execute();
     }
     run.check();
     // Merge references only after all selected searches finish normally. Errors never become fallback
@@ -174,6 +178,13 @@ void DirectionSearch::execute()
         if (progress == EventSearchBracket::Progress::Converged)
             break;
     }
+    // Publish only after a normal direction search, never from an interrupted reference/search.
+    // A later MISS does not replace earlier events, including events with a legal NA metric.
+    if (retainSteadyReference && !steadyReference.channels.isEmpty() &&
+        std::none_of(run.result.trials.cbegin(), run.result.trials.cend(), [&](const auto &trial) {
+            return trial.direction == steadyReference.direction;
+        }))
+        run.result.steadyReferences.append(steadyReference);
     if (noEvent) {
         const QString message =
             QString("%1: no event trigger bracket; retaining valid event measurements")
@@ -189,7 +200,9 @@ void DirectionSearch::captureSteadyReference()
 {
     event.prepareReferenceInput(run);
     const auto reference = OscilloscopeAcquisition::captureAutoReference(
-        run.scope, run.stop, qMax(0, run.ctx.phaseTimeoutMs - int(run.phase.elapsed())), &vertical);
+        run.scope, run.stop, qMax(0, run.ctx.phaseTimeoutMs - int(run.phase.elapsed())), &vertical,
+        retainSteadyReference ? OscilloscopeAcquisition::ReferenceMetrics::Quartet
+                              : OscilloscopeAcquisition::ReferenceMetrics::CaptureDefault);
     run.checked(reference.success, reference.errorMessage);
     for (const auto &value : reference.channels) {
         if (!run.channels.contains(value.channel))
@@ -223,6 +236,12 @@ void DirectionSearch::captureSteadyReference()
         }
     if (!found)
         throw std::runtime_error("AUTO reference trigger channel missing");
+    if (retainSteadyReference) {
+        steadyReference.direction = maximum ? MeasurementDirection::Rise : MeasurementDirection::Fall;
+        for (const auto &value : reference.channels)
+            steadyReference.channels.append({value.channel, {}, value.maxVal, value.minVal,
+                                             value.rms, value.mean});
+    }
     referenceInputAvailable = true;
 }
 
@@ -238,9 +257,12 @@ void DirectionSearch::arm()
     run.check();
 }
 
-double DirectionSearch::readEvent()
+double DirectionSearch::readEvent(int trial)
 {
     double peak = std::numeric_limits<double>::quiet_NaN();
+    MeasurementTrial record{int(run.result.trials.size()) + 1,
+                            maximum ? MeasurementDirection::Rise : MeasurementDirection::Fall,
+                            searchStep, trial, level, {}};
     for (auto it = run.channels.begin(); it != run.channels.end(); ++it) {
         run.check();
         if (run.scope->isClipping(it.key()))
@@ -252,6 +274,8 @@ double DirectionSearch::readEvent()
             return valid(v) ? v : std::numeric_limits<double>::quiet_NaN();
         };
         const double high = read(ScopeMeasurement::Maximum), low = read(ScopeMeasurement::Minimum);
+        const double rms = read(ScopeMeasurement::Rms), mean = read(ScopeMeasurement::Mean);
+        record.channels.append({it.key(), {}, high, low, rms, mean});
         if (valid(high))
             it->maxVal = valid(it->maxVal) ? std::max(it->maxVal, high) : high;
         if (valid(low))
@@ -265,6 +289,7 @@ double DirectionSearch::readEvent()
     }
     if (!valid(peak))
         throw std::runtime_error("Trigger measurement: NA");
+    run.result.trials.append(record);
     haveValidEvent = true;
     return peak;
 }
@@ -274,6 +299,7 @@ DirectionSearch::Probe DirectionSearch::probe(double candidate)
     if (!valid(candidate))
         throw std::runtime_error("Invalid search threshold");
     level = direction * candidate;
+    ++searchStep;
     bool hit = false;
     for (int trial = 0; trial < run.ctx.trialsPerLevel; ++trial) {
         run.check();
@@ -293,7 +319,7 @@ DirectionSearch::Probe DirectionSearch::probe(double candidate)
                 run.configure([&](QString &e) { return run.scope->stopAcquisition(e); });
                 return Probe::Rescale;
             }
-            observedPeak = std::max(observedPeak, direction * readEvent());
+            observedPeak = std::max(observedPeak, direction * readEvent(trial + 1));
             hit = true;
         }
         run.configure([&](QString &e) { return run.scope->stopAcquisition(e); });

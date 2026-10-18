@@ -1,0 +1,92 @@
+# Software tests without instruments; merge and releases remain manual.
+name: Software tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: software-tests-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  software-tests:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    outputs:
+      verified: ${{ steps.evidence.outputs.verified }}
+      tested_sha: ${{ steps.evidence.outputs.tested_sha }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12.10'
+      - name: Record runner and revision
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          New-Item -ItemType Directory -Path build/ci-environment -Force | Out-Null
+          @{ tested_sha=$env:GITHUB_SHA; pr_head=$env:PR_HEAD_SHA; pr_base=$env:PR_BASE_SHA;
+             image_os=$env:ImageOS; image_version=$env:ImageVersion } |
+            ConvertTo-Json | Set-Content build/ci-environment/runner.json
+      - name: Install isolated pinned Qt toolchain
+        run: |
+          python -B tests/ci/bootstrap_toolchain.py --root build/ci-toolchain --github-env "$env:GITHUB_ENV"
+          if ($LASTEXITCODE -ne 0) { throw 'Toolchain bootstrap failed' }
+      - name: Gate regressions, official test dependencies and complete software tests
+        run: |
+          python -B tests/ci/run_ci.py --toolchain "$env:OFFLINE_TOOLCHAIN" --build-root build/ci-clean
+          if ($LASTEXITCODE -ne 0) { throw 'Clean CI run failed' }
+      - name: Verify evidence and produce summary
+        id: evidence
+        run: |
+          python -B tests/ci/verify_ci.py --runs build/ci-clean/tests/runs --expected-sha "$env:GITHUB_SHA" --output-file "$env:GITHUB_OUTPUT" --summary-file "$env:GITHUB_STEP_SUMMARY"
+          if ($LASTEXITCODE -ne 0) { throw 'CI evidence verification failed' }
+      - name: Preserve available evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: software-tests-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build/ci-environment/
+            build/ci-toolchain/evidence/
+            build/ci-toolchain/toolchain.json
+            build/ci-clean/environment/
+            build/ci-clean/dependencies/dependencies.json
+            build/ci-clean/tests/runs/
+            build/ci-clean/tests/**/Testing/Temporary/
+            build/ci-clean/gate-selftests/**/summary.json
+            build/ci-clean/gate-selftests/**/*.log
+            build/ci-clean/gate-selftests/**/*.xml
+          if-no-files-found: error
+          retention-days: 14
+
+  ci-check:
+    if: always()
+    needs: [software-tests]
+    runs-on: windows-2022
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Require successful complete CI evidence
+        shell: pwsh
+        env:
+          OFFLINE_JOB_RESULT: ${{ needs.software-tests.result }}
+          OFFLINE_VERIFIED: ${{ needs.software-tests.outputs.verified }}
+          OFFLINE_TESTED_SHA: ${{ needs.software-tests.outputs.tested_sha }}
+          OFFLINE_EXPECTED_SHA: ${{ github.sha }}
+        run: ./tests/ci/finish-gate.ps1

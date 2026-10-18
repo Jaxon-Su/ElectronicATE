@@ -23,6 +23,7 @@ class IScopeChannels
   public:
     virtual ~IScopeChannels() = default;
     virtual int getTotalChannel() = 0;
+    // Each query replaces lastError. OFF is false with no error; failures set it.
     virtual bool isChannelEnabled(int channel) = 0;
     virtual double getChannelScale(int channel) = 0;
     virtual bool isClipping(int channel) = 0;
@@ -40,6 +41,8 @@ class IScopeMeasurement : public IScopeAcquisition, public IScopeChannels
     virtual int triggerChannel() = 0;
     // Checked operations report device rejection as well as transport failure.
     virtual bool selectEdgeTrigger(QString &error) = 0;
+    virtual bool setEdgeTriggerChannel(int, QString &error)
+    { error = "Analog edge trigger source selection is unsupported"; return false; }
     virtual bool setEdgeSlope(ScopeTriggerSlope slope, QString &error) = 0;
     virtual bool setTriggerMode(ScopeTriggerMode mode, QString &error) = 0;
     virtual bool setChannelTriggerLevel(int channel, double level, QString &error) = 0;

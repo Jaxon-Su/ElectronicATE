@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.16)
+project(OfflineGateQtProbe LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_AUTOMOC ON)
+find_package(Qt6 REQUIRED COMPONENTS Core Test)
+add_executable(qt_gate_probe qt_gate_probe.cpp)
+target_link_libraries(qt_gate_probe PRIVATE Qt6::Core Qt6::Test)

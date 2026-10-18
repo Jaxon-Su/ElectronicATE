@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "visa": {
+    "version": "26.5.0.49312-0+f160",
+    "url": "https://download.ni.com/support/nipkg/pool/ni-v/ni-visa-headers/26.5.0/26.5.0.49312-0+f160/ni-visa-headers_26.5.0.49312-0+f160_windows_x64.nipkg",
+    "sha256": "0feca17c8108bd602a7ed2eaffef8670ff65ad304995e55d61fd2a171287f41d",
+    "size": 919098,
+    "cabinet": "visahd64.cab",
+    "cabinet_sha256": "36de678ef136b63cadbc2f84135678a0de8fb21a780288d3361fade685538502",
+    "headers": {
+      "visa.h": {
+        "member": "visa.h.VSAH64",
+        "sha256": "23bce0ecf28fdca5f779a731ba53f71769a48d30b20cbe3bb18dfb7d140600b0"
+      },
+      "visatype.h": {
+        "member": "visatype.h.VSAH64",
+        "sha256": "f5bec3f6201ddc78b51de95a9e38db01ca982defa79f926a963dc2d9f7289ef9"
+      },
+      "vpptype.h": {
+        "member": "vpptype.h.VSAH64",
+        "sha256": "e7328fe06b7e419308ac8bba065cda80cced40c0824ff4f9c4b80a42ce13d177"
+      }
+    },
+    "license": "https://www.ni.com/en/about-ni/legal/license-agreements.html"
+  },
+  "wfm": {
+    "repository": "https://github.com/tektronix/tm_data_types",
+    "revision": "6d135b97d8eb2b1289c4b4fd7b03b2814e16f9e0",
+    "files": [
+      {
+        "path": "data_test_waveform.wfm",
+        "url": "https://raw.githubusercontent.com/tektronix/tm_data_types/6d135b97d8eb2b1289c4b4fd7b03b2814e16f9e0/tests/waveforms/data_test_waveform.wfm",
+        "sha256": "668b7460a2a31c70a26dae1c8176762040594478bba3592f496cdf932ca675bc",
+        "size": 3081
+      },
+      {
+        "path": "analog_waveform.wfm",
+        "url": "https://raw.githubusercontent.com/tektronix/tm_data_types/6d135b97d8eb2b1289c4b4fd7b03b2814e16f9e0/tests/waveforms/analog_waveform.wfm",
+        "sha256": "20e58a5c0d5f22b6fd294125c529ae0d29e880d76f886933ef98305a82fc169a",
+        "size": 101081
+      },
+      {
+        "path": "golden_analog.wfm",
+        "url": "https://raw.githubusercontent.com/tektronix/tm_data_types/6d135b97d8eb2b1289c4b4fd7b03b2814e16f9e0/tests/waveforms/golden_analog.wfm",
+        "sha256": "07a54541e1d8ce064fe7de8ee552d9efe670d768e4a3c7d1965b81441d5c4ba6",
+        "size": 992
+      },
+      {
+        "path": "digital_waveform.wfm",
+        "url": "https://raw.githubusercontent.com/tektronix/tm_data_types/6d135b97d8eb2b1289c4b4fd7b03b2814e16f9e0/tests/waveforms/digital_waveform.wfm",
+        "sha256": "3061fc4b491d8a32381fe5df6e7992ce527e09ef709584194c1b4038b6b3fa04",
+        "size": 3510
+      },
+      {
+        "path": "iq_waveform.wfm",
+        "url": "https://raw.githubusercontent.com/tektronix/tm_data_types/6d135b97d8eb2b1289c4b4fd7b03b2814e16f9e0/tests/waveforms/iq_waveform.wfm",
+        "sha256": "5325da1be865512b90bc69e8341be18d12fbe0b30f6fae8b67762c4b48046525",
+        "size": 15528
+      },
+      {
+        "path": "fastframe/FF5MhzX100From5Series.wfm",
+        "url": "https://raw.githubusercontent.com/tektronix/tm_data_types/6d135b97d8eb2b1289c4b4fd7b03b2814e16f9e0/tests/waveforms/fastframe/FF5MhzX100From5Series.wfm",
+        "sha256": "329ab3c4c0a5ae2ed182d4bc6728cdeb4e38f248df21f60efa24c72d7bf2a745",
+        "size": 262671
+      },
+      {
+        "path": "LICENSE.md",
+        "url": "https://raw.githubusercontent.com/tektronix/tm_data_types/6d135b97d8eb2b1289c4b4fd7b03b2814e16f9e0/LICENSE.md",
+        "sha256": "749a0c95ed794a3fdbc98544c5975926966845071fd47bb156116df66ceb6b7d",
+        "size": 10262
+      }
+    ]
+  }
+}

@@ -3,12 +3,13 @@
 #include <QWidget>
 #include <QTabWidget>
 
-class Page1;
-class Page2;
-class Page3;
-class Page4;
-class Page5;
-class Page6;
+class InstrumentSetupPage;
+class TestConditionsPage;
+class ManualControlPage;
+class CommandConsolePage;
+class TestSequencePage;
+class WaveformOcrPage;
+class WfmViewerPage;
 
 class MainPageTabs : public QWidget {
     Q_OBJECT
@@ -17,12 +18,13 @@ class MainPageTabs : public QWidget {
     explicit MainPageTabs(QWidget* parent = nullptr);
 
     // 設置頁面
-    void setPage1(Page1* page);
-    void setPage2(Page2* page);
-    void setPage3(Page3* page);
-    void setPage4(Page4* page);
-    void setPage5(Page5* page);
-    void setPage6(Page6* page);
+    void setInstrumentSetup(InstrumentSetupPage* page);
+    void setTestConditions(TestConditionsPage* page);
+    void setManualControl(ManualControlPage* page);
+    void setCommandConsole(CommandConsolePage* page);
+    void setTestSequence(TestSequencePage* page);
+    void setWaveformOcr(WaveformOcrPage* page);
+    void setWfmViewer(WfmViewerPage* page);
 
     // 取得 TabWidget（如需要外部存取）
     QTabWidget* tabWidget() const { return m_tabWidget; }
@@ -34,12 +36,13 @@ class MainPageTabs : public QWidget {
     QTabWidget* m_tabWidget = nullptr;
 
     // 頁面指標
-    Page1* m_page1 = nullptr;
-    Page2* m_page2 = nullptr;
-    Page3* m_page3 = nullptr;
-    Page4* m_page4 = nullptr;
-    Page5* m_page5 = nullptr;
-    Page6* m_page6 = nullptr;
+    InstrumentSetupPage* m_instrumentSetup = nullptr;
+    TestConditionsPage* m_testConditions = nullptr;
+    ManualControlPage* m_manualControl = nullptr;
+    CommandConsolePage* m_commandConsole = nullptr;
+    TestSequencePage* m_testSequence = nullptr;
+    WaveformOcrPage* m_waveformOcr = nullptr;
+    WfmViewerPage* m_wfmViewer = nullptr;
 
     void setupUI();
 

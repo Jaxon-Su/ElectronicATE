@@ -1,5 +1,5 @@
 #pragma once
-#include "page2config.h"
+#include "testconditionsconfig.h"
 #include "conditionvalues.h"
 #include <algorithm>
 #include <cmath>

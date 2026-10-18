@@ -6,7 +6,7 @@
 #include <QFuture>
 
 class Oscilloscope;
-struct Page1Config;
+struct InstrumentSetupConfig;
 
 // 示波器生命週期管理
 // - 靜態方法供背景執行緒使用（建立 / 斷線）
@@ -16,8 +16,8 @@ class OscilloscopeManager {
     using OscMap = QMap<QString, std::shared_ptr<Oscilloscope>>;
 
     // 靜態（可在任何執行緒呼叫）
-    // 依 Page1Config 建立所有啟用的示波器，回傳 modelName → shared_ptr 的 map
-    static OscMap buildFromConfig(const Page1Config& config);
+    // 依 InstrumentSetupConfig 建立所有啟用的示波器，回傳 modelName → shared_ptr 的 map
+    static OscMap buildFromConfig(const InstrumentSetupConfig& config);
 
     // 斷線 map 內所有儀器並清空（呼叫後 map 為空）
     static void disconnectAll(OscMap& oscilloscopes);

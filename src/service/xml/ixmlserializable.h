@@ -1,5 +1,6 @@
 #pragma once
 #include <QString>
+#include <functional>
 
 class QXmlStreamWriter;
 class QXmlStreamReader;
@@ -10,13 +11,17 @@ class IXmlSerializable {
   public:
     virtual ~IXmlSerializable() = default;
 
-    // 回傳此 ViewModel 對應的 XML 元素名稱（如 "Page1"）
+    // 回傳此 ViewModel 對應的 XML 元素名稱（如 "InstrumentSetup"）
     virtual QString xmlTagName() const = 0;
 
     virtual void writeXml(QXmlStreamWriter& writer) const = 0;
     // Consume this section using isolated state; report errors on reader without changing live state.
     virtual void validateXml(QXmlStreamReader& reader) const = 0;
     virtual void loadXml(QXmlStreamReader& reader) = 0;
+    // Optional in-memory checkpoint for state that XML intentionally omits,
+    // such as runtime task identities. Restore without publishing a load.
+    // An empty callback uses the store's serialized backup instead.
+    virtual std::function<void()> captureXmlRollback() { return {}; }
     // Called only after every page has been applied successfully.
     virtual void publishXmlLoaded() {}
 };

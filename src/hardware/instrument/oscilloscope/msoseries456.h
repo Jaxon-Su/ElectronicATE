@@ -6,7 +6,8 @@ class MSOSeries456 : public Oscilloscope
 {
   public:
     std::unique_ptr<IScopeBrownOutSession> beginBrownOut(const BrownOut::Settings &, QAtomicInt &, QString &) override;
-    bool applySettings(const OscilloscopeSettings &settings, QAtomicInt &stop, QString &error) override;
+    bool applySettings(const OscilloscopeSettings &settings, QAtomicInt &stop, QString &error,
+                       OscilloscopeConfigurationResult *result = nullptr) override;
     ScopeCaptureSource captureSource() override;
     QString captureSlope() override;
     bool readChannelOffset(int channel, double &offset, QString &error) override;
@@ -16,6 +17,7 @@ class MSOSeries456 : public Oscilloscope
     double readMeasurement(int channel, ScopeMeasurement measurement) override;
     bool stopAcquisition(QString &error) override;
     bool selectEdgeTrigger(QString &error) override;
+    bool setEdgeTriggerChannel(int channel, QString &error) override;
     bool setEdgeSlope(ScopeTriggerSlope slope, QString &error) override;
     bool setTriggerMode(ScopeTriggerMode mode, QString &error) override;
     bool setChannelTriggerLevel(int channel, double level, QString &error) override;

@@ -8,6 +8,7 @@
         <file>images/tasks.png</file>
         <file>images/queue.png</file>
         <file>images/AI.png</file>
+        <file>images/wfmviewer.png</file>
         <file>images/checkbox-checked.svg</file>
         <file>images/checkbox-unchecked.svg</file>
     </qresource>

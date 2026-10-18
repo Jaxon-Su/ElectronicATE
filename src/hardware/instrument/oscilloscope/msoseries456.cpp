@@ -386,8 +386,11 @@ bool MSOSeries456::queryGlobalDisplayState(const QString& source, const QString&
         return false;
     }
     qDebug() << "[MSO456] queryGlobalDisplayState:" << query << "->" << state;
-    const QString trimmed = state.trimmed();
-    return (trimmed == "1" || trimmed.toUpper() == "ON");
+    const QString trimmed = state.trimmed().toUpper();
+    if (trimmed == "1" || trimmed == "ON") return true;
+    if (trimmed == "0" || trimmed == "OFF") return false;
+    m_lastError = QString("Invalid %1 display STATE response: %2").arg(source, state);
+    return false;
 }
 
 bool MSOSeries456::isChannelEnabled(int channel)

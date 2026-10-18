@@ -9,7 +9,7 @@
 
 namespace
 {
-bool hasScope(const Page1Config &config)
+bool hasScope(const InstrumentSetupConfig &config)
 {
     for (const auto &instrument : config.instruments)
         if (instrument.type == "Oscilloscope" && instrument.enabled &&
@@ -85,7 +85,7 @@ void ScopeSessionCoordinator::setBlocked(bool blocked)
     if (!blocked && m_updates.hasPending())
         m_debounce.start(500);
 }
-void ScopeSessionCoordinator::queueConfiguration(const Page1Config &config)
+void ScopeSessionCoordinator::queueConfiguration(const InstrumentSetupConfig &config)
 {
     ++m_revision;
     m_updates.enqueue(config);

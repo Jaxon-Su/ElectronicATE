@@ -1,7 +1,7 @@
 #pragma once
 
 #include <QVector>
-#include "page2config.h"
+#include "testconditionsconfig.h"
 
 // Read-only access to live test conditions, independent of any page or widget.
 // The provider is borrowed: it must outlive its consumer, or be detached first.

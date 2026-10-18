@@ -1,10 +1,11 @@
 #include "mainpagetabs.h"
-#include "page1.h"
-#include "page2.h"
-#include "page3.h"
-#include "page4.h"
-#include "page5.h"
-#include "page6.h"
+#include "instrumentsetuppage.h"
+#include "testconditionspage.h"
+#include "manualcontrolpage.h"
+#include "commandconsolepage.h"
+#include "testsequencepage.h"
+#include "waveformocrpage.h"
+#include "../wfmviewer/wfmviewerpage.h"
 #include <QVBoxLayout>
 #include <QTabBar>
 #include <QSize>
@@ -54,34 +55,39 @@ void MainPageTabs::setPageInternal(T*& currentPage, T* newPage, const QString& i
     }
 }
 
-void MainPageTabs::setPage1(Page1* page)
+void MainPageTabs::setInstrumentSetup(InstrumentSetupPage* page)
 {
-    setPageInternal(m_page1, page, ":/images/connection.png", "Instruments");
+    setPageInternal(m_instrumentSetup, page, ":/images/connection.png", "Instruments");
 }
 
-void MainPageTabs::setPage2(Page2* page)
+void MainPageTabs::setTestConditions(TestConditionsPage* page)
 {
-    setPageInternal(m_page2, page, ":/images/condition.png", "Conditions");
+    setPageInternal(m_testConditions, page, ":/images/condition.png", "Conditions");
 }
 
-void MainPageTabs::setPage3(Page3* page)
+void MainPageTabs::setManualControl(ManualControlPage* page)
 {
-    setPageInternal(m_page3, page, ":/images/control.png", "Control");
+    setPageInternal(m_manualControl, page, ":/images/control.png", "Control");
 }
 
-void MainPageTabs::setPage4(Page4* page)
+void MainPageTabs::setCommandConsole(CommandConsolePage* page)
 {
-    setPageInternal(m_page4, page, ":/images/tasks.png", "Commands");
+    setPageInternal(m_commandConsole, page, ":/images/tasks.png", "Commands");
 }
 
-void MainPageTabs::setPage5(Page5* page)
+void MainPageTabs::setTestSequence(TestSequencePage* page)
 {
-    setPageInternal(m_page5, page, ":/images/queue.png", "Queue Tasks");
+    setPageInternal(m_testSequence, page, ":/images/queue.png", "Queue Tasks");
 }
 
-void MainPageTabs::setPage6(Page6* page)
+void MainPageTabs::setWaveformOcr(WaveformOcrPage* page)
 {
-    setPageInternal(m_page6, page, ":/images/AI.png", "Waveform OCR");
+    setPageInternal(m_waveformOcr, page, ":/images/AI.png", "Waveform OCR");
+}
+
+void MainPageTabs::setWfmViewer(WfmViewerPage* page)
+{
+    setPageInternal(m_wfmViewer, page, ":/images/wfmviewer.png", "WFM Viewer");
 }
 
 // setOtherTabsLocked

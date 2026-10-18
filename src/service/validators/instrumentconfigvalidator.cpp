@@ -2,7 +2,7 @@
 
 // 通用驗證方法（核心實現）
 
-InstrumentConfigValidator::ValidationResult InstrumentConfigValidator::validate(const Page1Config& config,
+InstrumentConfigValidator::ValidationResult InstrumentConfigValidator::validate(const InstrumentSetupConfig& config,
                                                                                 const QString& selectedText,
                                                                                 const QString& instrumentType,
                                                                                 const QString& displayName)
@@ -52,7 +52,7 @@ InstrumentConfigValidator::ValidationResult InstrumentConfigValidator::validate(
 // 公開的專用驗證方法（調用通用方法）
 
 InstrumentConfigValidator::ValidationResult
-InstrumentConfigValidator::validateInput(const Page1Config& config, const QString& selectedText)
+InstrumentConfigValidator::validateInput(const InstrumentSetupConfig& config, const QString& selectedText)
 {
     // 調用通用方法
     // instrumentType: "Input" - 用於檢查 inst.type
@@ -61,7 +61,7 @@ InstrumentConfigValidator::validateInput(const Page1Config& config, const QStrin
 }
 
 InstrumentConfigValidator::ValidationResult
-InstrumentConfigValidator::validateLoad(const Page1Config& config, const QString& selectedText)
+InstrumentConfigValidator::validateLoad(const InstrumentSetupConfig& config, const QString& selectedText)
 {
     // 調用通用方法
     // instrumentType: "Load" - 用於檢查 inst.type
@@ -70,7 +70,7 @@ InstrumentConfigValidator::validateLoad(const Page1Config& config, const QString
 }
 
 InstrumentConfigValidator::ValidationResult
-InstrumentConfigValidator::validateDyLoad(const Page1Config& config, const QString& selectedText)
+InstrumentConfigValidator::validateDyLoad(const InstrumentSetupConfig& config, const QString& selectedText)
 {
     // 調用通用方法
     // ⚠️ 注意：instrumentType 還是 "Load"
@@ -80,7 +80,7 @@ InstrumentConfigValidator::validateDyLoad(const Page1Config& config, const QStri
 }
 
 InstrumentConfigValidator::ValidationResult
-InstrumentConfigValidator::validateRelay(const Page1Config& config, const QString& selectedText)
+InstrumentConfigValidator::validateRelay(const InstrumentSetupConfig& config, const QString& selectedText)
 {
     // 調用通用方法
     // instrumentType: "Relay" - 用於檢查 inst.type

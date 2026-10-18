@@ -142,7 +142,7 @@ void InstrumentExecutor::applyDyLoadSettings(DCLoad *dcLoad, int index, const QS
     applyDyLoadValueSettings(dcLoad, index, value, dyTime, outputVoltages, ranges);
 }
 
-InstrumentExecutor::Result InstrumentExecutor::runDynamicLoad(const Page1Config &cfg,
+InstrumentExecutor::Result InstrumentExecutor::runDynamicLoad(const InstrumentSetupConfig &cfg,
                                                          const QVector<DynamicDataRow> &rows,
                                                          int conditionIndex, const DynamicMetaRow &meta,
                                                          DynamicLoadAction action, bool syncEnabled,

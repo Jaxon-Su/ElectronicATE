@@ -80,7 +80,7 @@ class Chroma63804 : public DCLoad {
     // ─ setDynamicCurrent
     //  ⚠ 63804 無 L1/L2 自動循環（不同於 6310 的 CCDL/CCDH），執行單次切換。
     //
-    //  接受 Page3ViewModel 原始格式，驅動層內部自動換算：
+    //  接受 ManualControlViewModel 原始格式，驅動層內部自動換算：
     //    param.levels[0]   = 初始電流 I0 (A)
     //    param.levels[1]   = 目標電流 I1 (A)
     //    param.timings[0]  = T1 停留時間 (s) → 換算為 CURR:RISE (A/ms)

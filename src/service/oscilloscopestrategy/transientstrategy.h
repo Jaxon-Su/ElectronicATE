@@ -19,6 +19,8 @@ struct TransientContext {
     int phaseTimeoutMs = 900000;
     int maxIterations = 100;
     int trialsPerLevel = 3;
+    int descentChannel = 0;
+    QVector<double> descentLevels;
 };
 OscMeasureResult runTransientStrategy(TransientKind kind, const TransientContext &context,
                                       IScopeMeasurement *scope, QAtomicInt &stop);

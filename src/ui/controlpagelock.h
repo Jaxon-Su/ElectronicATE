@@ -2,7 +2,7 @@
 #include <QTabWidget>
 #include <array>
 
-// Page3/Page4/Page5 occupy indices 2/3/4. Freeze configuration while any
+// ManualControl/CommandConsole/TestSequence occupy indices 2/3/4. Freeze configuration while any
 // controller owns hardware, so OFF cannot be redirected to another instrument.
 inline void applyControlPageLock(QTabWidget* tabs, const std::array<bool, 3>& active)
 {
@@ -18,7 +18,7 @@ inline void applyControlPageLock(QTabWidget* tabs, const std::array<bool, 3>& ac
         }
         tabs->setTabEnabled(index, enabled);
     }
-    // Scope connection availability is applied to its own controls by Page3.
+    // Scope connection availability is applied to its own controls by ManualControl.
     if (tabs->count() > 2)
         tabs->widget(2)->setEnabled(tabs->isTabEnabled(2));
 }

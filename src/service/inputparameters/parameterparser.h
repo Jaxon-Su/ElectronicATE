@@ -1,7 +1,7 @@
 #pragma once
 
 #include <QString>
-#include "page2config.h"
+#include "testconditionsconfig.h"
 
 class ParameterParser {
   public:

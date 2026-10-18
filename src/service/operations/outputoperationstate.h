@@ -1,7 +1,7 @@
 #pragma once
 #include "instrumentoperationresult.h"
 #include "outputstate.h"
-#include "page2config.h"
+#include "testconditionsconfig.h"
 #include <QMap>
 #include <QVector>
 

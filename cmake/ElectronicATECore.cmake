@@ -54,12 +54,12 @@ target_include_directories(ElectronicATEOscilloscopeLifecycle PUBLIC
 target_link_libraries(ElectronicATEOscilloscopeLifecycle PUBLIC ElectronicATEData PRIVATE ElectronicATEInstrumentCore Qt6::Concurrent)
 
 add_library(ElectronicATETriggerBinding STATIC
-    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/page3/triggerbinding.cpp"
-    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/page3/triggerbinding.h"
+    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/manualcontrol/triggerbinding.cpp"
+    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/manualcontrol/triggerbinding.h"
     "${ELECTRONICATE_SOURCE_ROOT}/service/oscilloscope/itriggercontroller.h")
 set_target_properties(ElectronicATETriggerBinding PROPERTIES AUTOMOC ON)
 target_include_directories(ElectronicATETriggerBinding PUBLIC
-    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/page3"
+    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/manualcontrol"
     "${ELECTRONICATE_SOURCE_ROOT}/service/oscilloscope")
 target_link_libraries(ElectronicATETriggerBinding PUBLIC ElectronicATEData)
 
@@ -87,29 +87,29 @@ list(APPEND ELECTRONICATE_CORE_TARGETS ElectronicATEConsoleTransport)
 add_library(ElectronicATEConsole STATIC
     "${ELECTRONICATE_SOURCE_ROOT}/service/console/consolesession.cpp"
     "${ELECTRONICATE_SOURCE_ROOT}/service/console/consolesession.h"
-    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/page4/page4viewmodel.cpp"
-    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/page4/page4viewmodel.h")
+    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/commandconsole/commandconsoleviewmodel.cpp"
+    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/commandconsole/commandconsoleviewmodel.h")
 set_target_properties(ElectronicATEConsole PROPERTIES AUTOMOC ON)
-target_include_directories(ElectronicATEConsole PUBLIC "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/page4")
+target_include_directories(ElectronicATEConsole PUBLIC "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/commandconsole")
 target_link_libraries(ElectronicATEConsole PUBLIC ElectronicATEModels ElectronicATEPersistence
     PRIVATE ElectronicATEInstrumentCore ElectronicATEConsoleTransport)
 list(APPEND ELECTRONICATE_CORE_TARGETS ElectronicATEConsole)
 add_library(ElectronicATEConditions STATIC
-    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/page2/page2viewmodel.cpp"
-    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/page2/page2viewmodel.h")
+    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/testconditions/testconditionsviewmodel.cpp"
+    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/testconditions/testconditionsviewmodel.h")
 set_target_properties(ElectronicATEConditions PROPERTIES AUTOMOC ON)
 target_include_directories(ElectronicATEConditions PUBLIC
-    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/page2"
+    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/testconditions"
     "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/presentation"
 )
 target_link_libraries(ElectronicATEConditions PUBLIC ElectronicATEModels ElectronicATEPersistence)
 list(APPEND ELECTRONICATE_CORE_TARGETS ElectronicATEConditions)
 add_library(ElectronicATEInstrumentSettings STATIC
-    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/page1/page1viewmodel.cpp"
-    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/page1/page1viewmodel.h")
+    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/instrumentsetup/instrumentsetupviewmodel.cpp"
+    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/instrumentsetup/instrumentsetupviewmodel.h")
 set_target_properties(ElectronicATEInstrumentSettings PROPERTIES AUTOMOC ON)
 target_include_directories(ElectronicATEInstrumentSettings PUBLIC
-    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/page1")
+    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/instrumentsetup")
 target_link_libraries(ElectronicATEInstrumentSettings PUBLIC ElectronicATEModels ElectronicATEPersistence)
 list(APPEND ELECTRONICATE_CORE_TARGETS ElectronicATEInstrumentSettings)
 add_library(ElectronicATEScopeSession STATIC
@@ -120,14 +120,14 @@ target_include_directories(ElectronicATEScopeSession PUBLIC "${ELECTRONICATE_SOU
 target_link_libraries(ElectronicATEScopeSession PUBLIC ElectronicATEOscilloscopeLifecycle ElectronicATECapture PRIVATE ElectronicATEInstrumentCore Qt6::Concurrent)
 list(APPEND ELECTRONICATE_CORE_TARGETS ElectronicATEScopeSession)
 add_library(ElectronicATEManualControl STATIC
-    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/page3/page3viewmodel.cpp"
-    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/page3/page3viewmodel.h"
+    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/manualcontrol/manualcontrolviewmodel.cpp"
+    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/manualcontrol/manualcontrolviewmodel.h"
     "${ELECTRONICATE_SOURCE_ROOT}/infrastructure/debounce/debounce.cpp"
     "${ELECTRONICATE_SOURCE_ROOT}/infrastructure/debounce/debounce.h"
     "${ELECTRONICATE_SOURCE_ROOT}/service/validators/instrumentconfigvalidator.cpp")
 set_target_properties(ElectronicATEManualControl PROPERTIES AUTOMOC ON)
 target_include_directories(ElectronicATEManualControl PUBLIC
-    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/page3"
+    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/manualcontrol"
     "${ELECTRONICATE_SOURCE_ROOT}/infrastructure/debounce"
     "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/presentation"
     PRIVATE "${ELECTRONICATE_SOURCE_ROOT}/service/validators")
@@ -140,7 +140,7 @@ foreach(core_target IN LISTS ELECTRONICATE_CORE_TARGETS)
     target_compile_features(${core_target} PUBLIC cxx_std_17)
 endforeach()
 
-add_library(ElectronicATEReport STATIC "${ELECTRONICATE_SOURCE_ROOT}/service/report/page5excelreport.cpp")
+add_library(ElectronicATEReport STATIC "${ELECTRONICATE_SOURCE_ROOT}/service/report/testsequenceexcelreport.cpp")
 target_include_directories(ElectronicATEReport PUBLIC "${ELECTRONICATE_SOURCE_ROOT}/service/report")
 target_link_libraries(ElectronicATEReport PUBLIC ElectronicATEData Qt6::Core PRIVATE ElectronicATEStorage Qt6::Xml)
 list(APPEND ELECTRONICATE_CORE_TARGETS ElectronicATEReport)
@@ -177,14 +177,16 @@ target_link_libraries(ElectronicATEReportWriter PUBLIC ElectronicATEReport PRIVA
 list(APPEND ELECTRONICATE_CORE_TARGETS ElectronicATEReportWriter)
 
 add_library(ElectronicATEAutomatedTasks STATIC
+    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/testsequence/testsequenceresultsmodel.cpp"
+    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/testsequence/testsequenceresultsmodel.h"
     "${ELECTRONICATE_SOURCE_ROOT}/infrastructure/worker/testrunsession.cpp"
     "${ELECTRONICATE_SOURCE_ROOT}/infrastructure/worker/testrunsession.h"
-    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/page5/page5viewmodel.cpp"
-    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/page5/page5viewmodel.h")
+    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/testsequence/testsequenceviewmodel.cpp"
+    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/testsequence/testsequenceviewmodel.h")
 set_target_properties(ElectronicATEAutomatedTasks PROPERTIES AUTOMOC ON)
 target_include_directories(ElectronicATEAutomatedTasks PUBLIC
     "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/presentation"
-    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/page5"
+    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/testsequence"
     "${ELECTRONICATE_SOURCE_ROOT}/infrastructure/worker")
 target_link_libraries(ElectronicATEAutomatedTasks PUBLIC ElectronicATEModels ElectronicATEPersistence
     ElectronicATETestRun PRIVATE ElectronicATEReportWriter ElectronicATEMessages)
@@ -195,13 +197,13 @@ add_library(ElectronicATEWaveformOcr STATIC
     "${ELECTRONICATE_SOURCE_ROOT}/service/waveformocr/ollamaclient.h"
     "${ELECTRONICATE_SOURCE_ROOT}/service/waveformocr/waveformocrparser.cpp"
     "${ELECTRONICATE_SOURCE_ROOT}/infrastructure/storage/waveformocrfiles.cpp"
-    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/page6/ocrresultsmodel.cpp"
-    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/page6/ocrresultsmodel.h"
-    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/page6/page6viewmodel.cpp"
-    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/page6/page6viewmodel.h")
+    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/waveformocr/ocrresultsmodel.cpp"
+    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/waveformocr/ocrresultsmodel.h"
+    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/waveformocr/waveformocrviewmodel.cpp"
+    "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/waveformocr/waveformocrviewmodel.h")
 set_target_properties(ElectronicATEWaveformOcr PROPERTIES AUTOMOC ON)
 target_compile_features(ElectronicATEWaveformOcr PUBLIC cxx_std_17)
-target_include_directories(ElectronicATEWaveformOcr PUBLIC "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/page6")
+target_include_directories(ElectronicATEWaveformOcr PUBLIC "${ELECTRONICATE_SOURCE_ROOT}/viewmodels/waveformocr")
 target_link_libraries(ElectronicATEWaveformOcr PUBLIC ElectronicATEData Qt6::Core Qt6::Gui Qt6::Network Qt6::Concurrent PRIVATE ElectronicATEStorage)
 list(APPEND ELECTRONICATE_CORE_TARGETS ElectronicATEWaveformOcr)
 

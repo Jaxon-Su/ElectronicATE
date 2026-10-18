@@ -1,12 +1,13 @@
 #include "../../infrastructure/worker/testrunsession.h"
 #include "mainwindowviewmodel.h"
 #include "mainwindowmodel.h"
-#include "page1viewmodel.h"
-#include "page2viewmodel.h"
-#include "page3viewmodel.h"
-#include "page4viewmodel.h"
-#include "page5viewmodel.h"
-#include "page6viewmodel.h"
+#include "instrumentsetupviewmodel.h"
+#include "testconditionsviewmodel.h"
+#include "manualcontrolviewmodel.h"
+#include "commandconsoleviewmodel.h"
+#include "testsequenceviewmodel.h"
+#include "waveformocrviewmodel.h"
+#include "../wfmviewer/wfmviewerviewmodel.h"
 #include "xmlconfigstore.h"
 #include "messageservice.h"
 #include "pageconnectioncoordinator.h"
@@ -15,8 +16,8 @@
 #include <QPointer>
 
 MainWindowViewModel::MainWindowViewModel(MainWindowModel *model, QObject *parent)
-    : QObject(parent), m_model(model), m_page1ViewModel(nullptr), m_page2ViewModel(nullptr),
-      m_page3ViewModel(nullptr), m_page4ViewModel(nullptr), m_page5ViewModel(nullptr)
+    : QObject(parent), m_model(model), m_instrumentSetupViewModel(nullptr), m_testConditionsViewModel(nullptr),
+      m_manualControlViewModel(nullptr), m_commandConsoleViewModel(nullptr), m_testSequenceViewModel(nullptr)
 {
     initializeViewModels();
     setupPageConnections();
@@ -35,45 +36,46 @@ void MainWindowViewModel::initializeViewModels()
         return;
     }
 
-    m_page1ViewModel = new Page1ViewModel(m_model->page1Model(), this);
+    m_instrumentSetupViewModel = new InstrumentSetupViewModel(m_model->instrumentSetupModel(), this);
     const QString catalogPath = QCoreApplication::applicationDirPath() + "/XML/Instrument.xml";
-    if (!m_model->page1Model()->loadBaseXml(catalogPath))
+    if (!m_model->instrumentSetupModel()->loadBaseXml(catalogPath))
         qWarning() << "Failed to load instrument catalog:" << catalogPath;
-    m_page2ViewModel = new Page2ViewModel(m_model->page2Model(), this);
-    m_page3ViewModel = new Page3ViewModel(m_model->page3Model(), this);
-    m_page4ViewModel = new Page4ViewModel(m_model->page4Model(), this);
-    m_page5ViewModel = new Page5ViewModel(m_model->page5Model(), makeTestRunSession(), this);
-    m_page6ViewModel = new Page6ViewModel(this);
+    m_testConditionsViewModel = new TestConditionsViewModel(m_model->testConditionsModel(), this);
+    m_manualControlViewModel = new ManualControlViewModel(m_model->manualControlModel(), this);
+    m_commandConsoleViewModel = new CommandConsoleViewModel(m_model->commandConsoleModel(), this);
+    m_testSequenceViewModel = new TestSequenceViewModel(m_model->testSequenceModel(), makeTestRunSession(), this);
+    m_waveformOcrViewModel = new WaveformOcrViewModel(this);
+    m_wfmViewerViewModel = new WfmViewerViewModel(this);
 }
 
 void MainWindowViewModel::setupPageConnections()
 {
-    PageConnectionCoordinator::setupPageConnections(m_page1ViewModel, m_page2ViewModel, m_page3ViewModel,
-                                                    m_page5ViewModel);
-    connect(m_page3ViewModel, &Page3ViewModel::controlActiveChanged, this,
+    PageConnectionCoordinator::setupPageConnections(m_instrumentSetupViewModel, m_testConditionsViewModel, m_manualControlViewModel,
+                                                    m_testSequenceViewModel);
+    connect(m_manualControlViewModel, &ManualControlViewModel::controlActiveChanged, this,
             &MainWindowViewModel::updateControlPermissions);
-    connect(m_page4ViewModel, &Page4ViewModel::controlActiveChanged, this,
+    connect(m_commandConsoleViewModel, &CommandConsoleViewModel::controlActiveChanged, this,
             &MainWindowViewModel::updateControlPermissions);
-    connect(m_page5ViewModel, &Page5ViewModel::runningChanged, this,
+    connect(m_testSequenceViewModel, &TestSequenceViewModel::runningChanged, this,
             &MainWindowViewModel::updateControlPermissions);
     updateControlPermissions();
 }
 
 void MainWindowViewModel::updateControlPermissions()
 {
-    const bool manual = m_page3ViewModel->hasActiveControl();
-    const bool console = m_page4ViewModel->isControlActive();
-    const bool test = m_page5ViewModel->isRunning();
-    const bool connecting = m_page3ViewModel->isConfigurationBusy();
-    m_page3ViewModel->setControlAllowed(!console && !test);
-    m_page4ViewModel->setControlAllowed(!manual && !test && !connecting);
-    m_page5ViewModel->setControlAllowed(!manual && !console && !connecting);
+    const bool manual = m_manualControlViewModel->hasActiveControl();
+    const bool console = m_commandConsoleViewModel->isControlActive();
+    const bool test = m_testSequenceViewModel->isRunning();
+    const bool connecting = m_manualControlViewModel->isConfigurationBusy();
+    m_manualControlViewModel->setControlAllowed(!console && !test);
+    m_commandConsoleViewModel->setControlAllowed(!manual && !test && !connecting);
+    m_testSequenceViewModel->setControlAllowed(!manual && !console && !connecting);
     emit controlStateChanged();
 }
 
 QList<IXmlSerializable *> MainWindowViewModel::xmlPages() const
 {
-    return {m_page1ViewModel, m_page2ViewModel, m_page3ViewModel, m_page4ViewModel, m_page5ViewModel};
+    return {m_instrumentSetupViewModel, m_testConditionsViewModel, m_manualControlViewModel, m_commandConsoleViewModel, m_testSequenceViewModel};
 }
 
 void MainWindowViewModel::saveConfig()
@@ -110,20 +112,20 @@ void MainWindowViewModel::onLoadDialogAccepted(const QString &fileName)
     if (fileName.isEmpty())
         return;
 
-    if (m_page3ViewModel->isControlActive() || m_page4ViewModel->isControlActive() ||
-        m_page5ViewModel->isRunning()) {
+    if (m_manualControlViewModel->isControlActive() || m_commandConsoleViewModel->isControlActive() ||
+        m_testSequenceViewModel->isRunning()) {
         MessageService::instance().showWarning(tr("無法載入"), tr("請先停止控制並斷線，再載入設定。"));
         return;
     }
     QPointer<MainWindowViewModel> alive(this);
     const auto result = XmlConfigStore::loadAllFromXml(fileName, xmlPages(), [this] {
-        const auto config = m_page1ViewModel->currentConfig();
-        m_page2ViewModel->onPage1ConfigChanged(config);
-        m_page2ViewModel->setMaxOutput(config.loadOutputs);
-        m_page2ViewModel->setMaxRelayOutput(config.relayOutputs);
-        m_page3ViewModel->onPage1ConfigChanged(config);
-        m_page3ViewModel->onConditionsChanged(m_page2ViewModel->conditions());
-        m_page5ViewModel->onPage1ConfigChanged(config);
+        const auto config = m_instrumentSetupViewModel->currentConfig();
+        m_testConditionsViewModel->onInstrumentSetupConfigChanged(config);
+        m_testConditionsViewModel->setMaxOutput(config.loadOutputs);
+        m_testConditionsViewModel->setMaxRelayOutput(config.relayOutputs);
+        m_manualControlViewModel->onInstrumentSetupConfigChanged(config);
+        m_manualControlViewModel->onConditionsChanged(m_testConditionsViewModel->conditions());
+        m_testSequenceViewModel->onInstrumentSetupConfigChanged(config);
     });
     if (!alive)
         return;

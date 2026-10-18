@@ -39,7 +39,8 @@ OscMeasureResult runTransientStrategy(TransientKind kind, const TransientContext
     auto event = selectEvent(kind);
     TransientDetail::Execution run(ctx, scope, stop, event->needsShortProtection);
     try {
-        TransientDetail::runSearch(run, *event);
+        TransientDetail::runSearch(run, *event,
+                                  kind == TransientKind::TurnOff || kind == TransientKind::TurnOnThenShort);
     } catch (const std::exception &ex) {
         run.result.errorMessage = QString::fromUtf8(ex.what());
     } catch (...) {

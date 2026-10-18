@@ -1,5 +1,5 @@
 #include "sidepanel.h"
-#include "page5style.h"
+#include "testsequencestyle.h"
 
 SidePanel::SidePanel(Qt::Edge side, int defaultWidth, QWidget* parent)
     : QWidget(parent), m_side(side), m_lastWidth(defaultWidth)
@@ -8,7 +8,7 @@ SidePanel::SidePanel(Qt::Edge side, int defaultWidth, QWidget* parent)
     m_toggleButton = new QToolButton(this);
     m_toggleButton->setFixedWidth(BTN_W);
     m_toggleButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
-    m_toggleButton->setStyleSheet(Page5Style::SIDE_TOGGLE_BTN);
+    m_toggleButton->setStyleSheet(TestSequenceStyle::SIDE_TOGGLE_BTN);
     connect(m_toggleButton, &QToolButton::clicked, this, &SidePanel::onToggleClicked);
 
     // 內容區

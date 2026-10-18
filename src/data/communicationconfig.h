@@ -200,7 +200,7 @@ struct CommunicationConfig {
         }
     }
 
-    // 解析 Page1 手動輸入的資源字串
+    // 解析 InstrumentSetup 手動輸入的資源字串
     static CommunicationConfig fromResourceString(const QString& resource)
     {
         CommunicationConfig config;

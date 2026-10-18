@@ -109,6 +109,7 @@ XmlOperationResult XmlConfigStore::loadAllFromXml(const QString& fileName,
     // Model-to-ViewModel updates still run, keeping each page cache in sync.
     std::vector<std::unique_ptr<QSignalBlocker>> blockers;
     QMap<IXmlSerializable*, QByteArray> backups;
+    QMap<IXmlSerializable*, std::function<void()>> runtimeRollbacks;
     QMap<IXmlSerializable*, QPointer<QObject>> owners;
     for (auto* page : pages) {
         if (!page)
@@ -120,6 +121,8 @@ XmlOperationResult XmlConfigStore::loadAllFromXml(const QString& fileName,
             return {XmlOperationResult::Error::Write,
                     QStringLiteral("Cannot snapshot current configuration")};
         backups.insert(page, snapshot);
+        if (auto rollback = page->captureXmlRollback())
+            runtimeRollbacks.insert(page, std::move(rollback));
         if (auto* object = dynamic_cast<QObject*>(page)) {
             owners.insert(page, object);
             blockers.push_back(std::make_unique<QSignalBlocker>(object));
@@ -139,6 +142,14 @@ XmlOperationResult XmlConfigStore::loadAllFromXml(const QString& fileName,
         for (auto* page : pages) {
             if (!page)
                 continue;
+            if (const auto rollback = runtimeRollbacks.constFind(page); rollback != runtimeRollbacks.cend()) {
+                try {
+                    (*rollback)();
+                } catch (...) {
+                    applied.detail += QStringLiteral("; rollback failed for ") + page->xmlTagName();
+                }
+                continue;
+            }
             QXmlStreamReader restore(backups.value(page));
             restore.readNextStartElement();
             try {

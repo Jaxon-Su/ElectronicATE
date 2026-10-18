@@ -1,0 +1,318 @@
+#include "../../support/test_evidence.h"
+#include "descentstrategy.h"
+#include "oscilloscopestrategyfactory.h"
+#include "oscilloscope.h"
+#include "msoseries456.h"
+#include "testrunservice.h"
+#include "testsequencemodel.h"
+#include "testsequencetaskdefaults.h"
+#include "testsequencesettingsvalidation.h"
+#include "testsequenceresultrows.h"
+#include "../../../src/views/testsequence/dialogs/turnonoffdialogs/descentdialog.h"
+#include <QApplication>
+#include <QThread>
+#include <QDir>
+#include <QJsonDocument>
+#include <QFontDatabase>
+#include <QScrollBar>
+#include "scopemeasurementstrategy.h"
+#include <iostream>
+
+void require(bool ok, const char *message) { if (!ok) throw std::runtime_error(message); }
+class Scope final : public Oscilloscope {
+public:
+    QString model() const override {return "MSOSeries456";}
+    QString vendor() const override {return "offline";}
+    QByteArray captureScreenshot(const QString &,const QString &) override {return {};}
+    QString lastError() const override {return error;}
+    int getTotalChannel() override {return 4;}
+    bool isChannelEnabled(int channel) override {return channel != disabled;}
+    double getChannelScale(int) override {return 10;}
+    bool isClipping(int) override {if (clipThrow) throw std::runtime_error("clip query"); return clip;}
+    bool setVerticalScale(int,double,QString &) override {throw std::runtime_error("descent changed scale");}
+    int triggerChannel() override {return source;}
+    bool selectEdgeTrigger(QString &) override {trace<<"edge";return true;}
+    bool setEdgeTriggerChannel(int channel,QString &e) override {trace<<"source";source=channel;if(rejectSource){e="source rejected";return false;}return true;}
+    bool setEdgeSlope(ScopeTriggerSlope value,QString &) override {require(value==ScopeTriggerSlope::Fall,"not Falling");return true;}
+    bool setTriggerMode(ScopeTriggerMode value,QString &) override {require(value==ScopeTriggerMode::Normal,"AUTO used");return true;}
+    bool setChannelTriggerLevel(int channel,double level,QString &) override {require(channel==4,"wrong trigger source");levels<<level;return true;}
+    bool stopAcquisition(QString &) override {armed=false;trace<<"stop";return true;}
+    void stop() override {armed=false;}
+    bool beginSingleAcquisition() override {trace<<"arm";armed=true;event=false;ready=false;++arms;return !failArm;}
+    ScopeTriggerState triggerState() override {
+        if(early){event=true;return ScopeTriggerState::Triggered;}
+        ready=true;trace<<"ready";return ScopeTriggerState::Ready;
+    }
+    ScopeAcquisitionState acquisitionState() override {
+        if(commError)return ScopeAcquisitionState::Invalid;
+        if(event&&late){QThread::msleep(30);late=false;}
+        return event&&arms!=missArm?ScopeAcquisitionState::Completed:ScopeAcquisitionState::Running;
+    }
+    double readMeasurement(int channel,ScopeMeasurement metric) override {
+        require(event,"read without event");require(!shortOn&&!powerOn,"read before OFF/short exit");
+        trace<<"read";error.clear();
+        if(channel==2&&metric==ScopeMeasurement::Mean&&readError&&arms>=readErrorArm){error="injected read";return NAN;}
+        if(channel==2&&legalNa)return NAN;
+        return channel*100+arms*10+int(metric);
+    }
+    bool power(bool on,QString &e) {
+        trace<<(on?"on":"off");
+        if(!on&&shortOn&&offFailure){e="OFF failure";return false;}
+        powerOn=on;
+        if(!on&&armed&&!event&&!shortMode)fire();
+        return true;
+    }
+    bool relay(bool sh,bool dis,QString &e) {
+        trace<<QString("relay %1 %2").arg(sh).arg(dis);
+        if(dis&&dischargeFailure){e="discharge failure";return false;}
+        shortOn=sh;
+        if(sh&&!dis&&armed&&!event)fire();
+        return true;
+    }
+    void fire() {require(ready,"event before READY");event=true;trace<<"event";if(cancel)cancel->storeRelease(1);}
+    QStringList trace;QVector<double> levels;QString error;
+    int source=1,disabled=0,arms=0,missArm=0,readErrorArm=1;
+    bool armed=false,event=false,ready=false,powerOn=false,shortOn=false,shortMode=false;
+    bool rejectSource=false,failArm=false,early=false,commError=false,late=false,clip=false,clipThrow=false;
+    bool readError=false,legalNa=false,offFailure=false,dischargeFailure=false;
+    QAtomicInt *cancel=nullptr;
+};
+TransientContext configuration(Scope &scope)
+{
+    TransientContext c;c.descentChannel=4;c.descentLevels={15,5,10,5,0,-1.25};c.trialsPerLevel=2;
+    c.settleMs=c.dischargeMs=c.powerOffMs=0;c.timeoutMs=20;c.phaseTimeoutMs=10000;
+    c.power=[&](bool on,QString&e){return scope.power(on,e);};
+    c.relays=[&](bool sh,bool dis,QString&e){return scope.relay(sh,dis,e);};
+    c.load=[&](bool on,QString&){scope.trace<<(on?"load on":"load off");return true;};return c;
+}
+void strategyCase(const QString &mode,bool shortTest)
+{
+    Scope scope;scope.shortMode=shortTest;QAtomicInt stop{0};auto cfg=configuration(scope);int captures=0;
+    if(mode=="missing")cfg.descentLevels.clear();
+    if(mode=="invalid")cfg.descentLevels={NAN};
+    if(mode=="disabled")scope.disabled=4;
+    if(mode=="channel")cfg.descentChannel=8;
+    if(mode=="reject")scope.rejectSource=true;
+    if(mode=="arm")scope.failArm=true;
+    if(mode=="early")scope.early=true;
+    if(mode=="miss")scope.missArm=2;
+    if(mode=="comm")scope.commError=true;
+    if(mode=="late")scope.late=true;
+    if(mode=="clip")scope.clip=true;
+    if(mode=="clip_query")scope.clipThrow=true;
+    if(mode=="read")scope.readError=true;
+    if(mode=="later_read"){scope.readError=true;scope.readErrorArm=2;}
+    if(mode=="na")scope.legalNa=true;
+    if(mode=="off")scope.offFailure=true;
+    if(mode=="discharge")scope.dischargeFailure=true;
+    if(mode=="cancel")scope.cancel=&stop;
+    if(mode=="stopped")stop.storeRelease(1);
+    if(mode=="deadline")cfg.phaseTimeoutMs=5;
+    std::unique_ptr<IOscilloscopeMeasureStrategy> strategy(OscilloscopeStrategyFactory::create(
+        shortTest?"Turn on then short (descent)":"Turn off (descent)",&cfg));
+    require(bool(strategy),"factory missing");
+    strategy->setCaptureObserver([&](const ScopeCaptureRecord &r){
+        require(!scope.shortOn&&(!shortTest||!scope.powerOn),"Capture before short exit");
+        require(r.channels.size()==4,"enabled channels lost");++captures;scope.trace<<"capture";
+        if(mode=="later_read"&&scope.arms==2) require(std::isnan(r.channels[2].maxVal),"diagnostic reused previous event values");
+        if(mode=="capture")throw std::runtime_error("save failed");
+        if(mode=="deadline")QThread::msleep(10);
+    });
+    const auto result=strategy->execute(&scope,stop);
+    if(mode=="success"||mode=="na") {
+        require(result.success&&!result.cleanupFailed,qPrintable(result.errorMessage));
+        require(result.trials.size()==12&&scope.arms==12&&captures==12,"event counts");
+        QVector<double> expected;for(double v:cfg.descentLevels)expected<<v<<v;
+        require(scope.levels==expected,"levels sorted/deduplicated/modified");
+        for(int i=0;i<result.trials.size();++i){const auto&t=result.trials[i];
+            require(t.direction==MeasurementDirection::Fall&&t.step==i/2+1&&t.trial==i%2+1&&t.triggerLevel==expected[i],"provenance");
+            require(t.channels.size()==4&&t.channels[0].maximum==100+(i+1)*10&&t.channels[0].mean==103+(i+1)*10,"four values mixed");
+            if(mode=="na")require(std::isnan(t.channels[1].mean),"NA fabricated");
+        }
+    } else {
+        require(!result.success,"fault passed");
+        if(mode=="miss") require(result.trials.size()==1&&captures==1&&scope.arms==2,"miss lost partial data or continued");
+        if(mode=="later_read") require(result.trials.size()==1&&captures==2&&scope.arms==2,"later read lost partial data/diagnostic");
+        if(mode=="clip"||mode=="clip_query"||mode=="read"||mode=="late"||mode=="deadline")require(captures==1&&result.trials.isEmpty(),"diagnostic missing/fabricated valid trial");
+        if(mode=="early")require(scope.trace.count("event")==0&&captures==1,"pre-READY event applied or diagnosis lost");
+        if(mode=="off")require(result.cleanupFailed&&scope.shortOn&&captures==0&&scope.arms==1,"OFF failure released short");
+        if(mode=="discharge")require(result.cleanupFailed&&scope.arms==0&&captures==0,"startup discharge failure continued");
+        if(mode=="disabled"||mode=="channel"||mode=="missing"||mode=="invalid"||mode=="stopped")require(scope.trace.isEmpty(),"invalid settings operated outputs");
+    }
+    if(!scope.trace.isEmpty()) require(scope.trace.last()=="load off","cleanup missed Load OFF");
+}
+void serviceCase(const QString &mode)
+{
+    for(bool sh:{false,true}) {
+        if(mode=="service_off"&&!sh)continue;
+        Scope scope;scope.shortMode=sh;scope.offFailure=mode=="service_off";
+        TestSequenceExecutionContext context;context.scope=&scope;
+        context.inputs={{"1phase","120","60","0"}};context.loads={{"Load",{"1"}}};
+        context.relays={{"Short",{"ON","OFF"}},{"Discharge",{"OFF","ON"}}};
+        InstrumentConfig relay;relay.type="Relay";relay.enabled=true;relay.commConfig.protocol=ProtocolType::GPIB;
+        relay.commConfig.gpibAddress=4;relay.channels={{"relay",1,0},{"relay",2,0}};
+        context.instrumentSetup.instruments={relay};context.instrumentSetup.relayOutputs=2;
+        const QString name=sh?"Turn on then short (descent)":"Turn off (descent)";
+        TaskPayload task;task.task.name=name;task.settings=testSequenceDefaultSettings(name).first().toMap();
+        task.settings["ac_input_index"]=0;task.settings["load_index"]=0;
+        task.settings["delay_ms"]=0;task.settings["discharge_ms"]=1;
+        task.settings["trig_timeout_ms"]=20;task.settings["phase_timeout_ms"]=10000;
+        task.settings["trigger_levels"]=QVariantList{10.0,5.0};
+        if(sh){task.settings["relay_index"]=0;task.settings["discharge_index"]=1;}
+        TestRunDependencies deps;int creations=0;
+        deps.validateMeasurement=[](const auto&,auto,int,bool){};
+        deps.instruments.input=[&](const auto&,const auto&,InputAction action){
+            QString error;return InstrumentOperationResult{scope.power(action==InputAction::PowerOn,error),error};};
+        deps.instruments.load=[&](const auto&,const auto&,int,const auto&,LoadAction action,bool){
+            scope.trace<<(action==LoadAction::LoadOn?"load on":"load off");return InstrumentOperationResult{};};
+        deps.instruments.relay=[&](const auto&,const auto& rows,int index,RelayAction action){
+            QString error;const bool off=action==RelayAction::RelayOff;
+            return InstrumentOperationResult{scope.relay(!off&&rows[index].values[0]=="ON",!off&&rows[index].values[1]=="ON",error),error};};
+        deps.strategy=[&](const MeasurementStrategyRequest &request)->std::unique_ptr<IMeasurementStrategy>{
+            ++creations;const auto &r=std::get<ScopeMeasurementRequest>(request);
+            std::unique_ptr<IOscilloscopeMeasureStrategy> algorithm(OscilloscopeStrategyFactory::create(r.taskName,&r.context));
+            require(bool(algorithm),"Service factory missing");algorithm->setCaptureObserver(r.capture);
+            return std::make_unique<ScopeMeasurementStrategy>(std::move(algorithm),r.scope);};
+        TestRunService service(deps);QVector<TestSequenceResultRecord> records;bool held=false;
+        QObject::connect(&service,&TestRunService::logMessage,[](const QString &message){std::cerr<<message.toStdString()<<'\n';});
+        QObject::connect(&service,&TestRunService::resultRecordsReady,[&](const auto&r){records=r;});
+        QObject::connect(&service,&TestRunService::outputsUncertain,[&](const auto&,const auto&,const ShortCircuitProtection&p){held=p.active()&&p.shortMayBeOn;});
+        QVector<TaskPayload> tasks{task};
+        if(mode=="preflight") {auto invalid=task;invalid.settings["trigger_levels"]=QVariantList{"5"};tasks<<invalid;}
+        if(mode=="service_off") {tasks[0].retry=2;tasks<<task;}
+        service.startTasks(tasks,context);
+        if(mode=="preflight")require(creations==0&&scope.trace.isEmpty()&&records.size()==2&&records[0].status=="Skipped"&&records[1].status=="Fail","bad later row allowed IO");
+        else if(mode=="service_off")require(creations==1&&scope.arms==1&&scope.shortOn&&held&&records.size()==2&&records[0].status=="Fail"&&records[1].status=="Skipped","Service retried or bypassed short protection");
+        else {
+            require(records.size()==1&&records[0].status=="Pass"&&records[0].trials.size()==2,"Service dispatch/results");
+            const auto trials=TestSequenceResultRows::rows(records[0],false);
+            require(trials.size()==8&&trials[0][TestSequenceResultRows::Level].toDouble()==10&&trials[4][TestSequenceResultRows::Level].toDouble()==5,"report order/values");
+            const auto summary=TestSequenceResultRows::rows(records[0],true);bool notRun=false;
+            for(const auto &row:summary)if(row[TestSequenceResultRows::Direction]=="Rise")notRun=row[TestSequenceResultRows::Max]=="Not run";
+            require(notRun,"descent report claims Rise ran");
+        }
+    }
+}
+void uiCase()
+{
+    for(bool sh:{false,true}){
+        const QString name=sh?"Turn on then short (descent)":"Turn off (descent)";
+        const auto group=TestSequenceTaskKind::settingsGroup(name);
+        auto cfg=testSequenceDefaultSettings(name).value(group).toMap();
+        cfg["trigger_levels"]=QVariantList{10.0,15.0,0.0,-1.25,10.0};
+        DescentDialog dialog(sh,{{"AC"},{"DC"}},{"Load"},{{"Short",{"ON","OFF"}},{"Discharge",{"OFF","ON"}}},cfg,1);
+        require(!dialog.findChild<QComboBox*>("measureTarget")&&!dialog.findChild<QWidget*>("ate-channels"),"extra channel/search selector");
+        dialog.show();QApplication::processEvents();
+        dialog.grab().save(TestEvidence::path(QString("descent/%1.png").arg(sh?"short-dialog":"off-dialog")));
+        dialog.findChild<QToolButton*>("advancedToggle")->click();QApplication::processEvents();
+        auto *scroll=dialog.findChild<QScrollArea*>();scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum());
+        QApplication::processEvents();
+        dialog.grab().save(TestEvidence::path(QString("descent/%1-advanced.png").arg(sh?"short-dialog":"off-dialog")));
+        auto *table=dialog.findChild<QTableWidget*>("triggerLevels");
+        require(table->item(0,1)->text()=="10"&&table->item(1,1)->text()=="15","initial order changed");
+        for(auto *button:dialog.findChildren<QPushButton*>())
+            require(button->text()!=QString::fromUtf8("↑")&&button->text()!=QString::fromUtf8("↓"),"move buttons remain");
+        dialog.findChild<QPushButton*>("addLevel")->click();
+        require(!dialog.findChild<QPushButton*>("applyBtn")->isEnabled(),"blank coerced to zero");
+        table->item(5,1)->setText("1.23456");require(!dialog.findChild<QPushButton*>("applyBtn")->isEnabled(),"precision");
+        table->item(5,1)->setText("-0.0001");
+        dialog.findChild<QComboBox*>("triggerChannel")->setCurrentIndex(2);
+        dialog.findChild<QPushButton*>("applyBtn")->click();
+        require(dialog.result()==QDialog::Accepted,"Apply rejected valid");
+        const auto saved=dialog.config();
+        require(saved.value("trigger_channel")==3&&!saved.contains("measure_target"),"source not saved or search leaked");
+        const QVariantList expected{10.0,15.0,0.0,-1.25,10.0,-0.0001};
+        require(saved.value("trigger_levels").toList()==expected,"level order/precision changed");
+        TestSequenceModel model;DutRowData row;row.item=name;row.settings={{group,saved}};model.appendTask(row);
+        QString xml;QXmlStreamWriter out(&xml);model.writeXml(out);
+        TestSequenceModel loaded;QXmlStreamReader in(xml);in.readNextStartElement();loaded.loadXml(in);
+        require(!in.hasError()&&loaded.tasks().size()==1,"XML rejected new task");
+        require(loaded.tasks()[0].settings[group].toMap()["trigger_levels"].toList()==expected,"XML changed list");
+        DescentDialog cancelled(sh,{},{},{},saved,1);cancelled.findChild<QComboBox*>("triggerChannel")->setCurrentIndex(0);
+        cancelled.findChild<QPushButton*>("deleteLevel_1")->click();
+        auto *remaining=cancelled.findChild<QTableWidget*>("triggerLevels");
+        require(remaining->rowCount()==5&&remaining->item(1,0)->text()=="2"&&remaining->item(1,1)->text()=="0","delete/renumber changed wrong level");
+        cancelled.findChild<QPushButton*>("closeBtn")->click();require(cancelled.config()==saved,"Close committed changes");
+        for(const QVariant &bad:{QVariant(QVariantList{true}),QVariant(QVariantList{"10"}),QVariant("10,5")}){
+            auto invalid=saved;invalid["trigger_levels"]=bad;QString error;
+            require(!TestSequenceSettingsValidation::config(group,QJsonObject::fromVariantMap(invalid),error),"XML accepted bad levels");
+            bool rejected=false;try{TaskSettings::decode(name,invalid);}catch(...){rejected=true;}require(rejected,"Run accepted bad levels");
+        }
+        auto empty=saved;empty["trigger_levels"]=QVariantList{};bool rejected=false;
+        try{TaskSettings::decode(name,empty);}catch(...){rejected=true;}require(rejected,"empty list executed");
+    }
+}
+void precisionCase()
+{
+    const QVariantList values{0.0, 0.0001, -0.0001, 1.2345, -1.2345, 999999999.9999, 1e9, -1e9, 0.0001};
+    for (bool sh : {false, true}) {
+        const QString name = sh ? "Turn on then short (descent)" : "Turn off (descent)";
+        const auto group = TestSequenceTaskKind::settingsGroup(name);
+        auto cfg = testSequenceDefaultSettings(name).value(group).toMap(); cfg["trigger_levels"] = values;
+        DescentDialog dialog(sh, {}, {}, {}, cfg, 1);
+        auto *table = dialog.findChild<QTableWidget*>("triggerLevels");
+        auto *apply = dialog.findChild<QPushButton*>("applyBtn");
+        require(apply->isEnabled(), "legal four-decimal XML cannot be applied");
+        for (int i = 0; i < values.size(); ++i) {
+            require(!table->item(i, 1)->text().contains('e', Qt::CaseInsensitive), "legal level restored as exponent");
+            require(table->item(i, 1)->text().toDouble() == values[i].toDouble(), "restored level lost precision");
+        }
+        apply->click(); require(dialog.result() == QDialog::Accepted, "real Apply failed");
+        require(dialog.config()["trigger_levels"].toList() == values, "Apply rounded values");
+        TestSequenceModel source; DutRowData row; row.item = name; row.settings = {{group, dialog.config()}}; source.appendTask(row);
+        QString xml; QXmlStreamWriter writer(&xml); source.writeXml(writer);
+        TestSequenceModel loaded; QXmlStreamReader reader(xml); reader.readNextStartElement(); loaded.loadXml(reader);
+        require(!reader.hasError() && loaded.tasks()[0].settings[group].toMap()["trigger_levels"].toList() == values, "precision XML roundtrip");
+        DescentDialog reopened(sh, {}, {}, {}, loaded.tasks()[0].settings[group].toMap(), 1);
+        reopened.findChild<QPushButton*>("applyBtn")->click();
+        require(reopened.result() == QDialog::Accepted && reopened.config()["trigger_levels"].toList() == values, "reopened XML is not editable");
+        for (double bad : {0.00001, -0.00001, 1.23456, std::nextafter(0.0001, 1.0), 1e9 + 0.0001}) {
+            auto invalid = cfg; invalid["trigger_levels"] = QVariantList{bad}; QString error;
+            require(!TestSequenceSettingsValidation::config(group, QJsonObject::fromVariantMap(invalid), error), "XML accepted extra precision");
+            bool rejected = false; try { TaskSettings::decode(name, invalid); } catch (...) { rejected = true; }
+            require(rejected, "Run accepted extra precision");
+            DescentDialog invalidDialog(sh, {}, {}, {}, invalid, 1);
+            require(!invalidDialog.findChild<QPushButton*>("applyBtn")->isEnabled(), "invalid level rounded by dialog");
+            Scope scope; auto context = configuration(scope); context.descentLevels = {bad}; QAtomicInt stop{0};
+            DescentStrategy strategy(sh, context); const auto result = strategy.execute(&scope, stop);
+            require(!result.success && scope.trace.isEmpty(), "direct strategy accepted invalid precision");
+        }
+        // Invalid precision must leave existing UID/data intact (JSON may serialize small values as exponents).
+        QString invalidXml = xml; invalidXml.replace("1.2345", "1.23456");
+        require(invalidXml != xml, "invalid XML fixture did not change");
+        const auto before = loaded.tasks(); int notifications = 0;
+        QObject::connect(&loaded, &TestSequenceModel::configLoaded, [&] { ++notifications; });
+        QXmlStreamReader invalidReader(invalidXml); invalidReader.readNextStartElement(); loaded.loadXml(invalidReader);
+        require(invalidReader.hasError() && notifications == 0 && loaded.tasks()[0].uid == before[0].uid &&
+                loaded.tasks()[0].settings == before[0].settings, "invalid precision XML changed current model");
+    }
+}
+class Transport final:public ICommunication {
+public:
+    bool open()override{return true;}void close()override{}bool isOpen()const override{return true;}
+    QString lastError()const override{return "injected write failure";}
+    int write(const QByteArray&bytes)override{last=QString::fromUtf8(bytes).trimmed();commands<<last;consumed=false;return last==fail?-1:bytes.size();}
+    int read(QByteArray&bytes,int)override{if(consumed){bytes.clear();return 0;}consumed=true;if(last!="*ESR?")return -1;bytes=rejected&&commands.contains("TRIGger:A:EDGE:SOUrce CH4")?"32":"0";return bytes.size();}
+    QString last,fail;QStringList commands;bool consumed=false,rejected=false;
+};
+void driverCase(){
+    Transport comm;MSOSeries456 scope(&comm);QString error;
+    require(scope.setEdgeTriggerChannel(4,error),qPrintable(error));require(comm.commands.contains("TRIGger:A:EDGE:SOUrce CH4"),"source SCPI");
+    const auto size=comm.commands.size();require(!scope.setEdgeTriggerChannel(0,error)&&comm.commands.size()==size,"bad channel sent");
+    comm.fail="TRIGger:A:EDGE:SOUrce CH4";require(!scope.setEdgeTriggerChannel(4,error),"write error ignored");
+    comm.fail.clear();comm.rejected=true;require(!scope.setEdgeTriggerChannel(4,error),"ESR rejection ignored");
+}
+int main(int argc,char**argv){
+    qputenv("QT_QPA_PLATFORM","offscreen");QApplication app(argc,argv);
+    QFontDatabase::addApplicationFont("C:/Windows/Fonts/arial.ttf");
+    QFontDatabase::addApplicationFont("C:/Windows/Fonts/segoeui.ttf");
+    QFontDatabase::addApplicationFont("C:/Windows/Fonts/segoeuib.ttf");
+    QFontDatabase::addApplicationFont("C:/Windows/Fonts/msjh.ttc");
+    app.setFont(QFont("Arial",10));
+    try{const QString mode=argc>1?argv[1]:"success";
+        if(mode=="ui")uiCase();else if(mode=="precision")precisionCase();else if(mode=="driver")driverCase();
+        else if(mode=="service"||mode=="preflight"||mode=="service_off")serviceCase(mode);
+        else for(bool sh:{false,true}){if(!sh&&(mode=="off"||mode=="discharge"))continue;strategyCase(mode,sh);}
+        std::cout<<"PASS "<<mode.toStdString()<<'\n';return 0;
+    }catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}
+}

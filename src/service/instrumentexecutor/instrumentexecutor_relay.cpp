@@ -65,7 +65,7 @@ void executeRelayAction(RelayBase *relay, RelayAction action, const InstrumentCo
 
 } // namespace InstrumentExecutorInternal
 
-InstrumentExecutor::Result InstrumentExecutor::runRelay(const Page1Config &cfg,
+InstrumentExecutor::Result InstrumentExecutor::runRelay(const InstrumentSetupConfig &cfg,
                                                         const QVector<RelayDataRow> &rows, int conditionIndex,
                                                         RelayAction action)
 {
@@ -81,7 +81,7 @@ InstrumentExecutor::Result InstrumentExecutor::runRelay(const Page1Config &cfg,
         auto createResult = InstrumentCreator::createRelays(cfg);
         if (!createResult.success || createResult.relays().isEmpty())
             return {false, createResult.errorMessage.isEmpty()
-                               ? "No Relay instrument configured or reachable in Page 1"
+                               ? "No Relay instrument configured or reachable in InstrumentSetup"
                                : createResult.errorMessage, true};
 
         auto dataInfo = ConditionLookup::findRelayData(rows, conditionIndex);
@@ -111,7 +111,7 @@ InstrumentExecutor::Result InstrumentExecutor::runRelay(const Page1Config &cfg,
                     const auto state = relay->getStatus(channel);
                     if (state != RelayStatus::Open && state != RelayStatus::Closed)
                         throw std::runtime_error(
-                            QString("%1 channel %2: no valid relay response; check COM/slave/serial settings in Page1")
+                            QString("%1 channel %2: no valid relay response; check COM/slave/serial settings in InstrumentSetup")
                                 .arg(inst.name).arg(channel).toStdString());
                     observedEnabled |= state == RelayStatus::Closed;
                 }

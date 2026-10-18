@@ -42,7 +42,8 @@ class Oscilloscope : public InstrumentWithCommBase, public IScopeAutoPeriod, pub
     { error = "Brown Out acquisition is unsupported by this oscilloscope"; return {}; }
     QString model() const override = 0;
     void disconnect() override { InstrumentWithCommBase::disconnect(); }
-    bool applySettings(const OscilloscopeSettings &, QAtomicInt &, QString &error) override
+    bool applySettings(const OscilloscopeSettings &, QAtomicInt &, QString &error,
+                       OscilloscopeConfigurationResult * = nullptr) override
     { return unsupportedSetting("applySettings", error); }
     ScopeCaptureSource captureSource() override { return unavailable("captureSource", ScopeCaptureSource{}); }
     QString captureSlope() override { return unavailable("captureSlope", QString{}); }

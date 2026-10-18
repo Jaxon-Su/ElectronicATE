@@ -50,12 +50,24 @@ bool Search::initializeChannels()
     // 僅接受已啟用的類比觸發通道；避免無法更新門檻而持續等待。
     triggerChannel = scope->triggerChannel();
     // 每個已啟用的示波器通道，建立量測結果欄位。
-    for (int ch = 1; ch <= scope->getTotalChannel(); ++ch) {
-        if (scope->isChannelEnabled(ch)) {
-            OscChannelMeasure value;
-            value.channel = ch;
-            channels.insert(ch, value);
+    try {
+        for (int ch = 1; ch <= scope->getTotalChannel(); ++ch) {
+            if (stopFlag.loadAcquire()) {
+                result.errorMessage = "Stopped by user";
+                return false;
+            }
+            if (OscilloscopeAcquisition::channelEnabledChecked(scope, ch)) {
+                OscChannelMeasure value;
+                value.channel = ch;
+                channels.insert(ch, value);
+            }
         }
+    } catch (const std::exception &ex) {
+        result.errorMessage = QString::fromUtf8(ex.what());
+        return false;
+    } catch (...) {
+        result.errorMessage = "Unexpected channel state query error";
+        return false;
     }
     if (!channels.contains(triggerChannel)) {
         result.errorMessage = "Trigger source must be an enabled analog channel";
@@ -184,7 +196,7 @@ bool Search::searchDirection(bool maximum)
             return false;
         }
         double peak = std::numeric_limits<double>::quiet_NaN();
-        if (!accumulateRecord(maximum, peak))
+        if (!accumulateRecord(maximum, iteration + 1, level, peak))
             return false;
 
         // 通訊失敗已中止；合法 NA 沿用既有搜尋語意。
@@ -215,8 +227,11 @@ bool Search::searchDirection(bool maximum)
     return true;
 }
 
-bool Search::accumulateRecord(bool maximum, double &peak)
+bool Search::accumulateRecord(bool maximum, int step, double level, double &peak)
 {
+    MeasurementTrial record{int(result.trials.size()) + 1,
+                            maximum ? MeasurementDirection::Rise : MeasurementDirection::Fall,
+                            step, 1, level, {}};
     try {
         for (auto it = channels.begin(); it != channels.end(); ++it) {
             if (stopFlag.loadAcquire()) {
@@ -228,17 +243,13 @@ bool Search::accumulateRecord(bool maximum, double &peak)
                     OscilloscopeAcquisition::readMeasurementChecked(scope, it.key(), type));
                 return value;
             };
-            // BOTH retains both extrema from every record; slope only selects the search threshold.
-            const double high = (m_target == "BOTH" || maximum)
-                                    ? readPeak(ScopeMeasurement::Maximum)
-                                    : std::numeric_limits<double>::quiet_NaN();
+            // Direction controls the search, not which values belong to a record.
+            const double high = readPeak(ScopeMeasurement::Maximum);
             if (stopFlag.loadAcquire()) {
                 result.errorMessage = "Stopped by user";
                 return false;
             }
-            const double low = (m_target == "BOTH" || !maximum)
-                                   ? readPeak(ScopeMeasurement::Minimum)
-                                   : std::numeric_limits<double>::quiet_NaN();
+            const double low = readPeak(ScopeMeasurement::Minimum);
             if (stopFlag.loadAcquire()) {
                 result.errorMessage = "Stopped by user";
                 return false;
@@ -255,6 +266,7 @@ bool Search::accumulateRecord(bool maximum, double &peak)
                 return false;
             }
             it->mean = readPeak(ScopeMeasurement::Mean);
+            record.channels.append({it.key(), {}, high, low, it->rms, it->mean});
         }
     } catch (const std::exception &ex) {
         result.errorMessage = QString::fromUtf8(ex.what());
@@ -264,6 +276,8 @@ bool Search::accumulateRecord(bool maximum, double &peak)
         return false;
     }
 
+    if (std::isfinite(peak))
+        result.trials.append(record);
     return true;
 }
 

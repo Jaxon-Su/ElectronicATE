@@ -1,6 +1,6 @@
 #pragma once
 
-#include "page2config.h"
+#include "testconditionsconfig.h"
 
 // Shared presentation text; no dependency on a page, ViewModel, or widget.
 namespace ConditionTextFormatter {

@@ -27,7 +27,7 @@ class SidePanel : public QWidget {
     void updateArrow();
 
   public:
-    static constexpr int BTN_W = 18;    // 箭頭按鈕固定寬度（px），page5.cpp 可用
+    static constexpr int BTN_W = 18;    // 箭頭按鈕固定寬度（px），testsequencepage.cpp 可用
     static constexpr int ANIM_MS = 220; // 動畫時長（ms）
 
   private:
