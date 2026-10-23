@@ -17,10 +17,12 @@ double measurementOrNaN(double value)
 }
 
 Search::Search(IScopeMeasurement *instrument, QAtomicInt &stop, const QString &target,
-               int timeoutMs, int phaseTimeoutMs, int maxIterations, const OscCaptureObserver &capture)
+               int timeoutMs, int phaseTimeoutMs, int maxIterations, const OscCaptureObserver &capture,
+               const VerticalScaleOptions &options)
     : scope(instrument), stopFlag(stop), captureObserver(capture), m_target(target), m_timeoutMs(timeoutMs),
       m_phaseTimeoutMs(phaseTimeoutMs), m_maxIterations(maxIterations)
 {
+    vertical.options = options;
 }
 
 OscMeasureResult Search::execute()
@@ -79,7 +81,7 @@ bool Search::initializeChannels()
 bool Search::captureReference()
 {
     vertical.captureRecord = captureObserver;
-    // AUTO obtains a fresh steady reference; V/div expands only on clipping, preserving timebase.
+    // AUTO obtains a fresh steady reference; V/div expands for clipping or optional margin, preserving timebase.
     const auto reference =
         OscilloscopeAcquisition::captureAutoReference(scope, stopFlag, m_phaseTimeoutMs, &vertical);
     if (!reference.success) {
@@ -183,9 +185,10 @@ bool Search::searchDirection(bool maximum)
 
         // Scale changes require a fresh record; clipped data is never retained.
         try {
-            if (OscilloscopeAcquisition::expandClippedChannels(scope, stopFlag, scaleAdjustments,
+            if (OscilloscopeAcquisition::expandVerticalRange(scope, stopFlag, scaleAdjustments,
                                                                &vertical, "Measurement",
-                                                               status == AcquisitionResult::CompletedAfterTimeout)) {
+                                                               status == AcquisitionResult::CompletedAfterTimeout,
+                                                               QDeadlineTimer(qMax(0, m_phaseTimeoutMs - int(phase.elapsed()))))) {
                 continue;
             }
         } catch (const std::exception &ex) {

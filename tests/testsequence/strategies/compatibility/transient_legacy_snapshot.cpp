@@ -335,7 +335,7 @@ OscMeasureResult runLegacyTransientStrategy(TransientKind kind, const TransientC
                         const auto baselineStatus = wait();
                         if (OscilloscopeAcquisition::hasCompletedRecord(baselineStatus)) {
                             if (shortTest) requireShortExit();
-                            if (OscilloscopeAcquisition::expandClippedChannels(scope, stop, scaleAdjustments,
+                            if (OscilloscopeAcquisition::expandVerticalRange(scope, stop, scaleAdjustments,
                                                                                &vertical, "Baseline",
                                                                                baselineStatus == AcquisitionResult::CompletedAfterTimeout)) {
                                 configure([&](QString &e) { return scope->stopAcquisition(e); });
@@ -366,7 +366,7 @@ OscMeasureResult runLegacyTransientStrategy(TransientKind kind, const TransientC
                     // Capture transfer or scale changes. Also exit immediately on a trigger MISS.
                     if (shortTest) requireShortExit();
                     if (OscilloscopeAcquisition::hasCompletedRecord(eventStatus)) {
-                        if (OscilloscopeAcquisition::expandClippedChannels(scope, stop, scaleAdjustments,
+                        if (OscilloscopeAcquisition::expandVerticalRange(scope, stop, scaleAdjustments,
                                                                            &vertical, "Measurement",
                                                                            eventStatus == AcquisitionResult::CompletedAfterTimeout)) {
                             configure([&](QString &e) { return scope->stopAcquisition(e); });

@@ -26,15 +26,19 @@ public:
             run.delay(run.ctx.settleMs);
         }
         arm();
-        const auto baseline = run.waitForBaseline();
+        run.waitAfterSingle();
+        auto baseline = run.waitForBaseline();
+        if (!OscilloscopeAcquisition::hasCompletedRecord(baseline)) {
+            run.log("Check scope before short");
+            baseline = run.waitForShortReady();
+        }
         if (OscilloscopeAcquisition::hasCompletedRecord(baseline)) {
             run.requireShortExit(); // Baseline must be safe before diagnostic Capture.
-            return {baseline, RecordOrigin::Baseline};
+            return {baseline, RecordOrigin::BeforeShort};
         }
 
-        run.log("Apply short; wait for event");
-        run.requireReady();
         run.relays(true, false);
+        run.log("Short applied; wait for event");
         const auto status = run.waitForEvent();
         run.requireShortExit(); // Covers MISS as well as completed records.
         return {status, RecordOrigin::Event};

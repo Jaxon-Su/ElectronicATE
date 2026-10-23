@@ -16,7 +16,7 @@ OscilloscopeManager::OscMap buildConnectedOscilloscopes(const InstrumentSetupCon
         if (resource.isEmpty())
             continue;
         try {
-            auto scope = create(instrument.modelName, resource);
+            auto scope = create(instrument.modelName, instrument.commConfig);
             if (!scope)
                 continue;
             scope->connect();

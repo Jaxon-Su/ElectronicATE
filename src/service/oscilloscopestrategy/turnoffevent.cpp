@@ -7,7 +7,22 @@ class TurnOffEvent final : public Event {
 public:
     explicit TurnOffEvent(ReferenceMode reference)
         : Event(ShortProtection::NotRequired, reference) {}
-    void prepareRun(Execution &run) override { run.power(false); }
+    void prepareRun(Execution &run) override
+    {
+        run.log("Scope preparation: STOP");
+        run.configure([&](QString &error) {
+            if (run.scope->stopAcquisition(error)) return true;
+            error.prepend("Scope preparation STOP: ");
+            return false;
+        });
+        run.log("Scope preparation: NORMAL");
+        run.configure([&](QString &error) {
+            if (run.scope->setTriggerMode(ScopeTriggerMode::Normal, error)) return true;
+            error.prepend("Scope preparation NORMAL: ");
+            return false;
+        });
+        run.power(false);
+    }
 
     void prepareReferenceInput(Execution &run) override
     {

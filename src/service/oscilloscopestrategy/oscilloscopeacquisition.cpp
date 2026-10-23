@@ -9,6 +9,19 @@
 
 namespace
 {
+QString triggerStateName(ScopeTriggerState state)
+{
+    switch (state) {
+    case ScopeTriggerState::Arming: return "ARMED";
+    case ScopeTriggerState::Ready: return "READY";
+    case ScopeTriggerState::Triggered: return "TRIGGER";
+    case ScopeTriggerState::Automatic: return "AUTO";
+    case ScopeTriggerState::Saving: return "SAVE";
+    case ScopeTriggerState::Invalid: return "Invalid";
+    }
+    return "Invalid";
+}
+
 QString exceptionMessage(const std::exception_ptr &error)
 {
     try { std::rethrow_exception(error); }
@@ -22,6 +35,8 @@ double readReadyMeasurement(IScopeMeasurement *scope, QAtomicInt &stop, int chan
     QElapsedTimer timer;
     timer.start();
     double value = std::numeric_limits<double>::quiet_NaN();
+    if (timeoutMs <= 0)
+        return value;
     do {
         if (stop.loadAcquire())
             throw std::runtime_error("Stopped by user");
@@ -30,9 +45,10 @@ double readReadyMeasurement(IScopeMeasurement *scope, QAtomicInt &stop, int chan
             throw std::runtime_error("Stopped by user");
         if (std::isfinite(value) && std::abs(value) < 1e20)
             return value;
-        if (timer.elapsed() >= timeoutMs)
+        const auto remaining = timeoutMs - timer.elapsed();
+        if (remaining <= 0)
             break;
-        QThread::msleep(20);
+        QThread::msleep(static_cast<unsigned long>(qMin<qint64>(20, remaining)));
     } while (timer.elapsed() < timeoutMs);
     return std::numeric_limits<double>::quiet_NaN();
 }
@@ -62,8 +78,10 @@ double readMeasurementChecked(IScopeMeasurement *scope, int channel, ScopeMeasur
     return value;
 }
 
-bool waitForReady(IScopeMeasurement *scope, QAtomicInt &stop, int timeoutMs, QString &error)
+bool waitForReady(IScopeMeasurement *scope, QAtomicInt &stop, int timeoutMs, QString &error,
+                  ScopeTriggerState *rejectedState)
 {
+    if (rejectedState) *rejectedState = ScopeTriggerState::Invalid;
     if (!scope) {
         error = "No oscilloscope";
         return false;
@@ -85,7 +103,10 @@ bool waitForReady(IScopeMeasurement *scope, QAtomicInt &stop, int timeoutMs, QSt
         if (state == ScopeTriggerState::Ready)
             return true;
         if (state != ScopeTriggerState::Arming) {
-            error = "Scope not ready before event: " + scope->lastError();
+            const QString detail = scope->lastError();
+            if (rejectedState && detail.isEmpty()) *rejectedState = state;
+            error = "Scope not ready before event: state=" + triggerStateName(state);
+            if (!detail.isEmpty()) error += "; " + detail;
             return false;
         }
         QThread::msleep(1);
@@ -179,38 +200,37 @@ AcquisitionResult waitForCapture(IScopeMeasurement *scope, QAtomicInt &stop, int
     return AcquisitionResult::NoTrigger;
 }
 } // namespace OscilloscopeAcquisition
-bool OscilloscopeAcquisition::expandClippedChannels(IScopeMeasurement *scope, QAtomicInt &stop,
+bool OscilloscopeAcquisition::expandVerticalRange(IScopeMeasurement *scope, QAtomicInt &stop,
                                                     int &adjustments, VerticalScaleState *vertical,
-                                                    const QString &phase, bool completionTimedOut)
+                                                    const QString &phase, bool completionTimedOut,
+                                                    QDeadlineTimer phaseDeadline, RecordExtremum *extremum)
 {
     auto check = [&] {
         if (stop.loadAcquire())
             throw std::runtime_error("Stopped by user");
     };
-    auto valid = [](double v) { return std::isfinite(v) && std::abs(v) < 1e20; };
-    auto setScale = [&](int channel, double target) {
+    auto checkPhase = [&] {
         check();
+        if (phaseDeadline.hasExpired())
+            throw std::runtime_error((phase + " phase time limit reached (timeout): NA").toStdString());
+    };
+    auto readExtremum = [&](int channel, ScopeMeasurement type) {
+        checkPhase();
+        const int budget = phaseDeadline.isForever() ? 5000
+            : int(qMin<qint64>(5000, phaseDeadline.remainingTime()));
+        return readReadyMeasurement(scope, stop, channel, type, budget);
+    };
+    auto valid = [](double v) { return std::isfinite(v) && std::abs(v) < 1e20; };
+    auto setScale = [&](int channel, double previous, double target) {
+        checkPhase();
         if (adjustments >= 8)
-            throw std::runtime_error("Clipped waveform: vertical scale adjustment limit reached");
+            throw std::runtime_error("Vertical scale adjustment limit reached");
         if (!valid(target) || target <= 0)
             throw std::runtime_error("Invalid calculated channel scale");
-        QString error;
-        if (!scope->setVerticalScale(channel, target, error))
-            throw std::runtime_error(("Scale adjustment failed: " + error).toStdString());
-        check();
-        QElapsedTimer applied;
-        applied.start();
-        while (true) {
-            const double actual = scope->getChannelScale(channel);
-            check();
-            if (!valid(actual))
-                throw std::runtime_error("Invalid channel scale readback");
-            if (actual > 0 && std::abs(actual - target) <= target * 0.01)
-                break;
-            if (applied.elapsed() >= 2000)
-                throw std::runtime_error("Channel scale readback did not reach requested scale");
-            QThread::msleep(20);
-        }
+        if (vertical && vertical->options.beforeChange)
+            vertical->options.beforeChange(channel, previous, target);
+        checkPhase();
+        setScaleChecked(scope, stop, channel, target, true);
     };
     ScopeCaptureRecord record;
     record.phase = phase;
@@ -225,22 +245,53 @@ bool OscilloscopeAcquisition::expandClippedChannels(IScopeMeasurement *scope, QA
         }
     }
     QVector<int> clipped;
+    if (extremum) {
+        extremum->clipped = false;
+        extremum->value = std::numeric_limits<double>::quiet_NaN();
+    }
+    QMap<int, QPair<double, double>> expansions;
+    const bool margin = vertical && vertical->options.margin;
     std::exception_ptr queryFailure;
     try {
         for (const auto &value : record.channels) {
-            check();
+            // Late completion still gets its diagnostic record below.
+            if (!completionTimedOut) checkPhase();
+            else check();
             if (scope->isClipping(value.channel)) clipped.append(value.channel);
         }
         record.clipped = !clipped.isEmpty();
-        if (vertical && vertical->captureRecord && !completionTimedOut) {
+        const bool capture = vertical && vertical->captureRecord;
+        if ((capture || margin) && !completionTimedOut) {
             for (auto &value : record.channels) {
-                check();
-                value.maxVal = readReadyMeasurement(scope, stop, value.channel, ScopeMeasurement::Maximum, 5000);
-                value.minVal = readReadyMeasurement(scope, stop, value.channel, ScopeMeasurement::Minimum, 5000);
-                if (vertical->includeRmsMean) {
+                const bool adjustMargin = margin && !clipped.contains(value.channel);
+                if (!capture && !adjustMargin) continue;
+                value.maxVal = readExtremum(value.channel, ScopeMeasurement::Maximum);
+                value.minVal = readExtremum(value.channel, ScopeMeasurement::Minimum);
+                checkPhase();
+                if (capture && vertical->includeRmsMean) {
                     value.rms = readMeasurementChecked(scope, value.channel, ScopeMeasurement::Rms);
-                    check();
+                    checkPhase();
                     value.mean = readMeasurementChecked(scope, value.channel, ScopeMeasurement::Mean);
+                    checkPhase();
+                }
+                if (adjustMargin) {
+                    checkPhase();
+                    ScopeVerticalRange range;
+                    QString error;
+                    if (!scope->readVerticalRange(value.channel, range, error))
+                        throw std::runtime_error(QString("CH%1 vertical range: %2").arg(value.channel).arg(error).toStdString());
+                    checkPhase();
+                    if (!valid(range.scale) || range.scale <= 0 || !valid(range.center) ||
+                        !valid(range.divisions) || range.divisions <= 0 ||
+                        !valid(value.maxVal) || !valid(value.minVal) || value.maxVal < value.minVal)
+                        throw std::runtime_error(QString("CH%1 invalid vertical range or extrema for 10% margin").arg(value.channel).toStdString());
+                    const double peak = std::max(std::abs(value.maxVal - range.center),
+                                                 std::abs(value.minVal - range.center));
+                    const double required = peak / (range.divisions * 0.4);
+                    if (!valid(required)) throw std::runtime_error("Invalid calculated margin scale");
+                    // Relative tolerance only absorbs floating-point/readback rounding.
+                    if (required > range.scale * (1 + 1e-9))
+                        expansions.insert(value.channel, {range.scale, required});
                 }
             }
         }
@@ -258,14 +309,31 @@ bool OscilloscopeAcquisition::expandClippedChannels(IScopeMeasurement *scope, QA
     check();
     if (queryFailure) std::rethrow_exception(queryFailure);
     if (completionTimedOut) throw std::runtime_error("Acquisition completed after timeout");
+    checkPhase();
+    if (extremum) {
+        extremum->clipped = clipped.contains(extremum->channel);
+        if (!extremum->clipped) {
+            // Keep Baseline's single extremum read after diagnostic Capture, but
+            // before scale writes invalidate the frozen record's interpretation.
+            extremum->value = readMeasurementChecked(scope, extremum->channel, extremum->type);
+            checkPhase();
+            if (!valid(extremum->value))
+                throw std::runtime_error((phase + " measurement: NA").toStdString());
+        }
+    }
     for (int ch : clipped) {
+        checkPhase();
         const double previous = scope->getChannelScale(ch);
+        const QString error = scope->lastError();
+        if (!error.isEmpty()) throw std::runtime_error(("Channel scale query: " + error).toStdString());
         if (!valid(previous) || previous <= 0)
             throw std::runtime_error("Clipped waveform: invalid channel scale");
-        setScale(ch, previous * 2);
+        expansions.insert(ch, {previous, previous * 2});
     }
-    if (!clipped.isEmpty()) ++adjustments;
-    return !clipped.isEmpty();
+    for (auto it = expansions.cbegin(); it != expansions.cend(); ++it)
+        setScale(it.key(), it.value().first, it.value().second);
+    if (!expansions.isEmpty()) ++adjustments;
+    return !expansions.isEmpty();
 }
 
 OscMeasureResult OscilloscopeAcquisition::captureAutoReference(IScopeMeasurement *scope, QAtomicInt &stop,
@@ -323,8 +391,9 @@ OscMeasureResult OscilloscopeAcquisition::captureAutoReference(IScopeMeasurement
                                              : "AUTO reference timeout: NA");
             // Reading or archiving a completed record can cross the phase deadline.
             // Archive the frozen record before enforcing that deadline.
-            if (expandClippedChannels(scope, stop, adjustments, vertical, "Auto reference",
-                                      state == AcquisitionResult::CompletedAfterTimeout)) {
+            if (expandVerticalRange(scope, stop, adjustments, vertical, "Auto reference",
+                                      state == AcquisitionResult::CompletedAfterTimeout,
+                                      QDeadlineTimer(qMax(0, timeoutMs - int(referenceTimer.elapsed()))))) {
                 continue;
             }
             check();

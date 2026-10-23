@@ -84,5 +84,22 @@ int main(){try{
     if(!relay.commMap().isEmpty())return 9;
  }
  if(created!=destroyed || driverCreated!=driverDestroyed)return 10;
+ for(const QString type : {"Load", "Relay"}) {
+    InstrumentSetupConfig config;
+    InstrumentConfig first; first.type=type; first.name=type+"1"; first.modelName="fake";
+    first.commConfig=CommunicationConfig::fromResourceString("COM42:14400:8:E:2:N");
+    first.commConfig.timeout=1234;
+    first.channels={{"fake",1}}; first.channelNumbers={1};
+    auto second=first; second.name=type+"2"; second.commConfig.timeout=2345;
+    config.instruments={first,second};
+    if(type=="Load") {
+        auto result=InstrumentCreator::createDCLoads(config,TableKind::Load);
+        if(result.success || !result.errorMessage.contains("conflicting timeout"))return 13;
+    } else {
+        auto result=InstrumentCreator::createRelays(config);
+        if(!result.errorMessage.contains("conflicting timeout") || result.relays().size()!=2)return 14;
+    }
+ }
+ if(created!=destroyed || driverCreated!=driverDestroyed)return 15;
  return 0;
 }catch(...){return 4;}}

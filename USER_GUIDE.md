@@ -24,6 +24,19 @@ TestSequence 尚未設定的任務可作草稿保存，包括新加入的 Write 
 
 WaveformOcr 完成或停止辨識後，可雙擊 Max／Min／RMS／Mean、按 F2，或按「修改數值」編輯，Enter 儲存、Esc 取消。可輸入含單位的數值（如 `5.1 V`、`-185.3 mA`）；只改數字時會沿用該欄位原有單位，或該列唯一的有效單位。沒有可用單位時請一併輸入單位。清空欄位表示缺值，格式錯誤以黃色底色提示。通道、統計範圍及「已核對」皆為選填，不影響匯出；需要時可勾選「顯示通道／統計範圍」修改。Excel 匯出採用修改後的數值，並保留原始辨識文字、辨識原值及手動修改標記。
 
+### 儀器通訊設定
+
+按儀器的設定按鈕選擇通訊方式，OK 提交，Cancel／Escape 放棄本次修改。
+
+| 通訊方式 | 設定方式 |
+| --- | --- |
+| TCP/IP (VXI-11) | 填儀器 IP；Port 由 VISA 處理，畫面不顯示 Socket Port 或埠號提示。資源範例：`TCPIP0::192.168.1.100::INSTR`。 |
+| TCP/IP (Socket) | 填 IP 與儀器指定的 Port。資源範例：`TCPIP0::192.168.1.100::5025::SOCKET`。切換回 VXI-11 再返回時保留已輸入 Port。 |
+| Serial (RS-232/RS-485) | 設定 COM、Baud、Data bits、Parity、Stop bits 及 Flow control。 |
+| Modbus RTU | 與 Serial 共用串口欄位，使用 8 data bits、Slave ID 1–247，無 Flow control。切回 Serial 保留原本 Data bits／Flow control 草稿。 |
+
+RTU 的「測試連線」只開啟並關閉串口，不發送 SCPI 或 Modbus 命令；「串口已開啟，未驗證設備回應」不代表從站通訊成功。其他原有連線測試維持既有查詢行為。XML 保留所選協議與適用參數；無效的舊 RTU Data bits／Slave ID 會保留供修正，不能直接 OK。
+
 ### WFM Viewer
 
 按 **Open WFM…** 開啟 Tektronix WFM v3 的單筆類比 YT 波形。支援 Sample 與 Peak Detect 的 Min/Max 成對記錄，時間與取樣間隔由檔頭自動解析，不限定 Time/div 或取樣率。最多 1,000 萬儲存數值（Min/Max 為 500 萬組）、512 MiB 檔案；FastFrame、summary frame、digital、IQ、histogram、XY、roll 及舊版格式會明確提示不支援。
@@ -41,7 +54,10 @@ Peak Detect 預設只畫每組 Min–Max 垂直範圍線；勾選 **上下界連
 ### 自動測試項目
 
 - **Single／Group Test（單組／群組測試）**：Static、Dynamic、Turn on、Turn off、Short then turn on、Turn on then short；Group 依序測試多個負載條件，逐負載列出結果。每筆有效 Trial 均保存 Max／Min／RMS／Mean，並分 Rise／Fall 選出完整四值代表結果。
-- **Descent 單組測試**：Turn off (descent)、Turn on then short (descent)。Trigger CH 只選負緣觸發 Channel，量測沿用已啟用的示波器通道；Trigger levels 可新增、刪除與編輯，依列順序執行。每組每次重新上電後觸發，依序保存四值與 Level。原有 Rise／Fall 追蹤保持不變，詳細流程見 [量測策略](MEASUREMENT_STRATEGIES.md)。
+- Turn on／Short then turn on／Turn on then short（含 Group）每次事件 Single 成功後等待 **3000 ms**，再走原 READY／Baseline 檢查；提前觸發後重新 Single 也等待。Stop 可中斷，時間計入 Phase time limit；原 Level 避讓、短路退出及 Rise／Fall 保留，AUTO 參考不加等待。
+- **Descent 單組測試**：Turn off (descent)、Turn on then short (descent)。Trigger CH 選負緣觸發 Channel，量測沿用已啟用的示波器通道。Turn off (descent) 另有 **Enable**（預設勾選），只控制觸發 CH 的顯示／量測，未勾選仍使用該 CH 觸發；其他 CH 不變。若關閉觸發 CH，WFM／CSV Capture 須另選已啟用 CH，PNG 不受此限制。Trigger levels 可新增、刪除與編輯，依列順序執行；每次重新上電後觸發，依序保存四值與 Level。原有 Rise／Fall 追蹤保持不變，詳細流程見 [量測策略](MEASUREMENT_STRATEGIES.md)。
+- 兩種 descent 每個 Level／Trial 的 Single 後固定等待 **3000 ms**，再確認 READY 才關電或短路；Stop 可中斷，等待計入 Phase time limit。等待不保證 READY，若仍為 SAVE 等錯誤狀態則回報失敗並清理。
+- Brown Out 初次事件 Single／RUN 後等待 **3000 ms** 再確認 READY；Track＋Capture 每次重新 Single 也等待後才恢復降壓。等待可 Stop，Vout 監測持續；未開 Capture 的連續 RUN 後續 Level 更新不增加等待。
 - **Dell/HP Test**：Brown Out 降壓測試，流程見 [TestSequence：量測策略](MEASUREMENT_STRATEGIES.md)。
 - **輔助任務**：Relay、Write Oscilloscope、Delay。
 - **輸入選擇**：所有量測測試可選 AC、DC 或兩者並用；開／關事件依序操作所選輸入，並非硬體同步切換。

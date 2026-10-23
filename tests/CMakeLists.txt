@@ -316,12 +316,18 @@ add_executable(descent_test testsequence/strategies/descent_test.cpp ${descent_s
 set_target_properties(descent_test PROPERTIES AUTORCC ON)
 target_include_directories(descent_test PRIVATE ../src/service/oscilloscopestrategy
     ../src/models/testsequence ../src/views/testsequence/dialogs/relaydialogs)
-target_link_libraries(descent_test PRIVATE ElectronicATETestRun ElectronicATEModels ElectronicATEDrivers ElectronicATEReport Qt6::Widgets Qt6::Xml)
+target_link_libraries(descent_test PRIVATE ElectronicATETestRun ElectronicATEModels ElectronicATEDrivers ElectronicATEReport ElectronicATECapture ElectronicATEStorage Qt6::Widgets Qt6::Xml)
 foreach(scenario success na missing invalid disabled channel reject arm early miss comm late clip clip_query read
-    off discharge cancel stopped deadline capture ui precision driver later_read service preflight service_off)
+    off discharge cancel stopped deadline capture ui precision driver later_read service preflight service_off single_wait)
     add_test(NAME descent_${scenario} COMMAND descent_test ${scenario})
     set_tests_properties(descent_${scenario} PROPERTIES TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endforeach()
+
+# Both descent strategies wait 3000 ms after each successful Single.
+set_tests_properties(descent_success descent_na descent_capture PROPERTIES TIMEOUT 120)
+set_tests_properties(descent_disabled PROPERTIES TIMEOUT 180)
+set_tests_properties(descent_service PROPERTIES TIMEOUT 90)
+set_tests_properties(descent_single_wait PROPERTIES TIMEOUT 60)
 
 add_executable(channel_state_test oscilloscope/channel_state_test.cpp ${descent_strategy_sources})
 target_include_directories(channel_state_test PRIVATE ../src/service/oscilloscopestrategy)
@@ -609,7 +615,7 @@ add_executable(local_five_test integration/local_five_test.cpp
 target_include_directories(local_five_test PRIVATE ../src/views/instrumentsetup/dialogs)
 target_link_libraries(local_five_test PRIVATE ElectronicATEInstrumentSettings ElectronicATEDrivers ElectronicATEConnectionTest ElectronicATEScopeSession
     ElectronicATEOperations ElectronicATEModels Qt6::Widgets Qt6::SerialPort)
-foreach(scenario connection retirement rules outputs serial instrument_setup_serial)
+foreach(scenario connection retirement rules outputs serial instrument_setup_serial tcp)
     add_test(NAME local_five_${scenario} COMMAND local_five_test ${scenario})
     set_tests_properties(local_five_${scenario} PROPERTIES TIMEOUT 20 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endforeach()
@@ -701,7 +707,7 @@ add_executable(brownout_capture_sync_test testsequence/strategies/brownout_captu
 target_link_libraries(brownout_capture_sync_test PRIVATE ElectronicATETestRun ElectronicATEModels)
 foreach(scenario success slow_write query_failure save_failure monitor_failure rearm_failure rearm_timeout stop_capture stop_rearm)
     add_test(NAME brownout_capture_sync_${scenario} COMMAND brownout_capture_sync_test ${scenario})
-    set_tests_properties(brownout_capture_sync_${scenario} PROPERTIES TIMEOUT 20)
+    set_tests_properties(brownout_capture_sync_${scenario} PROPERTIES TIMEOUT 40)
 endforeach()
 target_link_libraries(brownout_capture_test PRIVATE ElectronicATETestRun ElectronicATEModels)
 foreach(scenario fixed track failure cancel preflight query_failure)
@@ -711,10 +717,12 @@ endforeach()
 target_link_libraries(brownout_test PRIVATE ElectronicATETestRun ElectronicATEModels)
 foreach(scenario fixed rise fall startup already_off monitor_error timeout rebound no_trigger scope_error
                  invalid cancel cleanup cleanup_empty scope_cleanup slow_cleanup prepare_error xml service service_cleanup
-                 delayed_reference long_record invalid_duration slow_ramp current_trigger unit_changed stale_reference)
+                 delayed_reference long_record invalid_duration slow_ramp current_trigger unit_changed stale_reference single_wait)
     add_test(NAME brownout_${scenario} COMMAND brownout_test ${scenario})
     set_tests_properties(brownout_${scenario} PROPERTIES TIMEOUT 15)
 endforeach()
+set_tests_properties(brownout_single_wait PROPERTIES TIMEOUT 120)
+set_tests_properties(brownout_capture_track PROPERTIES TIMEOUT 30)
 add_executable(brownout_driver_test hardware/brownout_driver_test.cpp
     ../src/service/instrumentexecutor/brownoutio.cpp ../src/service/inputparameters/parameterparser.cpp)
 target_include_directories(brownout_driver_test PRIVATE ../src/service/instrumentexecutor ../src/service/inputparameters)
@@ -850,6 +858,10 @@ foreach(mode measurement legal_na ready)
     add_test(NAME test_sequence_gap_${mode} COMMAND test_sequence_gap_fixes_test ${mode})
     set_tests_properties(test_sequence_gap_${mode} PROPERTIES TIMEOUT 30)
 endforeach()
+# Includes the pre-short rescale matrix; the individual simulated phase limits stay unchanged.
+set_tests_properties(test_sequence_gap_ready PROPERTIES TIMEOUT 60)
+add_test(NAME transient_single_wait COMMAND test_sequence_gap_fixes_test single_wait)
+set_tests_properties(transient_single_wait PROPERTIES TIMEOUT 180)
 add_executable(test_sequence_relay_gap_fixes_test testsequence/execution/test_sequence_relay_gap_fixes_test.cpp ${review_probe_sources})
 target_include_directories(test_sequence_relay_gap_fixes_test PRIVATE ${review_probe_includes})
 target_link_libraries(test_sequence_relay_gap_fixes_test PRIVATE ElectronicATETestRun ElectronicATEDrivers ElectronicATEManualControl ElectronicATEAutomatedTasks Qt6::SerialPort)

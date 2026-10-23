@@ -26,6 +26,7 @@ InstrumentConfig instrument(const QString& model)
     value.type = "Oscilloscope";
     value.modelName = model;
     value.commConfig.protocol = ProtocolType::GPIB;
+    value.commConfig.timeout = 1234;
     return value;
 }
 
@@ -47,7 +48,9 @@ int main()
         QStringList called;
         QMap<QString, std::shared_ptr<BuildScope>> scopes;
         const auto built = buildConnectedOscilloscopes(config,
-            [&](const QString& model, const QString& resource) -> std::shared_ptr<Oscilloscope> {
+            [&](const QString& model, const CommunicationConfig& communication) -> std::shared_ptr<Oscilloscope> {
+                const QString resource = communication.toResourceString();
+                require(communication.timeout == 1234, "scope creation lost configured timeout");
                 called << model;
                 if (model == "typed" || model == "preferred")
                     require(resource == "GPIB0::8::INSTR", "typed resource was ignored");

@@ -5,6 +5,7 @@
 #include "measurementstrategyfactory.h"
 #include "oscilloscopestrategyfactory.h"
 #include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QSet>
 #include <QThread>
 #include <cmath>
@@ -143,6 +144,61 @@ public:
     }
 };
 
+void phaseDeadlineContract()
+{
+    // Exercise real AUTO -> search/event/baseline callers, not only the shared helper.
+    class StalledScope : public SemanticScope {
+    public:
+        bool baseline=false;
+        int stalledReads=0;
+        bool readVerticalRange(int,ScopeVerticalRange &range,QString &) override { range={scale,0,10}; return true; }
+        ScopeAcquisitionState acquisitionState() override {
+            if (baseline && mode==ScopeTriggerMode::Normal) {
+                completedRecords.insert(records); return ScopeAcquisitionState::Completed;
+            }
+            return SemanticScope::acquisitionState();
+        }
+        double readMeasurement(int channel,ScopeMeasurement metric) override {
+            if (mode==ScopeTriggerMode::Normal) { ++stalledReads; return NAN; }
+            return SemanticScope::readMeasurement(channel,metric);
+        }
+    };
+    for (const QString name : {"Static Test","Dynamic Test","Turn on","Turn off","Turn on then short","Short then turn on"})
+    for (bool baseline : {false,true}) {
+        if (baseline && name!="Turn off" && name!="Turn on then short") continue;
+        StalledScope scope; scope.baseline=baseline; scope.checkArchives=true;
+        scope.transient=name!="Static Test" && name!="Dynamic Test";
+        scope.referenceQuartet=name=="Turn off" || name=="Turn on then short";
+        QAtomicInt stop(0);
+        TransientContext context; context.timeoutMs=3; context.phaseTimeoutMs=1000; context.target="MAX";
+        context.settleMs=context.powerOffMs=context.dischargeMs=0; context.trialsPerLevel=1;
+        context.singleProcessingMs=0; // Timing has its own real-time regression.
+        context.verticalScale.margin=true;
+        bool powered=false, loaded=false, shorted=false;
+        context.power=[&](bool on,QString &) { powered=on; if(scope.armed)scope.event=true; return true; };
+        context.load=[&](bool on,QString &) { loaded=on; return true; };
+        context.relays=[&](bool sh,bool,QString &) { shorted=sh; if(scope.armed&&sh)scope.event=true; return true; };
+        QStringList phases;
+        context.captureRecord=[&](const ScopeCaptureRecord &record) { scope.archive(); phases<<record.phase; };
+        QElapsedTimer timer; timer.start();
+        OscMeasureResult result;
+        if (!scope.transient) {
+            SteadyStateSearchStrategy strategy(3,1000,100,"MAX",context.verticalScale);
+            strategy.setCaptureObserver(context.captureRecord);
+            result=strategy.execute(&scope,stop);
+        } else {
+            const auto kind=name=="Turn on"?TransientKind::TurnOn:name=="Turn off"?TransientKind::TurnOff:
+                name=="Turn on then short"?TransientKind::TurnOnThenShort:TransientKind::ShortThenTurnOn;
+            result=runTransientStrategy(kind,context,&scope,stop);
+        }
+        require(!result.success && result.errorMessage.contains("timeout") && timer.elapsed()<2400 &&
+                scope.stalledReads>0 && scope.stops>0 && !powered && !loaded && !shorted &&
+                phases.contains(baseline?"Baseline":"Measurement"),
+                qPrintable(name+" phase timeout/diagnostic/cleanup contract: "+result.errorMessage));
+        scope.requireArchived();
+    }
+}
+
 void commonContract() {
     SemanticScope scope;QAtomicInt stop{1};bool destroyed=false;int captures=0;
     auto factory=makeMeasurementStrategyFactory([&](const QString &name,const TransientContext *context){
@@ -172,6 +228,7 @@ int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
     try {
         commonContract();
+        phaseDeadlineContract();
         auto factory=makeMeasurementStrategyFactory([](const QString &name,const TransientContext *context)
             ->std::unique_ptr<IOscilloscopeMeasureStrategy>{
             if(name=="Static Test"||name=="Dynamic Test")
@@ -202,6 +259,7 @@ int main(int argc, char **argv) {
             TransientContext context;
             context.timeoutMs = 3; context.phaseTimeoutMs = 10000;
             context.settleMs = context.powerOffMs = context.dischargeMs = 0;
+            context.singleProcessingMs = 0;
             context.trialsPerLevel = 1;
             context.power = [&](bool, QString &) { if (scope.armed) scope.event = true; return true; };
             context.load = [](bool, QString &) { return true; };
@@ -230,6 +288,7 @@ int main(int argc, char **argv) {
             scope.referenceQuartet = name == "Turn off" || name == "Turn on then short";
             TransientContext context;context.timeoutMs=3;context.phaseTimeoutMs=10000;context.trialsPerLevel=1;
             context.settleMs=context.powerOffMs=context.dischargeMs=0;
+            context.singleProcessingMs=0;
             context.power=[&](bool,QString&){if(scope.armed)scope.event=true;return true;};
             context.relays=[&](bool sh,bool,QString&){if(scope.armed&&sh)scope.event=true;return true;};
             context.load=[](bool,QString&){return true;};

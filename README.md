@@ -24,7 +24,7 @@ ElectronicATE 是一套用於電源供應器、電子負載、示波器與繼電
 
 版本與發布檔案請見 [GitHub Releases](https://github.com/Jaxon-Su/ElectronicATE/releases)。
 
-程式模組與文件統一使用 InstrumentSetup、TestConditions、ManualControl、CommandConsole、TestSequence、WaveformOcr、WfmViewer 功能名稱。設定檔也採用功能名稱作為 XML 區段；請使用本版重新建立設定，舊數字區段格式不再支援。既有操作流程與儀器控制行為維持不變。
+程式模組與文件統一使用 InstrumentSetup、TestConditions、ManualControl、CommandConsole、TestSequence、WaveformOcr、WfmViewer 功能名稱。
 
 ## 使用前確認
 

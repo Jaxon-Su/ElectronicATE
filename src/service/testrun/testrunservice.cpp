@@ -2,6 +2,7 @@
 #include "testsequencescopepolicy.h"
 #include "transientrelayconditions.h"
 #include "oscilloscope.h"
+#include "verticalscalecontrol.h"
 #include "../operations/configuredinputs.h"
 #include "../operations/relayconditionvalidation.h"
 #include <QDir>
@@ -332,6 +333,7 @@ void TestRunService::startTasks(const QVector<TaskPayload> &payloads, const Test
             m_actionResults.clear();
             m_attemptResult = makeRecord(i, attempt + 1);
             m_attemptActive = true;
+            m_originalScales.clear();
             try {
                 m_attemptResult.loadCondition = singleLoadSource(prepared[i], m_context);
                 pass = executeTask(prepared[i]);
@@ -344,6 +346,7 @@ void TestRunService::startTasks(const QVector<TaskPayload> &payloads, const Test
                 failTask("Unknown task exception");
                 pass = false;
             }
+            if (!restoreVerticalScales()) pass = false;
             m_attemptActive = false;
             if (!measures) {
                 if (m_stopRequested.loadAcquire()) {
@@ -430,6 +433,45 @@ bool TestRunService::failTask(const QString &error)
     m_attemptResult.error += error;
     emit logMessage(error);
     return false;
+}
+
+VerticalScaleOptions TestRunService::verticalScaleOptions(bool margin)
+{
+    return {margin, [this](int channel, double previous, double requested) {
+        if (!m_originalScales.contains(channel)) m_originalScales.insert(channel, previous);
+        emit logMessage(QString("  CH%1 automatic Scale: %2 -> %3 units/div")
+                            .arg(channel).arg(previous, 0, 'g', 12).arg(requested, 0, 'g', 12));
+    }};
+}
+
+bool TestRunService::restoreVerticalScales()
+{
+    if (m_originalScales.isEmpty()) return true;
+    QStringList errors;
+    auto *scope = m_context.scope;
+    try {
+        QString error;
+        if (!scope || !scope->stopAcquisition(error))
+            errors << "STOP: " + (error.isEmpty() ? QString("scope unavailable") : error);
+    } catch (const std::exception &ex) { errors << "STOP: " + QString::fromUtf8(ex.what()); }
+    catch (...) { errors << "STOP: unexpected error"; }
+    // Cleanup is not cancelled by Stop. Attempt every changed channel even after
+    // an earlier failure; no destructor I/O and no repeated hardware event.
+    QAtomicInt cleanupStop{0};
+    for (auto it=m_originalScales.cbegin(); it!=m_originalScales.cend(); ++it) {
+        try {
+            OscilloscopeAcquisition::setScaleChecked(scope, cleanupStop, it.key(), it.value());
+            emit logMessage(QString("  CH%1 Scale restored: %2 units/div")
+                                .arg(it.key()).arg(it.value(), 0, 'g', 12));
+        } catch (const std::exception &ex) {
+            errors << QString("Channel %1: %2").arg(it.key()).arg(QString::fromUtf8(ex.what()));
+        } catch (...) { errors << QString("Channel %1: unexpected error").arg(it.key()); }
+    }
+    m_originalScales.clear();
+    if (errors.isEmpty()) return true;
+    m_cleanupFailed = true;
+    return failTask("Vertical scale restore failed: " + errors.join("; ") +
+                    ". Reapply user oscilloscope settings before the next Run.");
 }
 
 bool TestRunService::executeTask(const TaskSettings::PreparedTask &task)

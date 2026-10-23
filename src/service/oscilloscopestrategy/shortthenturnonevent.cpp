@@ -15,7 +15,9 @@ public:
         run.requireShortExit();
         run.relays(true, false);
         arm();
-        run.requireReady();
+        run.waitAfterSingle();
+        if (!run.waitForPowerOnReady())
+            return {OscilloscopeAcquisition::AcquisitionResult::Completed, RecordOrigin::BeforeInput};
         run.power(true);
 
         const auto status = run.waitForEvent(); // Completed callback exits before transfer.

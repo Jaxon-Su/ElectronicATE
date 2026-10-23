@@ -8,7 +8,8 @@ class Search
 {
   public:
     Search(IScopeMeasurement *scope, QAtomicInt &stop, const QString &target,
-           int timeoutMs, int phaseTimeoutMs, int maxIterations, const OscCaptureObserver &capture);
+           int timeoutMs, int phaseTimeoutMs, int maxIterations, const OscCaptureObserver &capture,
+           const VerticalScaleOptions &options = {});
     OscMeasureResult execute();
 
   private:

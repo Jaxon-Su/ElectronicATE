@@ -40,6 +40,9 @@ class TestRunService : public QObject
     void finished();
 
   private:
+    VerticalScaleOptions verticalScaleOptions(bool margin);
+    bool restoreVerticalScales();
+    QMap<int, double> m_originalScales;
     std::shared_ptr<StrategyWaveformCapture> prepareStrategyCapture(bool enabled, const CaptureOptions &settings,
                                                                    InputSelection inputs, const QString &name);
     std::shared_ptr<StrategyWaveformCapture> prepareStrategyCapture(const TaskSettings::Measurement &cfg,

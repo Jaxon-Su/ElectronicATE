@@ -7,7 +7,9 @@
 struct ConnectionTestResult
 {
     QString resource;
+    int timeoutMs = 5000;
     bool opened = false;
+    bool transportOnly = false;
     QString identity;
     QString error;
 };
@@ -20,7 +22,7 @@ class ConnectionTestService : public QObject
   public:
     using Creator = std::function<std::unique_ptr<ICommunication>(const QString &)>;
     explicit ConnectionTestService(Creator create, QObject *parent = nullptr);
-    bool start(const QString &resource);
+    bool start(const QString &resource, int timeoutMs = 5000);
     bool isBusy() const { return m_busy; }
   signals:
     void completed(const ConnectionTestResult &result);

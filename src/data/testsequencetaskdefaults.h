@@ -24,6 +24,7 @@ inline QVariantMap testSequenceDefaultSettings(const QString &name)
         return {{"brownOut", settings}};
     }
     const auto single = TestSequenceTaskKind::singleKind(kind);
+    if (!TestSequenceTaskKind::isDescent(kind)) settings["vertical_margin"] = false;
     if (TestSequenceTaskKind::isSteady(kind)) {
         settings[TaskSettingRules::powerOffWait.key] = TaskSettingRules::powerOffWait.initial;
         settings[TaskSettingRules::startupWait.key] = TaskSettingRules::startupWait.initial;
@@ -49,5 +50,6 @@ inline QVariantMap testSequenceDefaultSettings(const QString &name)
         settings["discharge_label"] = "";
     }
     if (TestSequenceTaskKind::isDescent(kind)) settings.insert(DescentSettings::defaults());
+    if (kind == Kind::TurnOffDescent) settings["trigger_channel_enabled"] = true;
     return {{TestSequenceTaskKind::settingsGroup(name), settings}};
 }

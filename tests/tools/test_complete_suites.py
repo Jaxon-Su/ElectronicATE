@@ -19,7 +19,7 @@ class CompleteSuiteTests(unittest.TestCase):
                 data = load_manifest(TESTS/"ctest-manifest.json", profile)
                 self.assertEqual(set(data["suites"]), {"main", "ocr", "wfm"})
                 self.assertEqual(data["excluded"], [])
-                self.assertEqual(sum(map(len, data["suites"].values())), 835)
+                self.assertEqual(sum(map(len, data["suites"].values())), 839)
                 self.assertIn("review_fix_visa_partial", [c["name"] for c in data["suites"]["main"]])
 
     def test_wfm_locks_all_101_inner_results(self):

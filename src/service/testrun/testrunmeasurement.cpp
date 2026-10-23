@@ -152,6 +152,7 @@ bool TestRunService::executeSteadyTest(const TaskSettings::Steady &cfg, bool dyn
         checkStop();
         TransientContext search;
         search.target = TaskSettings::serialized(cfg.searchDirection);
+        search.verticalScale = verticalScaleOptions(cfg.verticalMargin);
         ScopeMeasurementRequest request{strategyName, *scope, search, {}};
         if (capture)
             request.capture =
@@ -282,7 +283,7 @@ void TestRunService::prepareSteadyScope(const TaskSettings::Steady &cfg, const Q
     if (cfg.autoPeriod) {
         emit logMessage(name + ": Auto Period after settling (target 5 cycles, accept 3-8)");
         QString error;
-        if (!m_dependencies.autoPeriod(scope, m_stopRequested, error, request.capture))
+        if (!m_dependencies.autoPeriod(scope, m_stopRequested, error, request.capture, request.context.verticalScale))
             throw std::runtime_error(error.toStdString());
         checkStop();
     }
@@ -409,6 +410,7 @@ bool TestRunService::executeTransient(const QString &name, const TaskSettings::T
     TransientContext context;
     context.target = TaskSettings::serialized(cfg.searchDirection);
     context.edge = QStringLiteral("AUTO");
+    context.verticalScale = verticalScaleOptions(cfg.verticalMargin);
     context.timeoutMs = cfg.triggerTimeoutMs;
     context.phaseTimeoutMs = cfg.phaseTimeoutMs;
     context.settleMs = cfg.settleMs;
@@ -416,6 +418,7 @@ bool TestRunService::executeTransient(const QString &name, const TaskSettings::T
     context.trialsPerLevel = cfg.trialsPerLevel;
     if (cfg.descent) {
         context.descentChannel = cfg.descent->channel;
+        context.descentChannelEnabled = cfg.descent->channelEnabled;
         context.descentLevels = cfg.descent->levels;
     }
     const ShortCircuitProtection protection{shortMask, dischargeMask, context.powerOffMs, context.dischargeMs, true};

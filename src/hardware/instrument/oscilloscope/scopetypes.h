@@ -6,3 +6,11 @@ enum class ScopeTriggerState { Invalid, Arming, Ready, Triggered, Automatic, Sav
 enum class ScopeTriggerSlope { Rise, Fall };
 enum class ScopeTriggerMode { Auto, Normal };
 enum class ScopeMeasurement { Maximum, Minimum, Rms, Mean };
+
+// Acquisition window in the same physical units as channel measurements.
+// Display position is deliberately excluded.
+struct ScopeVerticalRange {
+    double scale = 0;
+    double center = 0;
+    double divisions = 0;
+};

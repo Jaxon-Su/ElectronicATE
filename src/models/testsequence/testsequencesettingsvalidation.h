@@ -132,6 +132,8 @@ inline bool config(const QString &group, const QJsonObject &cfg, QString &error)
             valid = v.isArray();
             for (const auto& label : v.toArray())
                 valid = valid && label.isString();
+        } else if (key == "vertical_margin" && (steady || (transient && !TestSequenceTaskKind::isDescent(kind)))) {
+            valid = v.isBool();
         } else if (key == "capture_enabled" && (transient || steady || kind == Kind::BrownOut)) {
             valid = v.isBool();
         } else if (key == "capture_settings" && (transient || steady || kind == Kind::BrownOut)) {
@@ -170,6 +172,8 @@ inline bool config(const QString &group, const QJsonObject &cfg, QString &error)
             valid = v.isBool();
         } else if (key == "measure_target" && steady) {
             valid = choice(v, {"BOTH", "MAX", "MIN"});
+        } else if (kind == Kind::TurnOffDescent && key == "trigger_channel_enabled") {
+            valid = v.isBool();
         } else if (TestSequenceTaskKind::isDescent(kind) && key == "trigger_channel") {
             valid = DescentSettings::validChannel(v.toVariant());
         } else if (TestSequenceTaskKind::isDescent(kind) && key == "trigger_levels") {

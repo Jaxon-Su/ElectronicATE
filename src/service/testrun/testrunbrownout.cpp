@@ -8,10 +8,10 @@ bool TestRunService::executeBrownOut(const BrownOut::Settings &settings)
 {
     if (!m_context.scope) return failTask("Brown Out: oscilloscope is unavailable");
     emit logMessage(settings.mode == BrownOut::Mode::FixedFall
-                        ? "Brown Out: Run + Single, fixed Fall threshold, one voltage descent"
+                        ? "Brown Out: Run + Single, wait 3000 ms before READY, fixed Fall threshold, one voltage descent"
                         : settings.captureEnabled
-                            ? "Brown Out: Normal + repeated Single; pause voltage descent during read/save/rearm; resume after READY; Vout monitoring continues"
-                            : "Brown Out: Normal + Run, track new records during one voltage descent");
+                            ? "Brown Out: Normal + repeated Single; wait 3000 ms after each Single before READY; pause voltage descent during read/save/rearm; resume after READY; Vout monitoring continues"
+                            : "Brown Out: Normal + Run, wait 3000 ms before initial READY, track new records during one voltage descent");
     auto capture = prepareStrategyCapture(settings.captureEnabled, settings.captureSettings, settings.inputs, "Brown Out");
     auto publish = qScopeGuard([&] { publishStrategyCapture(capture); });
     BrownOutMeasurementRequest request{settings, *m_context.scope,

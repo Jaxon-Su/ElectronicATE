@@ -59,7 +59,7 @@ Group 成員失敗／取消 → 停止該次 Group 後續條件
 
 兩種短路測試的事件順序、每次退出與 Group 換筆等待，見 [Short 測試流程與時間](MEASUREMENT_STRATEGIES.md#short-測試流程與時間)。
 
-所有 Group 都由 TestSequence Detail 與 Excel 逐負載、方向及通道呈現完整四值；Tasks 僅顯示摘要，不混合不同 Trial 的數值。結果顯示與 Excel 規則見 [量測值的來源](MEASUREMENT_STRATEGIES.md#testSequence-量測值的來源)。
+所有 Group 都由 TestSequence Detail 與 Excel 逐負載、方向及通道呈現完整四值；Tasks 僅顯示摘要，不混合不同 Trial 的數值。結果顯示與 Excel 規則見 [量測值的來源](MEASUREMENT_STRATEGIES.md#testsequence-量測值的來源)。
 
 ### 暫態：共用搜尋與事件流程
 
@@ -85,16 +85,24 @@ runTransientStrategy()
 | --- | --- |
 | [transientstrategy.cpp](src/service/oscilloscopestrategy/transientstrategy.cpp) | 驗證、選擇事件、捕捉錯誤與明確收尾。 |
 | [transientsearch.cpp](src/service/oscilloscopestrategy/transientsearch.cpp) | 共用搜尋、參考沿用、Baseline 排除與極值累積。 |
-| [turnonevent.cpp](src/service/oscilloscopestrategy/turnonevent.cpp) | 放電 → Single／READY → 上電 → 等事件。 |
-| [turnoffevent.cpp](src/service/oscilloscopestrategy/turnoffevent.cpp) | 上電穩定 → Single／Baseline → READY → 關電 → 等事件。 |
-| [shortthenturnonevent.cpp](src/service/oscilloscopestrategy/shortthenturnonevent.cpp) | 短路 → Single／READY → 上電 → 等事件 → 安全退出。 |
-| [turnonthenshortevent.cpp](src/service/oscilloscopestrategy/turnonthenshortevent.cpp) | 上電穩定 → Single／Baseline → READY → 短路 → 等事件 → 安全退出。 |
+| [turnonevent.cpp](src/service/oscilloscopestrategy/turnonevent.cpp) | 放電 → Single → 等待 3000 ms／READY → 上電 → 等事件。 |
+| [turnoffevent.cpp](src/service/oscilloscopestrategy/turnoffevent.cpp) | prepareRun 先 checked STOP／NORMAL，再 Input OFF；上電穩定 → AUTO 參考 → NORMAL Single／Baseline → READY → 關電 → 等事件。 |
+| [shortthenturnonevent.cpp](src/service/oscilloscopestrategy/shortthenturnonevent.cpp) | 短路 → Single → 等待 3000 ms／READY → 上電 → 等事件 → 安全退出。 |
+| [turnonthenshortevent.cpp](src/service/oscilloscopestrategy/turnonthenshortevent.cpp) | 上電穩定 → 事件 Single → 等待 3000 ms／Baseline → READY／最後擷取狀態確認 → 短路 → 等事件 → 安全退出；短路前完成記錄回傳 BeforeShort。 |
 | [transientexecution.cpp](src/service/oscilloscopestrategy/transientexecution.cpp) | 共用操作、等待、短路失敗鎖存與最後清理。 |
 | [descentstrategy.cpp](src/service/oscilloscopestrategy/descentstrategy.cpp) | 兩項 descent 使用獨立的固定 Level 清單迴圈，共用 Execution 的停止檢查與短路退出；不進入原有搜尋器。 |
 
 `Event` 物件在整次策略中重用；`acquireTrial()` 才是每個 Level 的單次試驗。關機與開機後短路的第一個 Trial 沿用本方向 AUTO 參考已建立的穩定輸入，後續 Trial 重新準備。搜尋器透過 `TrialInput` 告知事件，事件不回寫搜尋狀態。
 
+原 Turn off（含 Group）每次策略啟動在所選 Input／Load 動作前先 STOP／NORMAL，失敗或 Stop 不進入 AUTO／Single／上電，仍走既有清理。Service 的未選來源 None→OFF 前置處置維持。共用 Relay callback 在 Turn off 為 no-op，不送 Relay 硬體指令。
+
 `waitForBaseline()` 在事件前檢查背景觸發，不是 Settle 等待，也不是 AUTO 參考擷取。背景波形完成就交回搜尋器調整門檻；正常未觸發且仍 READY 才繼續施加事件。通訊失敗或擷取未完成會中止，不能當成正常未觸發。
+
+Turn on／Short then turn on／Turn on then short（含 Group）每個成功的 NORMAL 事件 Single 後先等待 3000 ms，再進入原 Baseline／READY；提前觸發 rearm 也等待，AUTO 參考不加等待。等待計入原 Phase，Stop／到期走既有清理／短路退出；不保證等待後必定 READY，不改 Level 避讓與結果來源。正式 Service 使用內部預設 3000 ms，沒有新增 Dialog／XML 欄位。兩種 descent 也在各 Level／Trial 的 Single 後固定等待 3000 ms，再確認 READY 才關電／短路；沿用固定 Level 及 Phase／Stop 清理。
+
+Turn on then short 的 `waitForShortReady()` 補查觀察結束後的提前觸發；確認自然完成後先安全退出，再由 `BeforeShort` 的 Baseline 路徑保存診斷／讀極值、向外避讓並重建 bracket，保留先前真事件。下一輪重新上電／settle／Single；最後查詢與物理短路的時間差仍不具原子保證。
+
+Turn on／Short then turn on 的 `waitForPowerOnReady()` 另處理 Input ON 前已觸發且自然完成的記錄：Event 回傳 `BeforeInput`，Search 以固定 Scale×0.04 向外移動 Level，確認 READY 才上電。提前記錄不當 HIT／MISS／Trial，不讀取事件四值；保留既有 Phase／次數上限、Stop 及有效事件。Turn on 保持已放電狀態；Short then turn on 每筆都先安全退出再保存診斷，下一輪重新 Short ON。其他 readiness 錯誤仍失敗；詳見 [量測策略與 Short 流程](MEASUREMENT_STRATEGIES.md)。
 
 短路事件的 `waitForEvent()` 在首次觀察到完整波形時先執行短路退出，再讀值／傳檔；未觸發也要求退出。退出失敗鎖存於同一個 `Execution`，最後清理不會自動重試或繞過保護，仍嘗試 Scope STOP 與 Load OFF。
 
@@ -156,7 +164,7 @@ Brown Out
          → 等待控制執行緒結束 → 回傳結果
 ```
 
-Track 開啟 Capture 時，背景量測在讀取／保存前確認降壓已暫停，重新啟動 NORMAL＋Single 並確認 READY 後才恢復步進；控制執行緒仍監測 Vout。暫停、Stop 或錯誤不阻擋輸出 OFF。
+Brown Out 初次事件 arm（Single／RUN）成功後等待 3000 ms，再走原 READY 判定並啟動降壓；等待時控制執行緒持續監測 Vout，未降壓就低於關機門檻時明確失敗並清理。Track 開啟 Capture 時，背景量測在讀取／保存前確認降壓已暫停，重新啟動 NORMAL＋Single、等待 3000 ms 並確認 READY 後才恢復步進；控制執行緒仍監測 Vout。暫停、Stop 或錯誤不阻擋輸出 OFF。
 
 來源：[正式操作接線](src/infrastructure/worker/testrunservicefactory.cpp)、[策略工廠](src/service/measurementstrategy/measurementstrategyfactory.cpp)、[Brown Out](src/service/brownout/brownoutrunner.cpp)。搜尋細節見 [TestSequence：量測策略](MEASUREMENT_STRATEGIES.md)。
 

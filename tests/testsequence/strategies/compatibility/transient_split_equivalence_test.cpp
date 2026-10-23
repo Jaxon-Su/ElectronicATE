@@ -140,16 +140,48 @@ int main(int argc, char **argv)
             scenario = name;
             const auto before = observe(kind, scenario, true);
             const auto after = observe(kind, scenario, false);
-            if (before.trace != after.trace) {
-                for (int i = 0; i < qMin(before.trace.size(), after.trace.size()); ++i)
-                    if (before.trace[i] != after.trace[i]) {
+            auto comparableTrace = after.trace;
+            auto comparableLogs = after.logs;
+            if (kind == TransientKind::TurnOnThenShort) {
+                comparableLogs.clear();
+                for (int i = 0; i < after.logs.size(); ++i) {
+                    const auto &line = after.logs[i];
+                    if (line == "Check scope before short") {
+                        require(after.logs.value(i + 1) == "Relay: short=1 discharge=0" &&
+                                after.logs.value(i + 2) == "Short applied; wait for event",
+                                "OnShort readiness/action logs misplaced");
+                        comparableLogs << "Apply short; wait for event";
+                    } else if (line == "Short applied; wait for event") {
+                        require(after.logs.value(i - 1) == "Relay: short=1 discharge=0",
+                                "OnShort reported applied before relay");
+                    } else if (line.contains(" pre-short trigger: Level ")) {
+                        require(after.logs.value(i - 1) == "Baseline trigger excluded from event results",
+                                "OnShort logged threshold recovery without excluded Baseline");
+                    } else comparableLogs << line;
+                }
+            }
+            if (kind == TransientKind::TurnOff && scenario != "stop_before") {
+                // The authorized startup delta is checked once at its exact position;
+                // every subsequent command/read/Capture/log still matches the legacy flow.
+                require(after.trace.mid(0, 2) == QStringList({"ACQuire:STATE STOP", "TRIGger:A:MODe NORMAL"}),
+                        "Turn off startup STOP/NORMAL missing or out of order");
+                comparableTrace.remove(0, 2);
+                const int inputOff = before.logs.indexOf("Input OFF");
+                require(inputOff >= 0 && after.logs.mid(inputOff, 2) ==
+                            QStringList({"Scope preparation: STOP", "Scope preparation: NORMAL"}),
+                        "Turn off preparation logs not before initial Input OFF");
+                comparableLogs.remove(inputOff, 2);
+            }
+            if (before.trace != comparableTrace) {
+                for (int i = 0; i < qMin(before.trace.size(), comparableTrace.size()); ++i)
+                    if (before.trace[i] != comparableTrace[i]) {
                         std::cerr << "trace[" << i << "] " << before.trace[i].toStdString()
-                                  << " != " << after.trace[i].toStdString() << "\n";
+                                  << " != " << comparableTrace[i].toStdString() << "\n";
                         break;
                     }
                 throw std::runtime_error("device/read/Capture sequence changed");
             }
-            require(before.logs == after.logs, "logs changed");
+            require(before.logs == comparableLogs, "logs changed");
             require(before.arms == after.arms && before.events == after.events
                     && before.levels == after.levels, "event count/search thresholds changed");
             require(before.result.success == after.result.success

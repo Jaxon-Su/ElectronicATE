@@ -192,6 +192,7 @@ int main(int argc,char** argv){
   for(int flags=0;flags<(task<2?8:4);++flags) {
    for(const QString direction : {"BOTH","MAX","MIN"}) {
     QVariantMap cfg{{"measure_target",direction}};
+    cfg["vertical_margin"]=bool(flags&2);
     if(task<2)cfg["auto_period"]=bool(flags&4);
     cfg["capture_enabled"]=bool(flags&1);
     cfg["capture_settings"]=QVariantMap{{"formats",QVariantList{"WFM","PNG"}},{"directory","C:/test & capture"},{"channel",0}};
@@ -203,13 +204,23 @@ int main(int argc,char** argv){
     require(restored.tasks()[0].settings.value(keys[task]).toMap()==cfg,"new options changed during roundtrip");
    }
   }
-  for(const QString key : {"auto_vertical_scale","auto_period","capture_enabled"}) {
+  for(const QString key : {"auto_vertical_scale","auto_period","capture_enabled","vertical_margin"}) {
    const bool allowed=key!="auto_vertical_scale" && (key!="auto_period"||task<2);
    for(const QJsonValue value : {QJsonValue(true),QJsonValue(false),QJsonValue("true"),QJsonValue(1),QJsonValue(QJsonValue::Null)}) {
     QJsonObject group{{key,value}};QJsonObject settings{{keys[task],group}};
     checkLoad(names[task],QString::fromUtf8(QJsonDocument(settings).toJson(QJsonDocument::Compact)),allowed&&value.isBool());
    }
   }
+ }
+ for (const auto &descriptor : TestSequenceTaskKind::descriptors) {
+  const QString name=descriptor.name;
+  const auto kind=TestSequenceTaskKind::fromName(name);
+  const bool allowed=TestSequenceTaskKind::isSteady(kind) ||
+      (TestSequenceTaskKind::isTransient(kind) && !TestSequenceTaskKind::isDescent(kind));
+  const auto group=TestSequenceTaskKind::settingsGroup(name);
+  for (const QString value : {"true","false","1","\"false\"","null"})
+   checkLoad(name,QString("{\"%1\":{\"vertical_margin\":%2}}").arg(group,value),
+             allowed && (value=="true" || value=="false"));
  }
  checkLoad("Write Oscilloscope",R"({"osc":{"auto_period":true}})",false);
  checkLoad("Write Oscilloscope",R"({"osc":{"auto_position":true}})",false);

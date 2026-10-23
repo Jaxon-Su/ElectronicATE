@@ -1,11 +1,15 @@
 #pragma once
 #include <QAtomicInt>
+#include <QDeadlineTimer>
 #include <QMap>
 #include <QSet>
 #include <functional>
+#include <limits>
 #include "oscmeasurementresult.h"
 #include "osccaptureobserver.h"
 #include "iscopemeasurement.h"
+#include "verticalscaleoptions.h"
+#include "verticalscalecontrol.h"
 
 namespace OscilloscopeAcquisition
 {
@@ -26,6 +30,16 @@ inline bool hasCompletedRecord(AcquisitionResult result)
 struct VerticalScaleState {
     OscCaptureObserver captureRecord;
     bool includeRmsMean = true;
+    VerticalScaleOptions options;
+};
+
+// Optional output from the frozen record, before any vertical scale changes.
+// A clipped channel has no usable extremum; callers may still retain its trigger level.
+struct RecordExtremum {
+    int channel;
+    ScopeMeasurement type;
+    bool clipped = false;
+    double value = std::numeric_limits<double>::quiet_NaN();
 };
 
 // Preserve legal NA, but capture transport/setup errors before another query clears them.
@@ -44,13 +58,20 @@ OscMeasureResult captureAutoReference(IScopeMeasurement *scope, QAtomicInt &stop
                                       ReferenceMetrics metrics = ReferenceMetrics::CaptureDefault);
 
 // Recover clipping with 2x expansion; preserve Position and Offset.
-// Unclipped records are never automatically fitted or centered.
+// Optional 10% top/bottom margin only expands; never centers or shrinks.
+// Callers pass their remaining phase deadline. Expiry bounds measurement readiness,
+// but a completed record can still be archived before reporting failure.
 // Returns true when the caller must acquire a NEW record before measuring.
-bool expandClippedChannels(IScopeMeasurement *scope, QAtomicInt &stop, int &adjustments,
+bool expandVerticalRange(IScopeMeasurement *scope, QAtomicInt &stop, int &adjustments,
                            VerticalScaleState *vertical = nullptr, const QString &phase = "Measurement",
-                           bool completionTimedOut = false);
+                           bool completionTimedOut = false,
+                           QDeadlineTimer phaseDeadline = QDeadlineTimer(QDeadlineTimer::Forever),
+                           RecordExtremum *extremum = nullptr);
 
-bool waitForReady(IScopeMeasurement *scope, QAtomicInt &stop, int timeoutMs, QString &error);
+// rejectedState is set only for a timely, error-free non-READY/non-ARMED reply;
+// it stays Invalid for cancellation, timeout and communication errors.
+bool waitForReady(IScopeMeasurement *scope, QAtomicInt &stop, int timeoutMs, QString &error,
+                  ScopeTriggerState *rejectedState = nullptr);
 AcquisitionResult waitForCapture(IScopeMeasurement *scope, QAtomicInt &stop, int timeoutMs,
                                  int completionTimeoutMs = -1,
                                  const std::function<void()>& onRecordStopped = {});

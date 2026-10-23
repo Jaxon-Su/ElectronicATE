@@ -1,6 +1,6 @@
 # Software tests CI
 
-[Workflow](../../.github/workflows/offline-tests.yml) 顯示為 **Software tests**，在 push 到 main、以 main 為目標的 PR 或手動觸發時執行。它執行 835 個不連實機的 CTest 案例，其中 WFM 套件再核對 101 個 QtTest 結果；不自動合併或發布 Release。測試來源按 [功能](../README.md) 分類。
+[Workflow](../../.github/workflows/offline-tests.yml) 顯示為 **Software tests**，在 push 到 main、以 main 為目標的 PR 或手動觸發時執行。它執行 839 個不連實機的 CTest 案例，其中 WFM 套件再核對 101 個 QtTest 結果；不自動合併或發布 Release。測試來源按 [功能](../README.md) 分類。
 
 | 工作 | 用途 |
 | --- | --- |
@@ -23,7 +23,7 @@ Qt 的 [實際套件 metadata](https://download.qt.io/online/qtsdkrepository/win
 
 1. 記錄 tested SHA、PR head／base SHA 與 runner image。
 2. 安裝固定工具鏈。
-3. 執行 bootstrap／profile／CTest gate／完整套件／依賴故障回歸，準備固定官方測試依賴，再 configure／build／執行主 832、OCR 2、WFM 1。
+3. 執行 bootstrap／profile／CTest gate／完整套件／依賴故障回歸，準備固定官方測試依賴，再 configure／build／執行主 836、OCR 2、WFM 1。
 4. [verify_ci.py](verify_ci.py) 核對固定 manifest、原始 JUnit、本輪來源 hash 與 SHA，才輸出成功證據。
 5. 無論成功或失敗，都保存可取得的 logs／JUnit／工具來源／版本；不打包 SDK、工具本體或私人資料。
 6. [finish-gate.ps1](finish-gate.ps1) 要求上游 success、正確 profile 與 SHA；failure、cancelled、skipped、缺少證據均失敗。

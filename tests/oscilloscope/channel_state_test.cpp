@@ -72,11 +72,63 @@ public:
 
 
 void require(bool ok, const char *message) { if (!ok) throw std::runtime_error(message); }
+void verticalRangeDriver()
+{
+    class RangeTransport : public ICommunication {
+    public:
+        QString last,failed;
+        QStringList commands;
+        QByteArray scale="4",offset="100";
+        bool consumed=false;
+        bool open() override {return true;}
+        void close() override {}
+        bool isOpen() const override {return true;}
+        QString lastError() const override {return "injected range IO failure";}
+        int write(const QByteArray &bytes) override {last=QString::fromUtf8(bytes).trimmed();commands<<last;consumed=false;return bytes.size();}
+        int read(QByteArray &bytes,int) override {
+            if (last==failed) return -1;
+            if (consumed) {bytes.clear();return 0;}
+            consumed=true;
+            if (last=="CH2:SCAle?") bytes=scale;
+            else if (last=="CH2:OFFSet?") bytes=offset;
+            else throw std::runtime_error("Unexpected vertical range command");
+            bytes+='\n';
+            return bytes.size();
+        }
+    } transport;
+    MSOSeries456 scope(&transport); ScopeVerticalRange range; QString error;
+    for (bool header : {false,true}) for (bool invert : {false,true}) {
+        transport.scale=header?":CH2:SCALE 4.0E+0":"4.0E+0";
+        transport.offset=(header?QByteArray(":CH2:OFFSET "):QByteArray())+(invert?"-100":"100");
+        transport.commands.clear();
+        require(scope.readVerticalRange(2,range,error) && error.isEmpty() && range.scale==4 &&
+                range.center==(invert?-100:100) && range.divisions==10,"Driver range parsing/inversion mismatch");
+        require(transport.commands==QStringList({"CH2:SCAle?","CH2:OFFSet?"}),"Driver changed state or used display position");
+    }
+    for (const QByteArray reply : {QByteArray("bad"),QByteArray("nan"),QByteArray("9.9e37"),QByteArray("0"),QByteArray("-4")}) {
+        transport.scale=reply; range={9,9,9};
+        require(!scope.readVerticalRange(2,range,error) && !error.isEmpty() && range.scale==0,"invalid scale yielded usable geometry");
+    }
+    transport.scale="4";
+    for (const QByteArray reply : {QByteArray("bad"),QByteArray("inf"),QByteArray("9.9e37")}) {
+        transport.offset=reply; range={9,9,9};
+        require(!scope.readVerticalRange(2,range,error) && !error.isEmpty() && range.divisions==0,"invalid offset yielded usable geometry");
+    }
+    transport.offset="0";
+    for (const QString command : {"CH2:SCAle?","CH2:OFFSet?"}) {
+        transport.failed=command;
+        require(!scope.readVerticalRange(2,range,error) && !error.isEmpty(),"Driver masked range IO failure");
+    }
+    transport.commands.clear();
+    require(!scope.readVerticalRange(0,range,error) && !scope.readVerticalRange(5,range,error) && transport.commands.isEmpty(),
+            "invalid physical range channel touched transport");
+}
 void check(int kind, const QString &mode, int channel = 2, int failAt = 1) {
     Transport transport; transport.mode = mode; transport.target = channel; transport.failAt = failAt;
     Scope scope(transport); QAtomicInt stop{0}; if (mode == "stop") transport.cancel = &stop;
     TransientContext cfg; cfg.target = "MAX"; cfg.trialsPerLevel = 1;
     cfg.settleMs = cfg.dischargeMs = cfg.powerOffMs = 0; cfg.timeoutMs = 5; cfg.phaseTimeoutMs = 10000;
+    cfg.singleProcessingMs = 0; // Real processing time is covered by transient_single_wait.
     cfg.descentChannel = 4; cfg.descentLevels = {5};
     cfg.power = [&](bool on, QString &) { if (on) ++scope.outputOn; scope.fire(); return true; };
     cfg.load = [&](bool on, QString &) { if (on) ++scope.outputOn; return true; };
@@ -107,6 +159,7 @@ int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
     try {
         if (argc > 1 && QString::fromUtf8(argv[1]) == "startup") {
+            verticalRangeDriver();
             for (const QString mode : {"normal", "off", "timeout", "invalid"}) {
                 Transport transport; transport.mode = mode; transport.target = 4; Scope scope(transport);
                 QAtomicInt stop{0}; QString error;

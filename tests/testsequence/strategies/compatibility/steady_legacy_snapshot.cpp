@@ -191,7 +191,7 @@ OscMeasureResult LegacySteadyStateSearchStrategy::execute(IScopeMeasurement *sco
 
             // Scale changes require a fresh record; clipped data is never retained.
             try {
-                if (OscilloscopeAcquisition::expandClippedChannels(scope, stopFlag, scaleAdjustments,
+                if (OscilloscopeAcquisition::expandVerticalRange(scope, stopFlag, scaleAdjustments,
                                                                    &vertical, "Measurement",
                                                                    status == AcquisitionResult::CompletedAfterTimeout)) {
                     continue;

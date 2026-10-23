@@ -15,6 +15,7 @@ struct TestRunDependencies {
     MeasurementStrategyFactory strategy;
     std::function<void(const TestSequenceExecutionContext &, InputSelection, int, bool)> validateMeasurement;
     std::function<bool(const QString &, int, const QVariantMap &, OscilloscopeSettings &, QString &)> prepareConfiguration;
-    std::function<bool(IScopeAutoPeriod *, QAtomicInt &, QString &, const OscCaptureObserver &)> autoPeriod;
+    std::function<bool(IScopeAutoPeriod *, QAtomicInt &, QString &, const OscCaptureObserver &,
+                       const VerticalScaleOptions &)> autoPeriod;
     std::function<BrownOutIoFactory(const TestSequenceExecutionContext &, const BrownOut::Settings &)> prepareBrownOut;
 };

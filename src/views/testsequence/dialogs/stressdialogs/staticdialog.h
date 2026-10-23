@@ -1,4 +1,5 @@
 #pragma once
+#include "../verticalmargincheckbox.h"
 #include <QDialog>
 #include "../inputselectors.h"
 #include "../loadconditionselector.h"
@@ -30,6 +31,7 @@ class StaticDialog : public QDialog {
     LoadConditionSelector* m_loadSelection = nullptr;
     StrategyCaptureWidget* m_capture = nullptr;
     QCheckBox* m_autoPeriod = nullptr;
+    VerticalMarginCheckBox* m_verticalMargin = nullptr;
     QComboBox* m_targetCombo = nullptr;
     QSpinBox* m_powerOffMs = nullptr;
     QSpinBox* m_startupMs = nullptr;

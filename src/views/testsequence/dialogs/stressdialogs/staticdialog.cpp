@@ -165,6 +165,8 @@ void StaticDialog::buildUI(const InputConditionOptions& inputOptions, const QStr
     m_targetCombo->setCurrentIndex(qMax(0, m_targetCombo->findData(m_cfg.value("measure_target", "BOTH").toString().trimmed().toUpper())));
     m_targetCombo->setToolTip("BOTH: Rise then Fall. Every valid trial records Max/Min/RMS/Mean. Rise selects the highest-Max record; Fall selects the lowest-Min record.");
     form->addRow("Search direction:", m_targetCombo);
+    m_verticalMargin = new VerticalMarginCheckBox(m_cfg, this);
+    form->addRow("", m_verticalMargin);
 
     m_capture = new StrategyCaptureWidget(m_cfg, this);
     form->addRow("", m_capture);
@@ -252,6 +254,7 @@ void StaticDialog::saveConfig()
     m_cfg["power_off_ms"] = m_powerOffMs->value();
     m_cfg["startup_ms"] = m_startupMs->value();
     m_capture->save(m_cfg);
+    m_verticalMargin->save(m_cfg);
     m_cfg["auto_period"] = m_autoPeriod->isChecked();
     m_cfg["measure_target"] = m_targetCombo->currentData().toString();
 }

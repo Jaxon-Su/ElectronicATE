@@ -97,6 +97,13 @@ void Execution::delay(int ms)
     check();
 }
 
+void Execution::waitAfterSingle()
+{
+    if (ctx.singleProcessingMs > 0)
+        log(QString("Single processing wait: %1 ms before Baseline/READY").arg(ctx.singleProcessingMs));
+    delay(ctx.singleProcessingMs);
+}
+
 AcquisitionResult Execution::waitForBaseline()
 {
     return waitForRecord(false);
@@ -127,31 +134,103 @@ AcquisitionResult Execution::waitForRecord(bool exitShortOnCompletion)
 
 void Execution::requireReady()
 {
+    waitForReadiness(ReadinessPurpose::Event);
+}
+
+bool Execution::waitForPowerOnReady()
+{
+    return waitForReadiness(ReadinessPurpose::PowerOn) == AcquisitionResult::NoTrigger;
+}
+
+AcquisitionResult Execution::waitForShortReady()
+{
+    return waitForReadiness(ReadinessPurpose::Short);
+}
+
+AcquisitionResult Execution::waitForReadiness(ReadinessPurpose purpose)
+{
+    const bool beforeShort = purpose == ReadinessPurpose::Short;
+    const QString recordName = beforeShort ? "Pre-short" : "Pre-input";
     QString error;
+    auto rejectedState = ScopeTriggerState::Invalid;
     try {
         if (OscilloscopeAcquisition::waitForReady(
                 scope, stop,
-                qMin(ctx.timeoutMs, qMax(0, ctx.phaseTimeoutMs - int(phase.elapsed()))), error)) {
+                qMin(ctx.timeoutMs, qMax(0, ctx.phaseTimeoutMs - int(phase.elapsed()))),
+                error, &rejectedState)) {
             check();
-            return;
+            if (!beforeShort) return AcquisitionResult::NoTrigger;
+            // A record can complete just after the READY reply. This final
+            // query narrows the gap; it is not atomic with the physical relay.
+            const auto state = scope->acquisitionState();
+            if (stop.loadAcquire()) throw std::runtime_error("Stopped by user");
+            if (state == ScopeAcquisitionState::Invalid || !scope->lastError().isEmpty())
+                throw std::runtime_error(("Pre-short acquisition query failed: " + scope->lastError()).toStdString());
+            if (state == ScopeAcquisitionState::Running) {
+                check();
+                return AcquisitionResult::NoTrigger;
+            }
+            rejectedState = ScopeTriggerState::Triggered;
+            error = "Acquisition completed before short";
         }
     } catch (const std::exception &ex) { error = QString::fromUtf8(ex.what()); }
       catch (...) { error = "Unexpected trigger readiness error"; }
     // A pre-event trigger is still a diagnostic record. Never force STOP
     // to manufacture completion, and never bypass retained-short protection.
-    if (ctx.captureRecord && !stop.loadAcquire()) {
+    const bool recover = purpose != ReadinessPurpose::Event &&
+        (rejectedState == ScopeTriggerState::Triggered || rejectedState == ScopeTriggerState::Saving);
+    if ((ctx.captureRecord || recover) && !stop.loadAcquire()) {
         try {
-            if (scope->acquisitionState() == ScopeAcquisitionState::Completed) {
+            auto state = scope->acquisitionState();
+            if (recover && stop.loadAcquire())
+                throw std::runtime_error("Stopped by user");
+            if (recover && (state == ScopeAcquisitionState::Invalid || !scope->lastError().isEmpty()))
+                throw std::runtime_error((recordName + " acquisition query failed: " + scope->lastError()).toStdString());
+            bool late = false;
+            if (recover && rejectedState == ScopeTriggerState::Triggered && state == ScopeAcquisitionState::Running) {
+                // Trigger was observed before the event. Wait for its natural end;
+                // a forced STOP could turn an incomplete record into false evidence.
+                const int remaining = qMax(0, ctx.phaseTimeoutMs - int(phase.elapsed()));
+                const auto status = OscilloscopeAcquisition::waitForCapture(
+                    scope, stop, remaining, remaining,
+                    shortTest ? std::function<void()>([this] { requireShortExit(); }) : std::function<void()>{});
+                if (!OscilloscopeAcquisition::hasCompletedRecord(status)) {
+                    const QString detail = scope->lastError();
+                    check();
+                    throw std::runtime_error((recordName + " acquisition did not complete" +
+                        (detail.isEmpty() ? QString{} : ": " + detail)).toStdString());
+                }
+                late = status == AcquisitionResult::CompletedAfterTimeout;
+                state = ScopeAcquisitionState::Completed;
+            }
+            if (state == ScopeAcquisitionState::Completed) {
                 if (shortTest) requireShortExit();
-                if (!stop.loadAcquire() && scope->acquisitionState() == ScopeAcquisitionState::Completed) {
-                    ScopeCaptureRecord record;
-                    record.phase = "Before READY";
-                    for (auto it = channels.cbegin(); it != channels.cend(); ++it) {
-                        OscChannelMeasure value;
-                        value.channel = it.key();
-                        record.channels.append(value);
+                if (!stop.loadAcquire()) {
+                    const auto frozen = scope->acquisitionState();
+                    if (stop.loadAcquire())
+                        throw std::runtime_error("Stopped by user");
+                    if (recover && (frozen != ScopeAcquisitionState::Completed || !scope->lastError().isEmpty()))
+                        throw std::runtime_error((recordName + " record is not frozen: " + scope->lastError()).toStdString());
+                    // Baseline processing owns its diagnostic and extrema. Do
+                    // not save twice or discard a naturally completed late record.
+                    if (recover && beforeShort)
+                        return late ? AcquisitionResult::CompletedAfterTimeout : AcquisitionResult::Completed;
+                    if (frozen == ScopeAcquisitionState::Completed && ctx.captureRecord) {
+                        ScopeCaptureRecord record;
+                        record.phase = "Before READY";
+                        for (auto it = channels.cbegin(); it != channels.cend(); ++it) {
+                            OscChannelMeasure value;
+                            value.channel = it.key();
+                            record.channels.append(value);
+                        }
+                        ctx.captureRecord(record);
                     }
-                    ctx.captureRecord(record);
+                    if (recover) {
+                        check();
+                        if (late) throw std::runtime_error("Pre-input acquisition completed after timeout");
+                        log(error + "; pre-input record excluded from event results");
+                        return AcquisitionResult::Completed;
+                    }
                 }
             }
         } catch (const std::exception &ex) { error += "; Diagnostic Capture: " + QString::fromUtf8(ex.what()); }

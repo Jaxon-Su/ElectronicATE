@@ -9,7 +9,8 @@ IOscilloscopeMeasureStrategy* OscilloscopeStrategyFactory::create(const QString&
                                                                   const TransientContext* context)
 {
     if (taskName == "Static Test" || taskName == "Dynamic Test")
-        return new SteadyStateSearchStrategy(10000, 900000, 100, context ? context->target : "BOTH");
+        return new SteadyStateSearchStrategy(10000, 900000, 100, context ? context->target : "BOTH",
+                                             context ? context->verticalScale : VerticalScaleOptions{});
     if (!context)
         return nullptr;
     if (taskName == "Turn off (descent)")

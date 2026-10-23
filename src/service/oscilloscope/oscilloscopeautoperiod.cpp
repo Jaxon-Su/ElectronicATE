@@ -8,7 +8,8 @@
 #include <cmath>
 #include <exception>
 
-bool adjustOscilloscopeAutoPeriod(IScopeAutoPeriod *scope, QAtomicInt &stop, QString &error, const OscCaptureObserver &capture)
+bool adjustOscilloscopeAutoPeriod(IScopeAutoPeriod *scope, QAtomicInt &stop, QString &error,
+                                  const OscCaptureObserver &capture, const VerticalScaleOptions &options)
 {
     error.clear();
     QElapsedTimer total;
@@ -44,6 +45,7 @@ bool adjustOscilloscopeAutoPeriod(IScopeAutoPeriod *scope, QAtomicInt &stop, QSt
     auto cleanup = [&] { return session->restore(success && !stop.loadAcquire() && !capture, error); };
     auto guard = qScopeGuard([&] { cleanup(); });
     OscilloscopeAcquisition::VerticalScaleState vertical{capture};
+    vertical.options = options;
     int scaleAdjustments = 0;
     int periodAttempts = 0;
     int stableCaptures = 0;
@@ -97,8 +99,9 @@ bool adjustOscilloscopeAutoPeriod(IScopeAutoPeriod *scope, QAtomicInt &stop, QSt
         {
             // A completed record remains traceable even when reading or archiving it
             // reaches the overall limit. Cancellation is checked by the helper.
-            if (OscilloscopeAcquisition::expandClippedChannels(scope, stop, scaleAdjustments, &vertical, "Auto Period",
-                    capture == OscilloscopeAcquisition::AcquisitionResult::CompletedAfterTimeout))
+            if (OscilloscopeAcquisition::expandVerticalRange(scope, stop, scaleAdjustments, &vertical, "Auto Period",
+                    capture == OscilloscopeAcquisition::AcquisitionResult::CompletedAfterTimeout,
+                    QDeadlineTimer(qMax(0, totalLimitMs - int(total.elapsed())))))
             {
                 stableCaptures = 0;
                 continue;

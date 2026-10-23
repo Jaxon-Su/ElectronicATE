@@ -1,5 +1,6 @@
 #pragma once
 #include "../strategycapturewidget.h"
+#include "../verticalmargincheckbox.h"
 #include "tasksettingrules.h"
 #include <QCheckBox>
 #include <QWidget>
@@ -32,6 +33,8 @@ class TransientSettingsWidget : public QWidget {
         target->setObjectName("measureTarget");
         target->setToolTip("BOTH: Rise then Fall. Every valid trial records Max/Min/RMS/Mean. Rise selects the highest-Max record; Fall selects the lowest-Min record.");
         form->addRow("Search direction:", target);
+        margin = new VerticalMarginCheckBox(cfg, this);
+        form->addRow("", margin);
         edge = new QComboBox;
         edge->addItem(QString::fromUtf8("BOTH(Rise、Fall)"), "AUTO");
         edge->setObjectName("triggerEdge");
@@ -80,6 +83,7 @@ class TransientSettingsWidget : public QWidget {
     void save(QVariantMap& cfg) const
     {
         capture->save(cfg);
+        margin->save(cfg);
         cfg["measure_target"] = target->currentData().toString();
         cfg["trigger_edge"] = edge->currentData().toString();
         cfg["trig_timeout_ms"] = timeout->value();
@@ -91,6 +95,7 @@ class TransientSettingsWidget : public QWidget {
 
   private:
     StrategyCaptureWidget* capture = nullptr;
+    VerticalMarginCheckBox* margin = nullptr;
     QComboBox *target, *edge;
     QSpinBox *timeout, *phase, *trials, *dischargeTime = nullptr;
 };

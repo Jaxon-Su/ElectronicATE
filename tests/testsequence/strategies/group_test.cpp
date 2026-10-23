@@ -9,31 +9,74 @@ struct GroupState : State {
     QString base;
     bool inputOn = false, dcOn = false, loadOn = false;
     QVector<QString> relayMask{"OFF", "OFF"};
+    bool early = false;
+    bool checkingShort = false;
+    bool awaitingTurnOffPreparation = false;
+    QMap<int, int> earlyByLoad;
+    bool falling = false;
+    double triggerScale = 1;
+    int scaleRestores = 0;
+    QMap<int, int> scaleExpansions;
+    QMap<QString, double> excludedLevels;
 };
 class GroupScope : public Scope {
 public:
     explicit GroupScope(GroupState &state) : Scope(state), g(state) {}
     int triggerChannel() override { return 1; }
-    bool isClipping(int) override { return false; }
+    bool isClipping(int) override { return g.mode == "pre_short_rescale" && g.early; }
     bool isChannelEnabled(int channel) override { return channel == 1; }
     bool selectEdgeTrigger(QString&) override { g.trace << "edge"; return true; }
-    bool setEdgeSlope(ScopeTriggerSlope value, QString&) override { g.trace << QString("slope %1").arg(int(value)); return true; }
+    bool setEdgeSlope(ScopeTriggerSlope value, QString&) override {
+        g.falling = value == ScopeTriggerSlope::Fall;
+        g.trace << QString("slope %1").arg(int(value)); return true;
+    }
     bool setTriggerMode(ScopeTriggerMode value, QString&) override { g.triggerMode = value; g.trace << QString("mode %1").arg(int(value)); return true; }
     bool setChannelTriggerLevel(int channel, double value, QString&) override {
         require(channel == 1, "wrong trigger channel"); g.level = value;
         g.trace << QString("level %1").arg(value); return true;
     }
-    double getChannelScale(int) override { return 1; }
+    double getChannelScale(int) override { return g.triggerScale; }
+    bool setVerticalScale(int ch, double value, QString&) override {
+        const bool restoring = value == 1 && !g.armed && !g.inputOn && !g.dcOn;
+        require(ch == 1 && (g.early || restoring) && g.mode == "pre_short_rescale", "Group unexpected scale change");
+        g.triggerScale = value;
+        if (restoring) ++g.scaleRestores; else ++g.scaleExpansions[g.current];
+        g.trace << QString("scale %1").arg(value); return true;
+    }
     double getTriggerLevel() override { return g.level; }
-    bool beginSingleAcquisition() override { g.armed = true; g.event = false; g.trace << "arm"; return true; }
+    bool beginSingleAcquisition() override {
+        const QString key = QString("%1/%2").arg(g.current).arg(g.falling);
+        if (g.mode == "pre_short_rescale" && g.triggerMode == ScopeTriggerMode::Normal && g.excludedLevels.contains(key))
+            require((g.falling ? -g.level : g.level) > g.excludedLevels[key], "Group rearmed excluded pre-short level after rescale");
+        g.armed = true; g.event = false; g.trace << "arm";
+        g.checkingShort = false;
+        g.early = g.mode == "pretrigger" && std::abs(g.level) < .10;
+        if (g.early) ++g.earlyByLoad[g.current];
+        return true;
+    }
     ScopeAcquisitionState acquisitionState() override {
+        if (g.early) return ScopeAcquisitionState::Completed;
         if (g.base == "Static Test" || g.base == "Dynamic Test") return ScopeAcquisitionState::Completed;
         return g.triggerMode == ScopeTriggerMode::Auto ||
                        (g.mode != "no_event" && g.event && g.level >= -3 && g.level <= 4)
             ? ScopeAcquisitionState::Completed : ScopeAcquisitionState::Running;
     }
-    ScopeTriggerState triggerState() override { return ScopeTriggerState::Ready; }
+    ScopeTriggerState triggerState() override {
+        const QString key = QString("%1/%2").arg(g.current).arg(g.falling);
+        const bool inject = g.mode == "pre_short_rescale" ? !g.excludedLevels.contains(key) : g.earlyByLoad.value(g.current) == 0;
+        if (g.mode.startsWith("pre_short") && g.checkingShort && !g.event && inject) {
+            g.early = true; ++g.earlyByLoad[g.current];
+            g.excludedLevels[key] = g.falling ? -g.level : g.level;
+        }
+        return g.early ? ScopeTriggerState::Triggered : ScopeTriggerState::Ready;
+    }
     double readMeasurement(int, ScopeMeasurement metric) override {
+        if (g.early && g.mode.startsWith("pre_short")) {
+            require(!g.inputOn && !g.dcOn && g.relayMask == QVector<QString>({"OFF", "OFF"}),
+                    "Group baseline read before protected exit");
+            require(metric == ScopeMeasurement::Maximum || metric == ScopeMeasurement::Minimum,
+                    "Group pre-short record read event quartet");
+        } else require(!g.early, "Group included pre-input noise as a measurement");
         require(!TestSequenceTaskKind::isTransient(TestSequenceTaskKind::fromName(g.base)) ||
                     (g.event && g.triggerMode != ScopeTriggerMode::Auto) ||
                     ((g.base == "Turn off" || g.base == "Turn on then short") && g.triggerMode == ScopeTriggerMode::Auto) ||
@@ -57,6 +100,12 @@ public:
     QString name() const override { return g.base; }
     OscMeasureResult execute(IScopeMeasurement *scope, QAtomicInt &stop) override {
         ++g.measures;
+        if (g.base == "Turn off") {
+            // Every member/attempt starts from an externally running AUTO scope.
+            g.armed = true;
+            g.triggerMode = ScopeTriggerMode::Auto;
+            g.awaitingTurnOffPreparation = true;
+        }
         OscMeasureResult result;
         if (g.base == "Static Test" || g.base == "Dynamic Test") {
             result.success = true;
@@ -70,6 +119,7 @@ public:
         } else {
             c.timeoutMs = 3; c.phaseTimeoutMs = 10000;
             c.settleMs = c.powerOffMs = c.dischargeMs = 0; c.trialsPerLevel = 1;
+            c.singleProcessingMs = 0; // Fast matrix; verify Service's real default before this override.
             const auto kind = g.base == "Turn on" ? TransientKind::TurnOn : g.base == "Turn off" ? TransientKind::TurnOff
                 : g.base == "Short then turn on" ? TransientKind::ShortThenTurnOn : TransientKind::TurnOnThenShort;
             c.captureRecord = m_captureObserver;
@@ -127,7 +177,14 @@ QVector<TestSequenceResultRecord> executeGroup(TestSequenceTaskKind::Kind kind, 
     std::function<void()> cancel;
     TestRunDependencies d; d.validateMeasurement = [](const auto &, auto, int, bool) {};
     d.instruments.input = [&](const InstrumentSetupConfig&, const InputRow&, InputAction action) {
+        if (g.awaitingTurnOffPreparation) {
+            require(!g.armed && g.triggerMode == ScopeTriggerMode::Normal,
+                    "Turn off member touched input before STOP/NORMAL");
+            g.awaitingTurnOffPreparation = false;
+        }
         g.inputOn = action == InputAction::PowerOn;
+        require(!g.inputOn || !g.early || (g.mode.startsWith("pre_short") && !g.armed),
+                "Group powered input before readiness");
         g.trace << (g.inputOn ? "input on" : "input off");
         if (g.armed) g.event = true;
         if (g.inputOn && mode == "dual_cancel") cancel();
@@ -144,6 +201,7 @@ QVector<TestSequenceResultRecord> executeGroup(TestSequenceTaskKind::Kind kind, 
     };
     if (mode == "dual_missing") d.instruments.dcGroup = {};
     auto load = [&](int index, bool on) {
+        require(!on || !g.awaitingTurnOffPreparation, "Turn off member enabled load before scope preparation");
         g.loadOn = on;
         if (on) { g.current = index; g.loads << index; } else g.off << index;
         g.trace << QString("load %1 %2").arg(index).arg(on);
@@ -156,23 +214,27 @@ QVector<TestSequenceResultRecord> executeGroup(TestSequenceTaskKind::Kind kind, 
         return load(index, action == DynamicLoadAction::LoadOn);
     };
     d.instruments.relay = [&](const InstrumentSetupConfig&, const QVector<RelayDataRow> &rows, int index, RelayAction) {
+        require(g.base != "Turn off", "Turn off sent a real Relay operation");
         g.relayMask = rows[index].values;
+        require(!g.early || !g.inputOn || g.relayMask[0] != "ON", "Group applied short after pre-trigger");
         g.trace << "relays " + QStringList(g.relayMask.begin(), g.relayMask.end()).join(',');
         if (g.armed && g.relayMask[0] == "ON") g.event = true;
         return InstrumentOperationResult{};
     };
     d.strategy = makeMeasurementStrategyFactory([&](const QString &name, const TransientContext *c) {
         require(name == g.base && c, "group used different strategy or missing context");
+        require(c->singleProcessingMs == 3000, "Service lost fixed Single processing time");
         if (TestSequenceTaskKind::isTransient(kind))
             require(!g.inputOn && !g.dcOn && !g.loadOn && g.relayMask == QVector<QString>({"OFF", "OFF"}), "previous member left output active");
         return std::make_unique<GroupStrategy>(g, *c);
     });
-    d.autoPeriod = [&](IScopeAutoPeriod*, QAtomicInt&, QString&, const OscCaptureObserver&) { ++g.periods; return true; };
+    d.autoPeriod = [&](IScopeAutoPeriod*, QAtomicInt&, QString&, const OscCaptureObserver&, const VerticalScaleOptions&) { ++g.periods; return true; };
     TestRunService service(d);
     cancel = [&] { service.stop(); };
     // Scope startup is after the settle log; this also checks per-member ordering.
     QObject::connect(&service, &TestRunService::logMessage, [&](const QString &line) {
         if (line.contains("settling for")) g.trace << "settled";
+        if (line.contains("Check scope before short")) g.checkingShort = true;
     });
     QVector<TestSequenceResultRecord> results;
     QVector<TestSequenceResultRecord> progress;
@@ -403,6 +465,67 @@ int main(int argc, char **argv)
                             }
                         }
                     }
+                if (group.base == "Turn on then short" && mode == "success") {
+                  for (const QString noise : {"pre_short", "pre_short_rescale"}) {
+                    GroupState noisyGroup, noisySingles;
+                    const auto recovered = executeGroup(kind, noise, false, noisyGroup, directory.path());
+                    const auto singles = executeGroup(kind, noise, true, noisySingles, directory.path());
+                    if (recovered.size() == 1 && recovered[0].status != "Pass")
+                        std::cerr << recovered[0].error.toStdString() << '\n';
+                    require(recovered.size() == 1 && recovered[0].status == "Pass" &&
+                            recovered[0].conditions.size() == 2 && singles.size() == 2,
+                            "OnShort Group did not recover late pre-short triggers");
+                    const int recordsPerLoad = noise == "pre_short_rescale" ? 2 : 1;
+                    require(noisyGroup.earlyByLoad.value(0) == recordsPerLoad && noisyGroup.earlyByLoad.value(2) == recordsPerLoad &&
+                            noisyGroup.earlyByLoad == noisySingles.earlyByLoad, "Group shared a pre-short floor across loads/directions");
+                    if (noise == "pre_short_rescale") {
+                        // Scale restoration belongs to each row attempt. Group shares scale
+                        // across members; equivalent Singles restore after each row.
+                        require(noisyGroup.scaleRestores == 1 && noisySingles.scaleRestores == 2 &&
+                                noisyGroup.triggerScale == 1 && noisySingles.triggerScale == 1 &&
+                                noisyGroup.scaleExpansions.value(0) == 2 && noisyGroup.scaleExpansions.value(2) == 2 &&
+                                noisyGroup.scaleExpansions == noisySingles.scaleExpansions, "Group scale lifecycle changed");
+                    } else require(noisyGroup.trace == noisySingles.trace, "Group pre-short trace differs from Singles");
+                    for (int i = 0; i < 2; ++i) {
+                        const auto &member = recovered[0].conditions[i];
+                        require(member.status == "Pass" && singles[i].status == "Pass" && member.channels.size() == 2,
+                                "Group pre-short recovery lost member results");
+                        for (int ch = 0; ch < member.channels.size(); ++ch) {
+                            const auto &actual = member.channels[ch];
+                            const auto &expected = result.conditions[i].channels[ch];
+                            const auto &single = singles[i].channels[ch];
+                            require(actual.maximum == expected.maximum && actual.minimum == expected.minimum &&
+                                    actual.rms == expected.rms && actual.mean == expected.mean && actual.source == expected.source &&
+                                    actual.maximum == single.maximum && actual.minimum == single.minimum &&
+                                    actual.rms == single.rms && actual.mean == single.mean && actual.source == single.source,
+                                    "Group pre-short handling changed event/reference quartet");
+                        }
+                    }
+                  }
+                }
+                if ((group.base == "Turn on" || group.base == "Short then turn on") && mode == "success") {
+                    GroupState noisyGroup, noisySingles;
+                    const auto recovered = executeGroup(kind, "pretrigger", false, noisyGroup, directory.path());
+                    const auto recoveredSingles = executeGroup(kind, "pretrigger", true, noisySingles, directory.path());
+                    require(recovered.size() == 1 && recovered[0].status == "Pass" &&
+                            recovered[0].conditions.size() == 2 && recoveredSingles.size() == 2,
+                            "Power-on Group did not recover pre-input triggers");
+                    require(noisyGroup.trace == noisySingles.trace && noisyGroup.earlyByLoad.value(0) == 4 &&
+                            noisyGroup.earlyByLoad.value(2) == 4, "Group reused another load/direction pre-input floor");
+                    for (int i = 0; i < 2; ++i) {
+                        const auto &member = recovered[0].conditions[i];
+                        require(member.status == "Pass" && recoveredSingles[i].status == "Pass" &&
+                                member.trials.size() == result.conditions[i].trials.size(),
+                                "Group pre-input records became Trials or lost member results");
+                        for (const auto &trial : member.trials)
+                            require(std::abs(trial.triggerLevel) > .08, "Group retained pre-input Trial");
+                        require(member.channels[0].maximum == result.conditions[i].channels[0].maximum &&
+                                member.channels[0].minimum == result.conditions[i].channels[0].minimum &&
+                                member.channels[0].rms == result.conditions[i].channels[0].rms &&
+                                member.channels[0].mean == result.conditions[i].channels[0].mean,
+                                "Group pre-input handling changed real event quartet");
+                    }
+                }
             }
             if (mode == "retry" || mode == "capture_retry") {
                 require(results.size() == 2 && results[0].status == "Fail" && group.measures == 4, "retry did not restart whole group");

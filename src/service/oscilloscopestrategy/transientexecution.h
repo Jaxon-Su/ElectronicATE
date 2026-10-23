@@ -23,11 +23,19 @@ public:
     void relays(bool shorted, bool discharge);
     void requireShortExit();
     void delay(int ms);
+    void waitAfterSingle();
     // Baseline never applies the completed-record short-exit callback.
     OscilloscopeAcquisition::AcquisitionResult waitForBaseline();
     // Short events exit as soon as the record completes, before Capture/reads.
     OscilloscopeAcquisition::AcquisitionResult waitForEvent();
     void requireReady();
+    // False means a natural pre-input acquisition was completed and diagnosed.
+    // The caller may move Level and rearm while leaving the discharged input OFF.
+    // Short events complete their protected exit before diagnosis/recovery.
+    bool waitForPowerOnReady();
+    // NoTrigger means READY and still acquiring; completed records belong to
+    // the powered baseline, before short. The caller diagnoses them after exit.
+    OscilloscopeAcquisition::AcquisitionResult waitForShortReady();
     OscMeasureResult finish();
 
     const TransientContext &ctx;
@@ -39,6 +47,8 @@ public:
     bool touched = false;
 
 private:
+    enum class ReadinessPurpose { Event, PowerOn, Short };
+    OscilloscopeAcquisition::AcquisitionResult waitForReadiness(ReadinessPurpose purpose);
     OscilloscopeAcquisition::AcquisitionResult waitForRecord(bool exitShortOnCompletion);
     bool exitShort();
     const bool shortTest;

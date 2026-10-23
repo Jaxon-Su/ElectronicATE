@@ -3,9 +3,10 @@
 #include <QScopeGuard>
 
 SteadyStateSearchStrategy::SteadyStateSearchStrategy(int timeoutMs, int phaseTimeoutMs, int maxIterations,
-                                             const QString &target)
+                                             const QString &target, VerticalScaleOptions verticalScale)
     : m_target(target.trimmed().toUpper()), m_timeoutMs(qMax(1, timeoutMs)),
-      m_phaseTimeoutMs(qMax(1, phaseTimeoutMs)), m_maxIterations(qMax(1, maxIterations))
+      m_phaseTimeoutMs(qMax(1, phaseTimeoutMs)), m_maxIterations(qMax(1, maxIterations)),
+      m_verticalScale(std::move(verticalScale))
 {
 }
 
@@ -33,6 +34,6 @@ OscMeasureResult SteadyStateSearchStrategy::execute(IScopeMeasurement *scope, QA
         }
     });
     SteadyDetail::Search search(scope, stopFlag, m_target, m_timeoutMs, m_phaseTimeoutMs,
-                                m_maxIterations, m_captureObserver);
+                                m_maxIterations, m_captureObserver, m_verticalScale);
     return search.execute();
 }

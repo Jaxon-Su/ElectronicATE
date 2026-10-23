@@ -403,7 +403,8 @@ QComboBox* InstrumentSetupPage::createAddressComboBox(const InstrumentConfig& ic
     applyComboBoxStyle(cb, true);
 
     // 設定顯示值
-    const QString displayAddr = ic.getResourceString();
+    // Show repairable drafts; getResourceString() remains the runtime validity gate.
+    const QString displayAddr = ic.commConfig.toResourceString();
 
     if (!displayAddr.isEmpty()) {
         int index = cb->findText(displayAddr);
@@ -769,14 +770,7 @@ InstrumentConfig InstrumentSetupPage::collectSingleInstrumentConfig(int& row, co
     QComboBox* addrCb = qobject_cast<QComboBox*>(tableWidget->cellWidget(row, 2));
     QString addrText = addrCb ? addrCb->currentText() : "";
 
-    // 優先使用儲存的 CommunicationConfig
-    if (m_commConfigMap.contains(instName) && m_commConfigMap[instName].isValid() &&
-        m_commConfigMap[instName].toResourceString() == addrText.trimmed()) {
-        ic.commConfig = m_commConfigMap[instName];
-    } else {
-        // 嘗試從文字解析
-        ic.commConfig = CommunicationConfig::fromResourceString(addrText);
-    }
+    ic.commConfig = communicationForAddress(instName, addrText);
 
     // 收集 Channel 設置
     if (info.hasChannels) {
@@ -823,9 +817,7 @@ void InstrumentSetupPage::resetUIFromViewModel()
 {
     m_commConfigMap.clear();
     for (const auto& ic : viewModel->currentConfig().instruments) {
-        if (ic.commConfig.isValid()) {
-            m_commConfigMap[ic.name] = ic.commConfig;
-        }
+        m_commConfigMap[ic.name] = ic.commConfig;
     }
 
     QMap<QString, bool> enabledMap;
@@ -1065,6 +1057,19 @@ void InstrumentSetupPage::onConfigButtonClicked()
     openCommConfigDialog(instName);
 }
 
+CommunicationConfig InstrumentSetupPage::communicationForAddress(const QString& instName,
+                                                                 const QString& address) const
+{
+    const auto saved = m_commConfigMap.constFind(instName);
+    if (saved != m_commConfigMap.cend() && saved->toResourceString() == address.trimmed())
+        return *saved;
+    auto config = CommunicationConfig::fromResourceString(address);
+    // Resource text has no timeout field, including while the user clears/retypes it.
+    if (saved != m_commConfigMap.cend())
+        config.timeout = saved->timeout;
+    return config;
+}
+
 void InstrumentSetupPage::openCommConfigDialog(const QString& instName)
 {
     CommunicationConfigDialog dlg(this);
@@ -1072,22 +1077,7 @@ void InstrumentSetupPage::openCommConfigDialog(const QString& instName)
 
     auto* address = m_instrumentWidgets.value(instName).addrCb;
     const QString visibleAddress = address ? address->currentText().trimmed() : QString{};
-    // 設定當前配置
-    if (m_commConfigMap.contains(instName) && m_commConfigMap[instName].isValid() &&
-        m_commConfigMap[instName].toResourceString() == visibleAddress) {
-        dlg.setConfig(m_commConfigMap[instName]);
-    } else {
-        if (m_instrumentWidgets.contains(instName)) {
-            QComboBox* addrCb = m_instrumentWidgets[instName].addrCb;
-            if (addrCb) {
-                QString addr = addrCb->currentText();
-                if (!addr.isEmpty()) {
-                    CommunicationConfig cfg = CommunicationConfig::fromResourceString(addr);
-                    dlg.setConfig(cfg);
-                }
-            }
-        }
-    }
+    dlg.setConfig(communicationForAddress(instName, visibleAddress));
 
     if (dlg.exec() == QDialog::Accepted) {
         CommunicationConfig newConfig = dlg.getConfig();

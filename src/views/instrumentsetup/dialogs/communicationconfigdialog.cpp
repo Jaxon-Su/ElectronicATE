@@ -5,12 +5,23 @@
 #include <QGroupBox>
 #include <QSerialPortInfo>
 #include <QMessageBox>
+#include <QSignalBlocker>
 
 namespace {
 QString selectedPort(const QComboBox* combo)
 {
     // Editable text can differ from the item still stored at currentIndex().
     return combo->currentText().section(" - ", 0, 0).trimmed();
+}
+void selectStoredValue(QComboBox* combo, const QString& value)
+{
+    int index = combo->findData(value);
+    if (index < 0) {
+        // Preserve unknown XML values as repairable drafts, not a valid default.
+        combo->addItem(value, value);
+        index = combo->count() - 1;
+    }
+    combo->setCurrentIndex(index);
 }
 }
 
@@ -28,13 +39,16 @@ CommunicationConfigDialog::CommunicationConfigDialog(std::unique_ptr<ConnectionT
             [this](const ConnectionTestResult &result) {
         m_btnTest->setEnabled(true);
         // A response belongs to the address captured when Test was pressed.
-        if (result.resource != getConfig().toResourceString()) {
+        if (result.resource != getConfig().toResourceString() || result.timeoutMs != getConfig().timeout) {
             m_lblStatus->clear();
             return;
         }
         if (!result.error.isEmpty() || !result.opened) {
             m_lblStatus->setText(tr("❌ 連線失敗\n%1").arg(result.error.isEmpty() ? result.resource : result.error));
             m_lblStatus->setStyleSheet("color: red;");
+        } else if (result.transportOnly) {
+            m_lblStatus->setText(tr("串口已開啟，未驗證設備回應"));
+            m_lblStatus->setStyleSheet("color: #CC7700;");
         } else if (!result.identity.isEmpty()) {
             m_lblStatus->setText(tr("✓ 連線成功\n%1").arg(result.identity.left(80)));
             m_lblStatus->setStyleSheet("color: green;");
@@ -55,8 +69,10 @@ void CommunicationConfigDialog::setupUI()
     auto* protocolLayout = new QHBoxLayout(protocolGroup);
 
     m_cmbProtocol = new QComboBox;
+    m_cmbProtocol->setObjectName("communicationProtocol");
     m_cmbProtocol->addItem("GPIB (IEEE-488)", static_cast<int>(ProtocolType::GPIB));
     m_cmbProtocol->addItem("TCP/IP (VXI-11)", static_cast<int>(ProtocolType::TCP_VXI11));
+    m_cmbProtocol->addItem("TCP/IP (Socket)", static_cast<int>(ProtocolType::TCP_Socket));
     m_cmbProtocol->addItem("Serial (RS-232/RS-485)", static_cast<int>(ProtocolType::Serial));
     m_cmbProtocol->addItem("Modbus RTU", static_cast<int>(ProtocolType::Modbus_RTU));
     // m_cmbProtocol->addItem("Modbus TCP",                static_cast<int>(ProtocolType::Modbus_TCP));
@@ -71,17 +87,18 @@ void CommunicationConfigDialog::setupUI()
     createGpibPage();      // Index 0
     createTcpPage();       // Index 1
     createSerialPage();    // Index 2
-    createModbusRtuPage(); // Index 3
-    createModbusTcpPage(); // Index 4
-    createUsbPage();       // Index 5
+    createModbusTcpPage(); // Index 3
+    createUsbPage();       // Index 4
 
     // 建立協議到頁面的映射
     m_protocolPageMap[ProtocolType::GPIB] = 0;
     m_protocolPageMap[ProtocolType::TCP_VXI11] = 1;
+    m_protocolPageMap[ProtocolType::TCP_Socket] = 1;
+    m_protocolPageMap[ProtocolType::TCP_HiSLIP] = 1;
     m_protocolPageMap[ProtocolType::Serial] = 2;
-    m_protocolPageMap[ProtocolType::Modbus_RTU] = 3;
-    m_protocolPageMap[ProtocolType::Modbus_TCP] = 4;
-    m_protocolPageMap[ProtocolType::USB] = 5;
+    m_protocolPageMap[ProtocolType::Modbus_RTU] = 2;
+    m_protocolPageMap[ProtocolType::Modbus_TCP] = 3;
+    m_protocolPageMap[ProtocolType::USB] = 4;
 
     mainLayout->addWidget(m_stackedWidget, 1);
 
@@ -92,6 +109,7 @@ void CommunicationConfigDialog::setupUI()
     m_btnTest = new QPushButton(tr("測試連線"));
     m_btnTest->setFixedWidth(100);
     m_lblStatus = new QLabel;
+    m_lblStatus->setObjectName("connectionTestStatus");
     m_lblStatus->setWordWrap(true);
 
     testLayout->addWidget(m_btnTest);
@@ -171,6 +189,7 @@ void CommunicationConfigDialog::createTcpPage()
 {
     m_pageTcp = new QWidget;
     auto* layout = new QFormLayout(m_pageTcp);
+    m_tcpForm = layout;
     layout->setSpacing(10);
 
     m_edtIpAddress = new QLineEdit;
@@ -179,38 +198,41 @@ void CommunicationConfigDialog::createTcpPage()
     layout->addRow(tr("IP 位址："), m_edtIpAddress);
 
     m_spnPort = new QSpinBox;
+    m_spnPort->setObjectName("tcpPort");
     m_spnPort->setRange(1, 65535);
     m_spnPort->setValue(5025);
-    m_spnPort->setToolTip(tr("連接埠 (VXI-11 通常由 VISA 自動處理；保留此欄位供相容設定使用)"));
+    m_spnPort->setToolTip(tr("儀器的 TCP Socket 連接埠"));
     layout->addRow(tr("連接埠 (Port)："), m_spnPort);
 
-    // TCP 子協議選擇
-    m_cmbTcpProtocol = new QComboBox;
-    m_cmbTcpProtocol->addItem("VXI-11 (INSTR)", static_cast<int>(ProtocolType::TCP_VXI11));
-    layout->addRow(tr("TCP 協議："), m_cmbTcpProtocol);
-
-    // 常用埠說明
-    auto* lblHint = new QLabel(tr("示波器通訊請使用 VXI-11：TCPIP0::儀器IP::INSTR\n"
-                                  "Delta AC Source=8462, Chroma=3300"));
-    lblHint->setStyleSheet("color: gray; font-size: 10px;");
-    layout->addRow("", lblHint);
+    m_lblTcpHint = new QLabel;
+    m_lblTcpHint->setObjectName("tcpHint");
+    m_lblTcpHint->setStyleSheet("color: gray; font-size: 10px;");
+    layout->addRow("", m_lblTcpHint);
 
     // 預覽標籤
     auto* lblPreview = new QLabel;
+    lblPreview->setObjectName("tcpResourcePreview");
     lblPreview->setStyleSheet("color: gray; font-style: italic;");
     layout->addRow(tr("資源字串："), lblPreview);
 
     auto updatePreview = [this, lblPreview]() {
         CommunicationConfig cfg;
-        cfg.protocol = static_cast<ProtocolType>(m_cmbTcpProtocol->currentData().toInt());
+        cfg.protocol = static_cast<ProtocolType>(m_cmbProtocol->currentData().toInt());
         cfg.ipAddress = m_edtIpAddress->text();
         cfg.port = m_spnPort->value();
         lblPreview->setText(cfg.toResourceString());
+        const bool socket = cfg.protocol == ProtocolType::TCP_Socket;
+        m_tcpForm->setRowVisible(m_spnPort, socket);
+        m_lblTcpHint->setText(socket
+            ? tr("Socket 連接埠依儀器設定；Delta AC Source=8462, Chroma=3300")
+            : cfg.protocol == ProtocolType::TCP_HiSLIP
+                ? tr("HiSLIP：TCPIP0::儀器IP::hislip0::INSTR")
+                : tr("VXI-11：TCPIP0::儀器IP::INSTR（連接埠由 VISA 自動處理）"));
     };
 
     connect(m_edtIpAddress, &QLineEdit::textChanged, updatePreview);
     connect(m_spnPort, QOverload<int>::of(&QSpinBox::valueChanged), updatePreview);
-    connect(m_cmbTcpProtocol, QOverload<int>::of(&QComboBox::currentIndexChanged), updatePreview);
+    connect(m_cmbProtocol, QOverload<int>::of(&QComboBox::currentIndexChanged), updatePreview);
     updatePreview();
 
     m_stackedWidget->addWidget(m_pageTcp);
@@ -220,6 +242,7 @@ void CommunicationConfigDialog::createSerialPage()
 {
     m_pageSerial = new QWidget;
     auto* layout = new QFormLayout(m_pageSerial);
+    m_serialForm = layout;
     layout->setSpacing(8);
 
     // 串口選擇 + 刷新按鈕
@@ -249,6 +272,7 @@ void CommunicationConfigDialog::createSerialPage()
 
     // 資料位元
     m_cmbDataBits = new QComboBox;
+    m_cmbDataBits->setObjectName("serialDataBits");
     m_cmbDataBits->addItems({"5", "6", "7", "8"});
     m_cmbDataBits->setCurrentText("8");
     layout->addRow(tr("資料位元："), m_cmbDataBits);
@@ -271,25 +295,40 @@ void CommunicationConfigDialog::createSerialPage()
 
     // 流量控制
     m_cmbFlowControl = new QComboBox;
+    m_cmbFlowControl->setObjectName("serialFlowControl");
     m_cmbFlowControl->addItem(tr("無 (None)"), "N");
     m_cmbFlowControl->addItem(tr("硬體 (RTS/CTS)"), "HW");
     m_cmbFlowControl->addItem(tr("軟體 (XON/XOFF)"), "SW");
     layout->addRow(tr("流量控制："), m_cmbFlowControl);
 
+    m_spnModbusRtuSlaveId = new QSpinBox;
+    m_spnModbusRtuSlaveId->setObjectName("modbusSlaveId");
+    m_spnModbusRtuSlaveId->setRange(1, 247);
+    m_spnModbusRtuSlaveId->setToolTip(tr("Modbus 從站地址 (1–247)"));
+    layout->addRow(tr("Slave ID："), m_spnModbusRtuSlaveId);
+    layout->setRowVisible(m_spnModbusRtuSlaveId, false);
+    connect(m_spnModbusRtuSlaveId, &QSpinBox::valueChanged, this, [this](int value) {
+        if (value >= 1 && value <= 247)
+            m_spnModbusRtuSlaveId->setRange(1, 247);
+    });
+
     // 預覽
     auto* lblPreview = new QLabel;
+    m_lblSerialPreview = lblPreview;
     lblPreview->setStyleSheet("color: gray; font-style: italic;");
     layout->addRow(tr("資源字串："), lblPreview);
 
     auto updatePreview = [this, lblPreview]() {
         CommunicationConfig cfg;
-        cfg.protocol = ProtocolType::Serial;
+        cfg.protocol = static_cast<ProtocolType>(m_cmbProtocol->currentData().toInt());
         cfg.portName = selectedPort(m_cmbPortName);
         cfg.baudRate = m_cmbBaudRate->currentText().toInt();
         cfg.dataBits = m_cmbDataBits->currentText().toInt();
         cfg.parity = m_cmbParity->currentData().toString();
         cfg.stopBits = m_cmbStopBits->currentData().toString();
-        cfg.flowControl = m_cmbFlowControl->currentData().toString();
+        cfg.flowControl = cfg.protocol == ProtocolType::Modbus_RTU
+                              ? "N" : m_cmbFlowControl->currentData().toString();
+        cfg.slaveId = m_spnModbusRtuSlaveId->value();
         lblPreview->setText(cfg.toResourceString());
     };
 
@@ -299,75 +338,11 @@ void CommunicationConfigDialog::createSerialPage()
     connect(m_cmbParity, QOverload<int>::of(&QComboBox::currentIndexChanged), updatePreview);
     connect(m_cmbStopBits, QOverload<int>::of(&QComboBox::currentIndexChanged), updatePreview);
     connect(m_cmbFlowControl, QOverload<int>::of(&QComboBox::currentIndexChanged), updatePreview);
+    connect(m_spnModbusRtuSlaveId, &QSpinBox::valueChanged, updatePreview);
+    connect(m_cmbProtocol, QOverload<int>::of(&QComboBox::currentIndexChanged), updatePreview);
     updatePreview();
 
     m_stackedWidget->addWidget(m_pageSerial);
-}
-
-void CommunicationConfigDialog::createModbusRtuPage()
-{
-    m_pageModbusRtu = new QWidget;
-    auto* layout = new QFormLayout(m_pageModbusRtu);
-    layout->setSpacing(8);
-
-    // Slave ID (放在最上面，最重要)
-    m_spnModbusRtuSlaveId = new QSpinBox;
-    m_spnModbusRtuSlaveId->setRange(1, 255);
-    m_spnModbusRtuSlaveId->setValue(1);
-    m_spnModbusRtuSlaveId->setToolTip(tr("Modbus 從站地址 (1-255)"));
-    layout->addRow(tr("Slave ID："), m_spnModbusRtuSlaveId);
-
-    // 串口選擇
-    auto* portLayout = new QHBoxLayout;
-    m_cmbModbusRtuPort = new QComboBox;
-    m_cmbModbusRtuPort->setObjectName("modbusRtuPort");
-    m_cmbModbusRtuPort->setEditable(true);
-    populateSerialPorts(m_cmbModbusRtuPort);
-
-    m_btnRefreshModbusPorts = new QPushButton(tr("🔄"));
-    m_btnRefreshModbusPorts->setFixedWidth(30);
-    connect(m_btnRefreshModbusPorts, &QPushButton::clicked,
-            [this]() { populateSerialPorts(m_cmbModbusRtuPort); });
-
-    portLayout->addWidget(m_cmbModbusRtuPort, 1);
-    portLayout->addWidget(m_btnRefreshModbusPorts);
-    layout->addRow(tr("串口："), portLayout);
-
-    // 鮑率
-    m_cmbModbusRtuBaud = new QComboBox;
-    m_cmbModbusRtuBaud->setEditable(true);
-    m_cmbModbusRtuBaud->addItems({"9600", "19200", "38400", "57600", "115200"});
-    m_cmbModbusRtuBaud->setCurrentText("9600");
-    layout->addRow(tr("鮑率："), m_cmbModbusRtuBaud);
-
-    // 資料位元
-    m_cmbModbusRtuDataBits = new QComboBox;
-    m_cmbModbusRtuDataBits->addItems({"5", "6", "7", "8"});
-    m_cmbModbusRtuDataBits->setCurrentText("8");
-    layout->addRow(tr("資料位元："), m_cmbModbusRtuDataBits);
-
-    // 校驗位
-    m_cmbModbusRtuParity = new QComboBox;
-    m_cmbModbusRtuParity->addItem(tr("無 (None)"), "N");
-    m_cmbModbusRtuParity->addItem(tr("偶校驗 (Even)"), "E");
-    m_cmbModbusRtuParity->addItem(tr("奇校驗 (Odd)"), "O");
-    m_cmbModbusRtuParity->addItem(tr("Space"), "S");
-    m_cmbModbusRtuParity->addItem(tr("Mark"), "M");
-    layout->addRow(tr("校驗位："), m_cmbModbusRtuParity);
-
-    // 停止位
-    m_cmbModbusRtuStopBits = new QComboBox;
-    m_cmbModbusRtuStopBits->addItem("1", "1");
-    m_cmbModbusRtuStopBits->addItem("1.5", "1.5");
-    m_cmbModbusRtuStopBits->addItem("2", "2");
-    layout->addRow(tr("停止位："), m_cmbModbusRtuStopBits);
-
-    // 常用配置說明
-    auto* lblHint = new QLabel(tr("常用：9600, 8, N, 1 或 9600, 8, E, 1"));
-    lblHint->setStyleSheet("color: gray; font-size: 10px;");
-    layout->addRow("", lblHint);
-
-    m_stackedWidget->addWidget(m_pageModbusRtu);
 }
 
 void CommunicationConfigDialog::createModbusTcpPage()
@@ -456,6 +431,16 @@ void CommunicationConfigDialog::populateSerialPorts(QComboBox* comboBox)
 void CommunicationConfigDialog::onProtocolChanged(int index)
 {
     auto protocol = static_cast<ProtocolType>(m_cmbProtocol->itemData(index).toInt());
+    if (m_currentMainProtocol == ProtocolType::Serial)
+        m_serialDataBits = m_cmbDataBits->currentText().toInt();
+    if (protocol == ProtocolType::Serial || protocol == ProtocolType::Modbus_RTU) {
+        const bool rtu = protocol == ProtocolType::Modbus_RTU;
+        m_cmbDataBits->clear();
+        m_cmbDataBits->addItems(rtu ? QStringList{"8"} : QStringList{"5", "6", "7", "8"});
+        m_cmbDataBits->setCurrentText(QString::number(rtu ? 8 : m_serialDataBits));
+        m_serialForm->setRowVisible(m_cmbFlowControl, !rtu);
+        m_serialForm->setRowVisible(m_spnModbusRtuSlaveId, rtu);
+    }
     int pageIndex = m_protocolPageMap.value(protocol, 0);
     m_stackedWidget->setCurrentIndex(pageIndex);
     m_currentMainProtocol = protocol;
@@ -478,7 +463,7 @@ void CommunicationConfigDialog::onTestConnection()
         m_lblStatus->setStyleSheet("color: red;");
         return;
     }
-    if (!m_connectionTest->start(resource))
+    if (!m_connectionTest->start(resource, config.timeout))
         return;
     m_lblStatus->setText(tr("測試中..."));
     m_lblStatus->setStyleSheet("color: orange;");
@@ -487,6 +472,11 @@ void CommunicationConfigDialog::onTestConnection()
 
 void CommunicationConfigDialog::setConfig(const CommunicationConfig& config)
 {
+    m_timeout = config.timeout;
+    // Keep an existing HiSLIP resource editable without silently changing its protocol.
+    if (config.protocol == ProtocolType::TCP_HiSLIP &&
+        m_cmbProtocol->findData(static_cast<int>(config.protocol)) < 0)
+        m_cmbProtocol->addItem("TCP/IP (HiSLIP)", static_cast<int>(config.protocol));
     // 設定協議類型下拉選單
     for (int i = 0; i < m_cmbProtocol->count(); ++i) {
         if (m_cmbProtocol->itemData(i).toInt() == static_cast<int>(config.protocol)) {
@@ -508,55 +498,30 @@ void CommunicationConfigDialog::setConfig(const CommunicationConfig& config)
     case ProtocolType::TCP_HiSLIP:
         m_edtIpAddress->setText(config.ipAddress);
         m_spnPort->setValue(config.port);
-        for (int i = 0; i < m_cmbTcpProtocol->count(); ++i) {
-            if (m_cmbTcpProtocol->itemData(i).toInt() == static_cast<int>(config.protocol)) {
-                m_cmbTcpProtocol->setCurrentIndex(i);
-                break;
-            }
-        }
         break;
 
     case ProtocolType::Serial:
+    case ProtocolType::Modbus_RTU:
         m_cmbPortName->setEditText(config.portName);
         m_cmbBaudRate->setCurrentText(QString::number(config.baudRate));
+        // Display invalid legacy values faithfully so OK/Connection Test can reject them.
+        m_cmbDataBits->clear();
+        m_cmbDataBits->addItems(config.protocol == ProtocolType::Modbus_RTU
+                                   ? QStringList{"8"} : QStringList{"5", "6", "7", "8"});
+        if (m_cmbDataBits->findText(QString::number(config.dataBits)) < 0)
+            m_cmbDataBits->addItem(QString::number(config.dataBits));
         m_cmbDataBits->setCurrentText(QString::number(config.dataBits));
-        for (int i = 0; i < m_cmbParity->count(); ++i) {
-            if (m_cmbParity->itemData(i).toString() == config.parity) {
-                m_cmbParity->setCurrentIndex(i);
-                break;
-            }
+        if (config.protocol == ProtocolType::Serial)
+            m_serialDataBits = config.dataBits;
+        if (config.protocol == ProtocolType::Modbus_RTU) {
+            const QSignalBlocker block(m_spnModbusRtuSlaveId);
+            m_spnModbusRtuSlaveId->setRange(qMin(1, config.slaveId), qMax(247, config.slaveId));
+            m_spnModbusRtuSlaveId->setValue(config.slaveId);
         }
-        for (int i = 0; i < m_cmbStopBits->count(); ++i) {
-            if (m_cmbStopBits->itemData(i).toString() == config.stopBits) {
-                m_cmbStopBits->setCurrentIndex(i);
-                break;
-            }
-        }
-        for (int i = 0; i < m_cmbFlowControl->count(); ++i) {
-            if (m_cmbFlowControl->itemData(i).toString() == config.flowControl) {
-                m_cmbFlowControl->setCurrentIndex(i);
-                break;
-            }
-        }
-        break;
-
-    case ProtocolType::Modbus_RTU:
-        m_spnModbusRtuSlaveId->setValue(config.slaveId);
-        m_cmbModbusRtuPort->setEditText(config.portName);
-        m_cmbModbusRtuBaud->setCurrentText(QString::number(config.baudRate));
-        m_cmbModbusRtuDataBits->setCurrentText(QString::number(config.dataBits));
-        for (int i = 0; i < m_cmbModbusRtuParity->count(); ++i) {
-            if (m_cmbModbusRtuParity->itemData(i).toString() == config.parity) {
-                m_cmbModbusRtuParity->setCurrentIndex(i);
-                break;
-            }
-        }
-        for (int i = 0; i < m_cmbModbusRtuStopBits->count(); ++i) {
-            if (m_cmbModbusRtuStopBits->itemData(i).toString() == config.stopBits) {
-                m_cmbModbusRtuStopBits->setCurrentIndex(i);
-                break;
-            }
-        }
+        selectStoredValue(m_cmbParity, config.parity);
+        selectStoredValue(m_cmbStopBits, config.stopBits);
+        if (config.protocol == ProtocolType::Serial)
+            selectStoredValue(m_cmbFlowControl, config.flowControl);
         break;
 
     case ProtocolType::Modbus_TCP:
@@ -574,23 +539,15 @@ void CommunicationConfigDialog::setConfig(const CommunicationConfig& config)
     default:
         break;
     }
+    m_lblSerialPreview->setText(getConfig().toResourceString());
 }
 
 CommunicationConfig CommunicationConfigDialog::getConfig() const
 {
     CommunicationConfig config;
+    config.timeout = m_timeout;
 
-    // 獲取當前協議類型
-    int protocolData = m_cmbProtocol->currentData().toInt();
-
-    // 對於 TCP 類型，需要從子協議選單獲取
-    if (protocolData == static_cast<int>(ProtocolType::TCP_VXI11) ||
-        protocolData == static_cast<int>(ProtocolType::TCP_Socket) ||
-        protocolData == static_cast<int>(ProtocolType::TCP_HiSLIP)) {
-        config.protocol = static_cast<ProtocolType>(m_cmbTcpProtocol->currentData().toInt());
-    } else {
-        config.protocol = static_cast<ProtocolType>(protocolData);
-    }
+    config.protocol = static_cast<ProtocolType>(m_cmbProtocol->currentData().toInt());
 
     // 根據協議類型收集參數
     switch (config.protocol) {
@@ -608,21 +565,15 @@ CommunicationConfig CommunicationConfigDialog::getConfig() const
         break;
 
     case ProtocolType::Serial:
+    case ProtocolType::Modbus_RTU:
         config.portName = selectedPort(m_cmbPortName);
         config.baudRate = m_cmbBaudRate->currentText().toInt();
         config.dataBits = m_cmbDataBits->currentText().toInt();
         config.parity = m_cmbParity->currentData().toString();
         config.stopBits = m_cmbStopBits->currentData().toString();
-        config.flowControl = m_cmbFlowControl->currentData().toString();
-        break;
-
-    case ProtocolType::Modbus_RTU:
+        config.flowControl = config.protocol == ProtocolType::Modbus_RTU
+                                 ? "N" : m_cmbFlowControl->currentData().toString();
         config.slaveId = m_spnModbusRtuSlaveId->value();
-        config.portName = selectedPort(m_cmbModbusRtuPort);
-        config.baudRate = m_cmbModbusRtuBaud->currentText().toInt();
-        config.dataBits = m_cmbModbusRtuDataBits->currentText().toInt();
-        config.parity = m_cmbModbusRtuParity->currentData().toString();
-        config.stopBits = m_cmbModbusRtuStopBits->currentData().toString();
         break;
 
     case ProtocolType::Modbus_TCP:
@@ -661,8 +612,11 @@ void CommunicationConfigDialog::setAvailableProtocols(const QList<ProtocolType>&
             name = "TCP/IP (VXI-11)";
             break;
         case ProtocolType::TCP_Socket:
+            name = "TCP/IP (Socket)";
+            break;
         case ProtocolType::TCP_HiSLIP:
-            continue;
+            name = "TCP/IP (HiSLIP)";
+            break;
         case ProtocolType::Serial:
             name = "Serial (RS-232/RS-485)";
             break;

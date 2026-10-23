@@ -101,12 +101,31 @@ OscMeasureResult DescentStrategy::execute(IScopeMeasurement *scope, QAtomicInt &
                 run.channels[ch] = channel;
             }
         }
-        if (!run.channels.contains(context.descentChannel))
+        if (m_shortTest && !run.channels.contains(context.descentChannel))
             throw std::runtime_error("Descent Trigger channel must be enabled on the oscilloscope");
         run.touched = true;
         if (m_shortTest) run.requireShortExit();
         else run.power(false);
         run.configure([&](QString &e) { return scope->stopAcquisition(e); });
+        if (!m_shortTest) {
+            run.log(QString("Descent Trigger CH%1 display %2 (Falling trigger remains selected)")
+                        .arg(context.descentChannel).arg(context.descentChannelEnabled ? "ON" : "OFF"));
+            run.configure([&](QString &e) {
+                const bool ok = scope->setChannelDisplay(context.descentChannel, context.descentChannelEnabled, e);
+                if (!ok) e = QString("Descent Trigger CH%1 display: %2").arg(context.descentChannel).arg(e);
+                return ok;
+            });
+            const bool enabled = OscilloscopeAcquisition::channelEnabledChecked(scope, context.descentChannel);
+            run.check();
+            if (enabled != context.descentChannelEnabled)
+                throw std::runtime_error(QString("Descent Trigger CH%1 display readback mismatch")
+                                             .arg(context.descentChannel).toStdString());
+            if (enabled) {
+                OscChannelMeasure channel;
+                channel.channel = context.descentChannel;
+                run.channels[context.descentChannel] = channel;
+            } else run.channels.remove(context.descentChannel);
+        }
         run.configure([&](QString &e) { return scope->selectEdgeTrigger(e); });
         run.configure([&](QString &e) { return scope->setEdgeTriggerChannel(context.descentChannel, e); });
         run.configure([&](QString &e) { return scope->setEdgeSlope(ScopeTriggerSlope::Fall, e); });
@@ -132,6 +151,8 @@ OscMeasureResult DescentStrategy::execute(IScopeMeasurement *scope, QAtomicInt &
                 run.check();
                 if (!scope->beginSingleAcquisition())
                     throw std::runtime_error(("Failed to start descent acquisition: " + scope->lastError()).toStdString());
+                run.log("Single processing wait: 3000 ms before READY");
+                run.delay(3000);
                 run.requireReady();
                 if (m_shortTest) run.relays(true, false);
                 else run.power(false);

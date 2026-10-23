@@ -217,7 +217,7 @@ void runCase(const QString &mode)
         require(name == "Dynamic Test" && cfg && cfg->target == s.direction, "group did not use single Dynamic strategy/direction");
         return std::make_unique<Strategy>(s);
     });
-    deps.autoPeriod = [&](IScopeAutoPeriod*, QAtomicInt&, QString &error, const OscCaptureObserver&) {
+    deps.autoPeriod = [&](IScopeAutoPeriod*, QAtomicInt&, QString &error, const OscCaptureObserver&, const VerticalScaleOptions&) {
         require(s.trace.last() == "startup", "period before new acquisition startup");
         ++s.periods; s.trace << "period";
         if (s.mode == "period_failure" && s.current == 2) { error = "period failure"; return false; }

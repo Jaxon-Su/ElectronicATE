@@ -18,6 +18,10 @@ public:
     bool isChannelEnabled(int) override { return true; }
     bool isClipping(int) override { return clipped; }
     double getChannelScale(int) override { return scale; }
+    bool readVerticalRange(int, ScopeVerticalRange &range, QString &error) override {
+        if (badQuery) { error="invalid range"; return false; }
+        range={scale,offset,10}; return true;
+    }
     double measureSignalPeak(int, const QString& type) override { ++reads; require(!clipped,"read clipped data"); return type=="MAXimum"?high:low; }
     bool queryConfiguration(const QString& cmd, QString& r, QString&) override {
         if (badQuery) { r="invalid";return true; }
@@ -48,6 +52,102 @@ public:
     }
     int captures=0;
 };
+class DeadlineScope : public ReferenceScope {
+public:
+    int getTotalChannel() override { return channels; }
+    bool beginSingleAcquisition() override { ++captures; readyTimer.start(); return true; }
+    double measureSignalPeak(int channel, const QString &type) override {
+        measuredChannels.append(channel);
+        if (type == "MAXimum") ++maxReads;
+        if (type == "MINimum") ++minReads;
+        if (cancel && maxReads == 2) cancel->storeRelease(1);
+        if (lateReadMs) QThread::msleep(lateReadMs);
+        if (channel < stalledChannel) return type == "MAXimum" ? 19 : -5;
+        if (type == "MAXimum" && maxReadyMs >= 0 && readyTimer.elapsed() >= maxReadyMs) return 19;
+        if (type == "MINimum" && minReadyMs >= 0 && readyTimer.elapsed() >= minReadyMs) return -5;
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    bool stopAcquisition(QString &) override { ++stops; return true; }
+    bool setTriggerMode(ScopeTriggerMode mode, QString &) override {
+        if (mode == ScopeTriggerMode::Normal) ++normalModes;
+        return true;
+    }
+    int maxReads=0, minReads=0, stops=0, normalModes=0;
+    int channels=1, stalledChannel=1, maxReadyMs=-1, minReadyMs=-1, lateReadMs=0;
+    QElapsedTimer readyTimer;
+    QVector<int> measuredChannels;
+    QAtomicInt *cancel=nullptr;
+};
+
+void checkDeadlineDiagnostics(QAtomicInt &stop)
+{
+    for (int captureMode : {0, 1, 2}) {
+        DeadlineScope scope; scope.maxReadyMs=120;
+        VerticalScaleState state; state.options.margin=true; state.includeRmsMean=false;
+        int saved=0;
+        if (captureMode) state.captureRecord=[&](const ScopeCaptureRecord &record) {
+            ++saved;
+            require(record.channels.size()==1 && record.channels[0].maxVal==19 &&
+                    std::isnan(record.channels[0].minVal),"timeout diagnostic lost available Max/NA Min");
+            if (captureMode==2) throw std::runtime_error("diagnostic save failed");
+        };
+        QElapsedTimer timer; timer.start();
+        const auto result=captureAutoReference(&scope,stop,240,&state);
+        require(!result.success && result.errorMessage.contains("timeout") && timer.elapsed()<900 &&
+                scope.minReads>0 && saved==(captureMode?1:0) && scope.captures==1 && scope.writes==0 &&
+                scope.stops==1 && scope.normalModes==1,"Min restarted budget or timeout lost Capture/cleanup");
+        require(result.errorMessage.contains("diagnostic save failed")==bool(captureMode==2),
+                "Capture failure lost original timeout or save error");
+    }
+    // CH1 needs expansion, CH2 stalls: retain metadata, but do not write a partial expansion or query CH3.
+    DeadlineScope multiple; multiple.channels=3; multiple.stalledChannel=2; multiple.scale=4;
+    VerticalScaleState state; state.options.margin=true; state.includeRmsMean=false;
+    int saved=0;
+    state.captureRecord=[&](const ScopeCaptureRecord &record) {
+        ++saved; require(record.channels.size()==3 && record.channels[0].maxVal==19 &&
+                         std::isnan(record.channels[1].maxVal),"cross-channel diagnostic incomplete");
+    };
+    QElapsedTimer timer; timer.start();
+    auto result=captureAutoReference(&multiple,stop,160,&state);
+    require(!result.success && result.errorMessage.contains("timeout") && timer.elapsed()<900 && saved==1 &&
+            multiple.writes==0 && multiple.captures==1 && !multiple.measuredChannels.contains(3),
+            "deadline reset per channel or partial expansion applied");
+    // A single synchronous I/O can return late; it must not start a Min query after returning.
+    DeadlineScope late; late.maxReadyMs=0; late.lateReadMs=80; saved=0;
+    state.captureRecord=[&](const ScopeCaptureRecord &record) {
+        ++saved; require(record.channels[0].maxVal==19,"late valid Max lost from diagnostic");
+    };
+    result=captureAutoReference(&late,stop,30,&state);
+    require(!result.success && result.errorMessage.contains("timeout") && saved==1 && late.minReads==0 &&
+            late.writes==0 && late.stops==1 && late.normalModes==1,"late read continued measurement or lost cleanup");
+    // Stop beats diagnostics and still runs cleanup independently of the stop flag.
+    DeadlineScope cancelled; cancelled.cancel=&stop; saved=0;
+    state.captureRecord=[&](const auto &) { ++saved; };
+    timer.restart(); result=captureAutoReference(&cancelled,stop,1000,&state);
+    require(!result.success && result.errorMessage.contains("Stopped by user") && saved==0 &&
+            timer.elapsed()<900 && cancelled.minReads==0 && cancelled.stops==1 && cancelled.normalModes==1,
+            "Stop waited for deadline, saved diagnostics, or bypassed cleanup");
+    stop.storeRelease(0);
+    // Saving a valid completed record can cross the phase deadline, without permitting a scale write.
+    DeadlineScope slowSave; slowSave.maxReadyMs=slowSave.minReadyMs=0; slowSave.scale=4; saved=0;
+    state.captureRecord=[&](const auto &) { ++saved; QThread::msleep(80); };
+    result=captureAutoReference(&slowSave,stop,40,&state);
+    require(!result.success && result.errorMessage.contains("timeout") && saved==1 && slowSave.writes==0 &&
+            slowSave.captures==1 && slowSave.stops==1 && slowSave.normalModes==1,
+            "Capture deadline allowed rescale/reacquisition or skipped cleanup");
+    // Entering the helper at expiry or with a late completed record still preserves the diagnostic.
+    for (bool completedLate : {false,true}) {
+        Scope scope; int adjustments=0; saved=0;
+        state.captureRecord=[&](const auto &record) { ++saved; require(record.channels.size()==1,"channel metadata lost"); };
+        QString error;
+        try { expandVerticalRange(&scope,stop,adjustments,&state,"Measurement",completedLate,QDeadlineTimer(0)); }
+        catch (const std::exception &e) { error=QString::fromUtf8(e.what()); }
+        require(error.contains("timeout") && saved==1 && scope.reads==0 && scope.writes==0,
+                "already expired or late record lost diagnosis or read measurements");
+        require(completedLate || error.contains("time limit"),
+                "phase expiry changed the existing time-limit error category");
+    }
+}
 int main(int argc,char**argv) {
     QCoreApplication app(argc,argv);
     try {
@@ -101,23 +201,117 @@ int main(int argc,char**argv) {
         require(waitForCapture(&lastPoll,stop,3)==AcquisitionResult::CompletedAfterTimeout&&lastPoll.queries==3,
                 "record completed during last sleep was discarded as MISS");
         Scope ignored;VerticalScaleState ignore;int count=0;
-        require(!expandClippedChannels(&ignored,stop,count,&ignore)&&ignored.reads==0&&ignored.writes==0,
+        require(!expandVerticalRange(&ignored,stop,count,&ignore)&&ignored.reads==0&&ignored.writes==0,
                 "unclipped record auto adjusted");
         ignored.clipped=true;
-        require(expandClippedChannels(&ignored,stop,count,&ignore)&&ignored.scale==20&&ignored.reads==0,
+        require(expandVerticalRange(&ignored,stop,count,&ignore)&&ignored.scale==20&&ignored.reads==0,
                 "clipping did not double scale");
         ignored.clipped=false;ignored.high=60;ignored.low=-60;
-        require(!expandClippedChannels(&ignored,stop,count,&ignore)&&ignored.scale==20,
+        require(!expandVerticalRange(&ignored,stop,count,&ignore)&&ignored.scale==20,
                 "removed margin fit still active after clipping");
         for(int failure=0;failure<4;++failure){
             Scope scope;scope.clipped=true;scope.reject=failure==0;scope.clamp=failure==1;
             if(failure==2)scope.scale=0;
             int n=failure==3?8:0;bool failed=false;
-            try{expandClippedChannels(&scope,stop,n,&ignore);}catch(...){failed=true;}
+            try{expandVerticalRange(&scope,stop,n,&ignore);}catch(...){failed=true;}
             require(failed,"clipping failure accepted");
         }
+        Scope margin; margin.scale=4; margin.high=19; margin.low=-5;
+        VerticalScaleState marginState; marginState.options.margin=true;
+        int marginCount=0;
+        require(expandVerticalRange(&margin,stop,marginCount,&marginState) && std::abs(margin.scale-4.75)<1e-10,
+                "10% margin did not expand 4 to 4.75 units/div");
+        margin.high=10;
+        require(!expandVerticalRange(&margin,stop,marginCount,&marginState) && margin.scale==4.75,
+                "smaller waveform shrank scale");
+        margin.high=22;
+        require(expandVerticalRange(&margin,stop,marginCount,&marginState) && margin.scale==5.5,
+                "next larger waveform did not retain 10% margin");
+        // Independent numerical oracles: negative edge, offset, reported inverted offset.
+        for (double polarity : {-1.0,1.0}) {
+            Scope shifted; shifted.scale=4; shifted.offset=100*polarity;
+            shifted.high=polarity>0?105:-81; shifted.low=polarity>0?81:-105;
+            shifted.position=3; int n=0;
+            require(expandVerticalRange(&shifted,stop,n,&marginState) && shifted.scale==4.75 &&
+                    shifted.offset==100*polarity && shifted.position==3,"offset/inverted range moved or scaled incorrectly");
+        }
+        Scope negative; negative.scale=4; negative.high=5; negative.low=-19; int n=0;
+        require(expandVerticalRange(&negative,stop,n,&marginState) && negative.scale==4.75,"negative edge ignored");
+        Scope clippedMargin; clippedMargin.scale=4; clippedMargin.clipped=true; n=0;
+        require(expandVerticalRange(&clippedMargin,stop,n,&marginState) && clippedMargin.scale==8 &&
+                clippedMargin.reads==0,"clipping margin used truncated extrema instead of doubling");
+        // Preserve diagnostic records before reporting bad geometry; no partial write.
+        for (int bad=0;bad<6;++bad) {
+            class InvalidRange : public Scope {
+            public:
+                int bad=0;
+                bool readVerticalRange(int,ScopeVerticalRange &r,QString &e) override {
+                    r={4,0,10};
+                    if (bad==0) {e="range IO failed";return false;}
+                    if (bad==1) r.scale=0;
+                    if (bad==2) r.center=std::numeric_limits<double>::quiet_NaN();
+                    if (bad==3) r.divisions=0;
+                    return true;
+                }
+            } invalid;
+            invalid.bad=bad; invalid.high=bad==4?-30:19; invalid.low=-5;
+            if (bad==5) invalid.reject=true;
+            auto options=marginState; int saved=0; n=0;
+            options.captureRecord=[&](const auto&) { ++saved; require(invalid.writes==0,"diagnostic saved after scale write"); };
+            bool failed=false; try {expandVerticalRange(&invalid,stop,n,&options);} catch (...) {failed=true;}
+            require(failed && saved==1 && invalid.writes==(bad==5?1:0),"invalid margin accepted or diagnostic lost");
+        }
+        class Channels : public Scope {
+        public:
+            QMap<int,double> scales{{1,4},{2,4},{3,4}};
+            QVector<int> measured,changed;
+            int getTotalChannel() override {return 3;}
+            bool isChannelEnabled(int ch) override {return ch!=2;}
+            bool readVerticalRange(int ch,ScopeVerticalRange &r,QString &) override {r={scales[ch],0,10};return true;}
+            double getChannelScale(int ch) override {return scales[ch];}
+            double measureSignalPeak(int ch,const QString &type) override {
+                measured<<ch; return type=="MAXimum"?(ch==1?19:12):-5;
+            }
+            bool setVerticalScale(int ch,double v,QString &) override {changed<<ch;scales[ch]=v;return true;}
+        } channels;
+        n=0; require(expandVerticalRange(&channels,stop,n,&marginState) && channels.changed==QVector<int>{1}
+                     && !channels.measured.contains(2) && channels.scales[1]==4.75 && channels.scales[3]==4,
+                     "margin touched disabled/within-range channels");
+        // Actual AUTO loop must re-acquire and use the second record after expansion.
+        class Fresh : public ReferenceScope {
+        public:
+            bool beginSingleAcquisition() override {++captures;high=captures==1?19:10;low=-5;return true;}
+        } fresh;
+        fresh.scale=4; auto freshState=marginState; freshState.includeRmsMean=false;
+        QVector<double> captured;
+        freshState.captureRecord=[&](const auto &record) {captured<<record.channels[0].maxVal;};
+        const auto reference=captureAutoReference(&fresh,stop,2000,&freshState);
+        require(reference.success && fresh.captures==2 && fresh.scale==4.75 && captured==QVector<double>({19,10}) &&
+                reference.channels[0].maxVal==10,"expanded AUTO accepted old record or lost diagnostics");
+        // Legal NA must consume the shared phase budget, not 5 s for each metric.
+        DeadlineScope deadlineScope;
+        auto deadlineState=marginState; deadlineState.includeRmsMean=false;
+        QElapsedTimer deadlineTimer; deadlineTimer.start();
+        const auto timedOut=captureAutoReference(&deadlineScope,stop,1000,&deadlineState);
+        std::cout << "AUTO margin NA phase=1000 elapsed=" << deadlineTimer.elapsed()
+                  << " max_reads=" << deadlineScope.maxReads << " min_reads=" << deadlineScope.minReads << '\n';
+        require(!timedOut.success && timedOut.errorMessage.contains("timeout") && deadlineTimer.elapsed()<1800 &&
+                deadlineScope.maxReads>0 && deadlineScope.minReads==0 && deadlineScope.captures==1 &&
+                deadlineScope.writes==0 && deadlineScope.stops==1 && deadlineScope.normalModes==1,
+                "margin NA exceeded phase budget, read Min after expiry, or skipped AUTO cleanup");
+        checkDeadlineDiagnostics(stop);
+        Scope limit; limit.scale=4; limit.high=19; limit.low=-5; n=8; bool limited=false;
+        try {expandVerticalRange(&limit,stop,n,&marginState);} catch (...) {limited=true;}
+        require(limited && limit.writes==0,"margin bypassed adjustment limit");
+        Scope stoppedMargin; stoppedMargin.scale=4; stoppedMargin.high=19; stoppedMargin.low=-5;
+        auto cancelledState=marginState;
+        cancelledState.options.beforeChange=[&](int,double,double) {stop.storeRelease(1);};
+        n=0; bool cancelledBeforeWrite=false;
+        try {expandVerticalRange(&stoppedMargin,stop,n,&cancelledState);} catch (...) {cancelledBeforeWrite=true;}
+        require(cancelledBeforeWrite && stoppedMargin.writes==0,"Stop before margin write ignored");
+        stop.storeRelease(0);
         stop.storeRelease(1);bool cancelled=false;
-        try{expandClippedChannels(&ignored,stop,count,&ignore);}catch(...){cancelled=true;}
+        try{expandVerticalRange(&ignored,stop,count,&ignore);}catch(...){cancelled=true;}
         require(cancelled,"cancel ignored");
         std::cout<<"vertical scale tests passed\n";
     }catch(const std::exception& ex){std::cerr<<ex.what();return 1;}

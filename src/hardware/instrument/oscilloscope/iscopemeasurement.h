@@ -25,11 +25,16 @@ class IScopeChannels
     virtual int getTotalChannel() = 0;
     // Each query replaces lastError. OFF is false with no error; failures set it.
     virtual bool isChannelEnabled(int channel) = 0;
+    // Display visibility is independent of the analog edge trigger source.
+    virtual bool setChannelDisplay(int, bool, QString &error)
+    { error = "Channel display setting is unsupported"; return false; }
     virtual double getChannelScale(int channel) = 0;
     virtual bool isClipping(int channel) = 0;
     // Each read replaces lastError: legal NA clears it; transport/setup failure sets it.
     virtual double readMeasurement(int channel, ScopeMeasurement measurement) = 0;
     virtual bool setVerticalScale(int channel, double scale, QString &error) = 0;
+    virtual bool readVerticalRange(int, ScopeVerticalRange &, QString &error)
+    { error = "Vertical acquisition range is unsupported"; return false; }
 };
 
 class IScopeMeasurement : public IScopeAcquisition, public IScopeChannels

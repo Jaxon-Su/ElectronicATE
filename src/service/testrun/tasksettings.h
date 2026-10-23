@@ -81,12 +81,14 @@ struct Measurement {
     int load, settleMs;
     Direction searchDirection;
     bool captureEnabled;
+    bool verticalMargin;
     Capture captureSettings;
     explicit Measurement(const QVariantMap &values, bool dynamic = false)
         : inputs(values),
           load(integer(values, dynamic ? "dyload_index" : "load_index", -1)),
           settleMs(bounded(values, TaskSettingRules::settle)), searchDirection(direction(values)),
           captureEnabled(boolean(values, "capture_enabled")),
+          verticalMargin(boolean(values, "vertical_margin")),
           captureSettings(captureEnabled ? Capture(values.value("capture_settings").toMap(), true)
                                          : Capture{})
     {
@@ -105,7 +107,7 @@ struct Steady : Measurement {
 struct Transient : Measurement {
     int relay, discharge, triggerTimeoutMs, phaseTimeoutMs, dischargeMs, trialsPerLevel;
     std::optional<DescentSettings::Settings> descent;
-    explicit Transient(const QVariantMap &values, bool fixedDescent = false)
+    explicit Transient(const QVariantMap &values, bool fixedDescent = false, bool allowChannelEnable = false)
         : Measurement(values), relay(integer(values, "relay_index", -1)),
           discharge(integer(values, "discharge_index", -1)),
           triggerTimeoutMs(bounded(values, TaskSettingRules::triggerTimeout)),
@@ -114,7 +116,9 @@ struct Transient : Measurement {
           trialsPerLevel(fixedDescent ? bounded(values, "trials_per_level", 1, 1, 10)
                                      : bounded(values, TaskSettingRules::trials))
     {
-        if (fixedDescent) descent.emplace(values);
+        if (fixedDescent) descent.emplace(values, allowChannelEnable);
+        if (fixedDescent && values.contains("vertical_margin"))
+            throw std::invalid_argument("Vertical margin is unavailable for descent tests");
     }
 };
 struct Group {
@@ -179,6 +183,7 @@ inline PreparedTask decode(const QString &name, const QVariantMap &values, Oscil
     case Kind::ShortOn:
         return {kind, Transient(values)};
     case Kind::TurnOffDescent:
+        return {kind, Transient(values, true, true)};
     case Kind::OnShortDescent:
         return {kind, Transient(values, true)};
     case Kind::WriteScope:

@@ -4,7 +4,7 @@
 #include <functional>
 
 using OscilloscopeCreator =
-    std::function<std::shared_ptr<Oscilloscope>(const QString& modelName, const QString& resource)>;
+    std::function<std::shared_ptr<Oscilloscope>(const QString& modelName, const CommunicationConfig& communication)>;
 
 // Connection policy is independent of concrete communication/device factories.
 OscilloscopeManager::OscMap buildConnectedOscilloscopes(const InstrumentSetupConfig& config,

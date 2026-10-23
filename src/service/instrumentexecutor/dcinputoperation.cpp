@@ -47,6 +47,7 @@ runDcInput(const InstrumentSetupConfig& config, int source, const DcRow& row, In
         std::unique_ptr<ICommunication> comm(createCommunication(resource));
         if (!comm)
             return {false, name + ": unsupported communication resource.", true};
+        comm->setTimeoutMs(selected->commConfig.timeout);
         std::unique_ptr<DCSource> driver(DCSourceFactory::createDCSource(selected->modelName, comm.get()));
         if (!driver)
             return {false, name + ": driver creation failed.", true};
@@ -120,6 +121,9 @@ runDcGroup(const InstrumentSetupConfig& config, const DcGroup& rows, InputAction
             if (!selected[source])
                 continue;
             comms[source].reset(createCommunication(selected[source]->getResourceString()));
+            if (!comms[source])
+                throw std::runtime_error("DC Source transport creation failed.");
+            comms[source]->setTimeoutMs(selected[source]->commConfig.timeout);
             drivers[source].reset(
                 DCSourceFactory::createDCSource(selected[source]->modelName, comms[source].get()));
             if (!drivers[source])

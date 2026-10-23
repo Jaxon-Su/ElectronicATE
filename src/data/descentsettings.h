@@ -53,9 +53,15 @@ inline QVariantMap defaults()
 }
 struct Settings {
     int channel = 0;
+    bool channelEnabled = true;
     QVector<double> levels;
-    explicit Settings(const QVariantMap &values)
+    explicit Settings(const QVariantMap &values, bool allowChannelEnable = false)
     {
+        if (values.contains("trigger_channel_enabled")) {
+            if (!allowChannelEnable || values.value("trigger_channel_enabled").metaType().id() != QMetaType::Bool)
+                throw std::invalid_argument("Descent: invalid trigger_channel_enabled setting");
+            channelEnabled = values.value("trigger_channel_enabled").toBool();
+        }
         if (!validChannel(values.value("trigger_channel")))
             throw std::invalid_argument("Descent: select Trigger CH1..CH8");
         channel = values.value("trigger_channel").toInt();

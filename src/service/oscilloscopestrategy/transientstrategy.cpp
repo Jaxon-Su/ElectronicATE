@@ -28,7 +28,7 @@ OscMeasureResult runTransientStrategy(TransientKind kind, const TransientContext
         return result;
     }
     if (!ctx.power || !ctx.load || !ctx.relays || ctx.timeoutMs <= 0 || ctx.phaseTimeoutMs <= 0 ||
-        ctx.maxIterations <= 0 || ctx.settleMs < 0 || ctx.dischargeMs < 0 || ctx.powerOffMs < 0 ||
+        ctx.maxIterations <= 0 || ctx.settleMs < 0 || ctx.dischargeMs < 0 || ctx.powerOffMs < 0 || ctx.singleProcessingMs < 0 ||
         ctx.trialsPerLevel < 1 || ctx.trialsPerLevel > 10 ||
         !QStringList{"MAX", "MIN", "BOTH"}.contains(ctx.target) ||
         !QStringList{"AUTO", "RISING", "FALLING", "BOTH"}.contains(ctx.edge)) {

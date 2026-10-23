@@ -27,7 +27,8 @@ struct State {
     std::atomic_int steps{0}, cleaned{0};
     std::atomic_bool ready{false}, started{false}, closed{false};
     QVector<double> levels;
-    int records=0, baseline=0, finish=0;
+    int records=0, baseline=0, finish=0, longPending=0;
+    qint64 longRecordMs=0;
     QAtomicInt *stop=nullptr;
 };
 class Io : public IBrownOutIo {
@@ -59,8 +60,10 @@ public:
 class Session : public IScopeBrownOutSession {
 public:
     Session(State &s,BrownOut::Settings c):s(s),cfg(c){elapsed.start();}
-    bool arm(QString &) override {armed=true;return true;}
-    bool readyToRamp(QString &error) override {error.clear(); s.ready=true;return true;}
+    bool arm(QString &) override {armed=true;armClock.start();return true;}
+    bool readyToRamp(QString &error) override {
+        error.clear(); s.ready=true;return true;
+    }
     BrownOutRecordStatus poll(BrownOutRecord &r,QString &error) override {
         if(s.scenario=="delayed_reference"&&!armed&&elapsed.elapsed()<1150)return BrownOutRecordStatus::Pending;
         if(!armed) {
@@ -68,8 +71,12 @@ public:
             if(s.multiChannel)r.channels.append({2,"A",1.5,-1.,.75,.25});
             return BrownOutRecordStatus::Ready;
         }
-        if(s.scenario=="long_record"&&elapsed.elapsed()<1800)return BrownOutRecordStatus::Pending;
         if(s.scenario=="no_trigger"||s.steps==0)return BrownOutRecordStatus::Pending;
+        if(s.scenario=="long_record") {
+            if(!recordClock.isValid())recordClock.start();
+            s.longRecordMs=recordClock.elapsed();
+            if(s.longRecordMs<1800){++s.longPending;return BrownOutRecordStatus::Pending;}
+        }
         if(s.scenario=="scope_error") {error="waveform read failed";return BrownOutRecordStatus::Error;}
         if(cfg.mode==BrownOut::Mode::FixedFall&&s.steps<3)return BrownOutRecordStatus::Pending;
         const int seq=s.steps.load();
@@ -94,7 +101,7 @@ public:
         }
         if(s.scenario=="scope_cleanup"){error="scope cleanup failed";return false;}return true;
     }
-    State&s;BrownOut::Settings cfg;bool armed=false;int last=0;QElapsedTimer elapsed;
+    State&s;BrownOut::Settings cfg;bool armed=false;int last=0;QElapsedTimer elapsed,armClock,recordClock;
 };
 class Scope:public Oscilloscope {
 public:
@@ -125,7 +132,7 @@ void runner(const QString &scenario) {
     auto result=strategy->execute(stop);
     expect(s.cleaned==1,"output cleanup not exactly once");
     const bool success=scenario=="fixed"||scenario=="rise"||scenario=="fall"||scenario=="slow_cleanup"||
-                       scenario=="delayed_reference"||scenario=="long_record"||scenario=="slow_ramp";
+                       scenario=="delayed_reference"||scenario=="long_record"||scenario=="slow_ramp"||scenario=="single_wait";
     expect(result.success==success,qPrintable(result.error));
     if(success){
         expect(s.steps==3,"voltage continued descending during confirmation");
@@ -136,6 +143,11 @@ void runner(const QString &scenario) {
         else {expect(s.records>=2&&s.levels.size()==s.records+1,"tracking on stale record or missing update");
             for(int i=1;i<s.levels.size();++i)expect(scenario=="rise"?s.levels[i]>s.levels[i-1]:s.levels[i]<s.levels[i-1],"wrong direction");}
     }else expect(!result.error.isEmpty(),"failure has no diagnostic");
+    if(scenario=="long_record") {
+        expect(s.longPending>0,"long record never entered Pending");
+        expect(s.longRecordMs>cfg.dataTimeoutMs && s.longRecordMs<2000+cfg.dataTimeoutMs,
+               "long record did not exercise record duration plus data timeout");
+    }
     if(scenario=="current_trigger")expect(s.steps==0&&result.channels.isEmpty(),"Fixed Vout Fall ramped with a current trigger");
     if(scenario=="unit_changed"||scenario=="stale_reference")
         expect(result.channels.isEmpty(),"invalid first event affected extrema");
@@ -143,6 +155,114 @@ void runner(const QString &scenario) {
     if(scenario=="cleanup"||scenario=="cleanup_empty"||scenario=="scope_cleanup"||scenario=="prepare_error")expect(result.cleanupFailed,"cleanup failure lost");
     if(scenario=="cleanup"||scenario=="cleanup_empty")expect(result.outputCleanupFailed,"output cleanup uncertainty lost");
     if(scenario=="scope_cleanup"||scenario=="prepare_error")expect(!result.outputCleanupFailed,"scope-only failure marked outputs unknown");
+}
+struct WaitState : State {
+    std::atomic_int monitored{0}, armCount{0};
+    std::atomic_bool processing{false};
+    int readyChecks=0,diagnostics=0;
+};
+class WaitIo : public Io {
+public:
+    explicit WaitIo(WaitState &s):Io(s),state(s){}
+    double outputVoltage() override {
+        ++state.monitored;
+        if(state.processing && (state.scenario=="monitor" ||
+           (state.scenario=="monitor_rearm" && state.armCount>1)))
+            throw std::runtime_error("monitor failed during processing wait");
+        if(state.processing && state.scenario=="low")return 0;
+        return Io::outputVoltage();
+    }
+    WaitState &state;
+};
+class WaitSession : public Session {
+public:
+    WaitSession(WaitState &s,BrownOut::Settings c):Session(s,c),state(s){}
+    void started() {
+        armClock.restart();stepAtArm=state.steps.load();monitorAtArm=state.monitored.load();
+        ++state.armCount;state.processing=true;
+    }
+    bool arm(QString &error) override {
+        if(state.scenario=="arm"){error="Single rejected";return false;}
+        if(!Session::arm(error))return false;
+        started();return true;
+    }
+    bool advanceLevel(double level,QString &error) override {
+        if(!Session::advanceLevel(level,error))return false;
+        if(armed && cfg.captureEnabled) {
+            if(state.scenario=="rearm_failure"){error="rearm rejected";return false;}
+            started();
+        }
+        return true;
+    }
+    bool readyToRamp(QString &error) override {
+        ++state.readyChecks;
+        expect(armClock.elapsed()>=3000,"Brown Out READY queried before 3000 ms processing wait");
+        expect(state.steps==stepAtArm,"voltage changed during arm processing wait");
+        expect(state.monitored>monitorAtArm,"Vout monitoring stopped during arm processing wait");
+        state.processing=false;
+        if(state.scenario=="early"){error="Scope not ready: state=SAVE";return false;}
+        if(state.scenario=="ready_timeout")QThread::msleep(1100);
+        return Session::readyToRamp(error);
+    }
+    BrownOutRecordStatus poll(BrownOutRecord &record,QString &error) override {
+        if(armed && state.scenario=="early") {
+            record={2,{{4,"V",12.2,11.8,12.,12.}}};return BrownOutRecordStatus::Ready;
+        }
+        return Session::poll(record,error);
+    }
+    WaitState &state;int stepAtArm=0,monitorAtArm=0;
+};
+class WaitScope : public Scope {
+public:
+    explicit WaitScope(WaitState &s):Scope(s),state(s){}
+    std::unique_ptr<IScopeBrownOutSession> beginBrownOut(const BrownOut::Settings &cfg,QAtomicInt &,QString &) override {
+        return std::make_unique<WaitSession>(state,cfg);
+    }
+    WaitState &state;
+};
+void singleWaitCases(const QString &only={}) {
+    for(const QString mode:{"fixed","track","capture","stop","monitor","low","arm",
+                            "stop_rearm","monitor_rearm","rearm_failure","ready_timeout","early"}) {
+        if(!only.isEmpty()&&only!=mode)continue;
+        WaitState state;state.scenario=mode;QAtomicInt stop{0};state.stop=&stop;WaitScope scope(state);
+        auto v=settings();const bool rearm=mode.contains("rearm");
+        if(mode=="track"||mode=="capture"||rearm)v["mode"]="TRACK";
+        if(mode=="capture"||rearm)v["capture_enabled"]=true;
+        BrownOut::Settings cfg(v);
+        std::unique_ptr<std::thread> stopper;
+        if(mode=="stop"||mode=="stop_rearm")stopper=std::make_unique<std::thread>([&]{
+            QElapsedTimer deadline;deadline.start();
+            while(state.armCount<(rearm?2:1)&&deadline.elapsed()<15000)QThread::msleep(5);
+            QThread::msleep(100);stop.storeRelease(1);
+        });
+        auto capture=[&](const ScopeCaptureRecord &r){if(r.phase=="Before ramp")++state.diagnostics;};
+        auto factory=makeMeasurementStrategyFactory({});QElapsedTimer elapsed;elapsed.start();
+        const auto result=factory(BrownOutMeasurementRequest{cfg,scope,[&]{return std::make_unique<WaitIo>(state);},capture})->execute(stop);
+        if(stopper)stopper->join();
+        const bool success=mode=="fixed"||mode=="track"||mode=="capture";
+        expect(result.success==success,qPrintable(mode+": "+result.error));
+        expect(state.cleaned==1&&state.finish==1&&state.closed&&!result.cleanupFailed,"wait cleanup incomplete");
+        if(success) {
+            expect(state.steps==3&&!result.trials.isEmpty(),"wait lost valid events or changed descent");
+            expect(state.readyChecks==state.armCount,"missing per-arm READY");
+            if(mode=="capture")expect(state.armCount>=3,"Capture did not rearm");
+            else expect(state.armCount==1&&elapsed.elapsed()<6500,"continuous RUN acquired repeated waits");
+        } else {
+            expect(!result.error.isEmpty(),"wait fault lost error");
+            if(mode=="stop"||mode=="monitor"||mode=="low"||mode=="arm")
+                expect(state.steps==0&&state.readyChecks==0&&result.trials.isEmpty()&&elapsed.elapsed()<2500,
+                       "wait cancellation/fault reached READY, ramp or was not prompt");
+            if(mode=="stop"||mode=="stop_rearm")expect(result.error.contains("Stopped by user"),"Stop reason lost");
+            if(mode=="monitor"||mode=="monitor_rearm")expect(result.error.contains("monitor failed during processing wait"),"monitor reason lost");
+            if(mode=="low")expect(result.error.contains("before ramp"),"pre-ramp shutdown reason lost");
+            if(mode=="arm")expect(result.error.contains("Single rejected")&&state.armCount==0,"failed arm entered wait");
+            if(rearm)expect(state.steps==1&&state.readyChecks==1&&result.trials.size()==1&&elapsed.elapsed()<6000,"rearm fault resumed descent or lost partial trial");
+            if(mode=="rearm_failure")expect(result.error.contains("rearm rejected")&&state.armCount==1,"failed rearm entered wait");
+            if(mode=="ready_timeout")expect(result.error.contains("READY reply arrived after timeout")&&state.steps==0,"READY budget was removed");
+            if(mode=="early")expect(result.error.contains("before ramp")&&state.diagnostics==1&&result.trials.isEmpty()&&state.steps==0,"early record was accepted or not archived");
+        }
+        std::cout<<"PASS processing wait "<<mode.toStdString()<<'\n';
+    }
 }
 void xml() {
     auto cfg=settings();QString error;
@@ -281,4 +401,4 @@ void service(bool cleanupFailure) {
            "cleanup failure presented Pass or continued retries/tasks");
     expect(final[0].channels.size()==1&&final[0].channels[0].maximum==15,"cleanup failure discarded partial values");
 }
-int main(int argc,char**argv){QCoreApplication app(argc,argv);try{QString mode=app.arguments().value(1);if(mode=="xml")xml();else if(mode=="service"||mode=="service_cleanup")service(mode=="service_cleanup");else runner(mode);std::cout<<"OK\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(int argc,char**argv){QCoreApplication app(argc,argv);try{QString mode=app.arguments().value(1);if(mode=="single_wait")singleWaitCases(app.arguments().value(2));else if(mode=="xml")xml();else if(mode=="service"||mode=="service_cleanup")service(mode=="service_cleanup");else runner(mode);std::cout<<"OK\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

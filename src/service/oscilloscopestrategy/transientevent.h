@@ -8,8 +8,8 @@ class Execution;
 
 enum class ShortProtection { NotRequired, Required };
 enum class ReferenceMode { None, Steady };
-enum class TrialInput { PrepareFresh, ReuseReference };
-enum class RecordOrigin { Event, Baseline };
+enum class TrialInput { PrepareFresh, ReuseReference, ReuseDischarged };
+enum class RecordOrigin { Event, Baseline, BeforeInput, BeforeShort };
 
 struct TrialRecord {
     OscilloscopeAcquisition::AcquisitionResult status;

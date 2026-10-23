@@ -18,10 +18,12 @@ class MSOSeries456 : public Oscilloscope
     bool stopAcquisition(QString &error) override;
     bool selectEdgeTrigger(QString &error) override;
     bool setEdgeTriggerChannel(int channel, QString &error) override;
+    bool setChannelDisplay(int channel, bool enabled, QString &error) override;
     bool setEdgeSlope(ScopeTriggerSlope slope, QString &error) override;
     bool setTriggerMode(ScopeTriggerMode mode, QString &error) override;
     bool setChannelTriggerLevel(int channel, double level, QString &error) override;
     bool setVerticalScale(int channel, double scale, QString &error) override;
+    bool readVerticalRange(int channel, ScopeVerticalRange &range, QString &error) override;
     bool beginSingleAcquisition() override;
     bool prepareSteadyAcquisition(QAtomicInt &stop, QString &error, bool startContinuous = true) override;
     std::unique_ptr<IScopePeriodSession> beginPeriodSession(IScopePeriodSession::Continue ready,

@@ -107,7 +107,14 @@ MeasurementResult runBrownOut(const BrownOut::Settings &cfg, IScopeBrownOut &sco
                 require(std::isfinite(voltage) && voltage > cfg.minimumVin,
                         "Initial Vin must exceed minimum Vin");
                 ready.store(true);
-                while (!ramp.load() && !cancelled()) sleep(10);
+                while (!ramp.load() && !cancelled()) {
+                    const double output = io->outputVoltage();
+                    if (cancelled()) break;
+                    validVoltage(output);
+                    require(output > cfg.shutdownVoltage,
+                            "Output fell below shutdown threshold before ramp");
+                    sleep(100);
+                }
                 QElapsedTimer clock; clock.start();
                 qint64 previousStep = activeTime(), lastProgress = previousStep;
                 qint64 nextStep = previousStep + cfg.stepIntervalMs, lowSince = -1, lowPrevious = -1;
@@ -216,6 +223,14 @@ MeasurementResult runBrownOut(const BrownOut::Settings &cfg, IScopeBrownOut &sco
             return status;
         };
         auto waitUntilReady = [&](const QString &phase, quint64 previousSequence) {
+            // Processing time is separate from the existing READY reply budget.
+            // Track+Capture keeps the ramp paused across this wait and rearming.
+            QElapsedTimer processing; processing.start();
+            while (processing.elapsed() < 3000) {
+                check();
+                QThread::msleep(10);
+            }
+            check();
             QElapsedTimer arming; arming.start();
             for (;;) {
                 check();

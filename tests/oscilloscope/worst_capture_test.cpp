@@ -168,13 +168,13 @@ int main(int argc,char**argv){
  stop.storeRelease(1);failed=false;try{capture.record(&scope,{values},{0,"Full",LoadConditionKind::Static});}catch(...){failed=true;}require(failed,"cancel ignored");stop.storeRelease(0);
  OscilloscopeAcquisition::VerticalScaleState vertical;int observed=0,adjustments=0;
  vertical.captureRecord=[&](const ScopeCaptureRecord& data){require(scope.changes==0 && data.channels.size()==2,"capture after scale write");++observed;};
- require(!OscilloscopeAcquisition::expandClippedChannels(&scope,stop,adjustments,&vertical) && observed==1,"missing pre-adjust capture");
+ require(!OscilloscopeAcquisition::expandVerticalRange(&scope,stop,adjustments,&vertical) && observed==1,"missing pre-adjust capture");
  scope.clipped=true;
  vertical.captureRecord=[&](const ScopeCaptureRecord &data){
      require(scope.changes==0 && data.clipped && data.phase=="Baseline","clipping not archived before scale write");
      capture.record(&scope,data,{2,"Fault / load",LoadConditionKind::Static});++observed;
  };
- require(OscilloscopeAcquisition::expandClippedChannels(&scope,stop,adjustments,&vertical,"Baseline") && observed==2 && scope.changes==2,"clipped record omitted");
+ require(OscilloscopeAcquisition::expandVerticalRange(&scope,stop,adjustments,&vertical,"Baseline") && observed==2 && scope.changes==2,"clipped record omitted");
  require(capture.files().size()==8,"clipped capture files missing");
  StrategyWaveformCapture retry(CaptureOptions({{"formats",QStringList{"PNG"}}},true),dir.path(),stop,"AC1_230V/50Hz","DC_None","Static Test",{1,2,attempt.startedAt});
  retry.record(&scope,{values},{0,"Full",LoadConditionKind::Static});
@@ -215,14 +215,14 @@ int main(int argc,char**argv){
          require(record.channels.size()==2,"failed query lost channel identity");
          diagnostic.record(&queryFailure,record,{});delivered=true;
      };
-     try {OscilloscopeAcquisition::expandClippedChannels(&queryFailure,stop,adjustments,&observer);}
+     try {OscilloscopeAcquisition::expandVerticalRange(&queryFailure,stop,adjustments,&observer);}
      catch(const std::runtime_error& error) {rejected=QString::fromUtf8(error.what()).contains(clippingFailure?"clipping query failed":"measurement query failed");}
      require(rejected && delivered && diagnostic.files().size()==3,"failed query lost diagnostics or original failure");
      for(const auto &path:diagnostic.files())require(QFile::exists(path),"diagnostic file missing");
  }
  bool bothFailed=false;OscilloscopeAcquisition::VerticalScaleState failingSave;
  failingSave.captureRecord=[](const ScopeCaptureRecord&){throw std::runtime_error("SAVE rejected");};
- try {OscilloscopeAcquisition::expandClippedChannels(&queryFailure,stop,adjustments,&failingSave);}
+ try {OscilloscopeAcquisition::expandVerticalRange(&queryFailure,stop,adjustments,&failingSave);}
  catch(const std::runtime_error& error) {const QString text=error.what();bothFailed=text.contains("clipping query failed")&&text.contains("SAVE rejected");}
  require(bothFailed,"diagnostic SAVE hid the original query failure");
  std::cout<<"PASS every completed acquisition capture\n";

@@ -91,6 +91,15 @@ bool MSOSeries456::setEdgeSlope(ScopeTriggerSlope slope, QString &error)
     return unsupportedSetting("setEdgeSlope: invalid slope", error);
 }
 
+bool MSOSeries456::setChannelDisplay(int channel, bool enabled, QString &error)
+{
+    if (channel < 1 || channel > getTotalChannel())
+        return unsupportedSetting("setChannelDisplay: invalid channel", error);
+    // 4/5/6 MSO programmer manual 077130526, p.528: display mode only.
+    return writeConfigurationCommand(QString("DISplay:GLObal:CH%1:STATE %2")
+                                         .arg(channel).arg(enabled ? "ON" : "OFF"), error);
+}
+
 bool MSOSeries456::setTriggerMode(ScopeTriggerMode mode, QString &error)
 {
     switch (mode) {
@@ -115,4 +124,34 @@ bool MSOSeries456::setVerticalScale(int channel, double scale, QString &error)
     if (channel < 1 || channel > getTotalChannel() || !std::isfinite(scale) || scale <= 0)
         return unsupportedSetting("setVerticalScale: invalid channel or scale", error);
     return writeConfigurationCommand(QString("CH%1:SCAle %2").arg(channel).arg(scale, 0, 'g', 16), error);
+}
+
+bool MSOSeries456::readVerticalRange(int channel, ScopeVerticalRange &range, QString &error)
+{
+    range = {};
+    error.clear();
+    if (channel < 1 || channel > getTotalChannel())
+        return unsupportedSetting("readVerticalRange: invalid channel", error);
+    auto read = [&](const QString &command, double &value) {
+        QString reply;
+        if (!queryConfiguration(command, reply, error)) return false;
+        bool ok = false;
+        value = reply.simplified().section(' ', -1).toDouble(&ok);
+        if (!ok || !std::isfinite(value) || std::abs(value) >= 1e20) {
+            error = "Invalid vertical range reply: " + command + " " + reply;
+            return false;
+        }
+        return true;
+    };
+    ScopeVerticalRange actual;
+    if (!read(QString("CH%1:SCAle?").arg(channel), actual.scale) || actual.scale <= 0 ||
+        !read(QString("CH%1:OFFSet?").arg(channel), actual.center)) {
+        if (error.isEmpty()) error = "Invalid vertical scale";
+        return false;
+    }
+    // 4/5/6 MSO Help: ten vertical acquisition divisions. Position is display-only.
+    // Invert reverses both waveform samples and the reported Offset; do not negate twice.
+    actual.divisions = 10;
+    range = actual;
+    return true;
 }

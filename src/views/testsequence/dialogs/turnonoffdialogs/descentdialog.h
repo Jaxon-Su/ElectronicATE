@@ -7,6 +7,7 @@
 #include "descentsettings.h"
 #include "tasksettingrules.h"
 #include <QDialog>
+#include <QCheckBox>
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QRegularExpression>
@@ -113,8 +114,20 @@ public:
         m_source = new QComboBox; m_source->setObjectName("triggerChannel");
         for (int ch = 1; ch <= 8; ++ch) m_source->addItem(QString("CH%1").arg(ch), ch);
         m_source->setCurrentIndex(m_source->findData(initial.value("trigger_channel", 4)));
-        m_source->setToolTip("負緣觸發波形：選擇示波器已啟用的類比通道；執行前檢查該機型是否具備此通道。");
-        trigger->addRow("Trigger CH:", m_source);
+        m_source->setToolTip(shortTest ? "負緣觸發波形：選擇示波器已啟用的類比通道；執行前檢查該機型是否具備此通道。"
+                                      : "負緣觸發波形：通道顯示關閉時仍用此 CH 觸發；執行前檢查實體通道。");
+        if (shortTest) trigger->addRow("Trigger CH:", m_source);
+        else {
+            auto *sourceRow = new QHBoxLayout;
+            sourceRow->addWidget(m_source, 1);
+            m_sourceEnabled = new QCheckBox("Enable");
+            m_sourceEnabled->setObjectName("triggerChannelEnabled");
+            m_sourceEnabled->setChecked(initial.value("trigger_channel_enabled", true).toBool());
+            m_sourceEnabled->setToolTip("控制 Trigger CH 顯示與量測；未勾選仍可負緣觸發，其他 CH 不變。\n"
+                                       "WFM／CSV Capture 請另選已啟用 CH；關閉的 Trigger CH 不可匯出。PNG 可照常使用。");
+            sourceRow->addWidget(m_sourceEnabled);
+            trigger->addRow("Trigger CH:", sourceRow);
+        }
         auto *edge = new QComboBox; edge->setObjectName("triggerEdge");
         edge->addItem("Fall"); edge->setEnabled(false); edge->setToolTip("固定使用所選 Trigger CH 的負緣觸發。");
         trigger->addRow("Edge:", edge);
@@ -225,6 +238,7 @@ private:
         m_inputs->save(m_cfg); m_load->save(m_cfg); m_capture->save(m_cfg);
         for (auto it = m_numbers.cbegin(); it != m_numbers.cend(); ++it) m_cfg[it.key()] = it.value()->value();
         m_cfg["trigger_channel"] = m_source->currentData(); QVariantList levels;
+        if (m_sourceEnabled) m_cfg["trigger_channel_enabled"] = m_sourceEnabled->isChecked();
         for (int row = 0; row < m_table->rowCount(); ++row) levels.append(m_table->item(row, 1)->text().trimmed().toDouble());
         m_cfg["trigger_levels"] = levels;
         if (m_shortTest) for (const auto &entry : {qMakePair(QString("relay"), m_short), qMakePair(QString("discharge"), m_discharge)}) {
@@ -243,6 +257,7 @@ private:
     LoadConditionSelector *m_load;
     StrategyCaptureWidget *m_capture;
     QComboBox *m_source, *m_short = nullptr, *m_discharge = nullptr;
+    QCheckBox *m_sourceEnabled = nullptr;
     QMap<QString, QSpinBox *> m_numbers;
     QTableWidget *m_table;
     QLabel *m_summary, *m_error;

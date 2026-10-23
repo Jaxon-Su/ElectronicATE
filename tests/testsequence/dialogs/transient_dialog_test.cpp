@@ -13,6 +13,7 @@
 #include <QSpinBox>
 #include <QDoubleSpinBox>
 #include <QPushButton>
+#include <QKeyEvent>
 #include <stdexcept>
 int main(int argc,char** argv) {
     qputenv("QT_QPA_PLATFORM","offscreen"); QApplication app(argc,argv);
@@ -55,6 +56,9 @@ int main(int argc,char** argv) {
             throw std::runtime_error("XML lost trigger settings");
     for (const QString targetValue : {QString("BOTH"), QString("MAX"), QString("MIN")}) {
         auto verifyTarget = [&](auto& dialog, const QString& item, const QString& group) {
+            auto* margin=dialog.template findChild<QCheckBox*>("verticalMargin");
+            if (!margin || margin->isChecked()) throw std::runtime_error("vertical margin default checkbox missing");
+            margin->click();
             auto* target=dialog.template findChild<QComboBox*>("measureTarget");
             if (!target || !target->isEnabled() || target->count()!=3) throw std::runtime_error("target choices missing");
             if(dialog.template findChild<QComboBox*>("verticalAutoScale")) throw std::runtime_error("removed scale UI visible");
@@ -67,11 +71,14 @@ int main(int argc,char** argv) {
             target->setCurrentIndex(target->findData(targetValue));
             if (target->currentText() != (targetValue=="MAX"?"Rise":targetValue=="MIN"?"Fall":"BOTH")) throw std::runtime_error("direction label mismatch");
             dialog.template findChild<QPushButton*>("applyBtn")->click();
+            if (!dialog.config().value("vertical_margin").toBool()) throw std::runtime_error("vertical margin Apply lost selection");
             if (dialog.config().contains("auto_vertical_scale")) throw std::runtime_error("scale selection lost");
             if (dialog.config().value("measure_target")!=targetValue) throw std::runtime_error("target save failed");
             TestSequenceModel saved; DutRowData row; row.item=item; row.settings={{group,dialog.config()}}; saved.appendTask(row);
             QString xml; QXmlStreamWriter writer(&xml); saved.writeXml(writer);
             TestSequenceModel restored; QXmlStreamReader reader(xml); reader.readNextStartElement(); restored.loadXml(reader);
+            if (restored.tasks().size()!=1 || !restored.tasks()[0].settings.value(group).toMap().value("vertical_margin").toBool())
+                throw std::runtime_error("vertical margin XML roundtrip failed");
             if(restored.tasks().value(0).settings.value(group).toMap().contains("auto_position"))
                 throw std::runtime_error("removed Auto Position serialized");
             if(period && !restored.tasks().value(0).settings.value(group).toMap().value("auto_period").toBool())
@@ -87,16 +94,34 @@ int main(int argc,char** argv) {
         ShortTestDialog before(ShortTestDialog::ShortThenTurnOn,{},{},{},{},1); verifyTarget(before,"Short then turn on","shortOn");
     }
     for(bool enabled : {false,true}) {
-        QVariantMap cfg{{"auto_period",enabled},{"measure_target","MIN"}};
+        QVariantMap cfg{{"auto_period",enabled},{"measure_target","MIN"},{"vertical_margin",enabled}};
         StaticDialog restoredStatic({},{},cfg,1);
         DynamicDialog restoredDynamic({},{},cfg,1);
         for(QDialog* dialog : {static_cast<QDialog*>(&restoredStatic),static_cast<QDialog*>(&restoredDynamic)}) {
             if(dialog->findChild<QCheckBox*>("autoPosition") ||
                dialog->findChild<QCheckBox*>("autoPeriod")->isChecked()!=enabled ||
+               dialog->findChild<QCheckBox*>("verticalMargin")->isChecked()!=enabled ||
                dialog->findChild<QComboBox*>("verticalAutoScale") ||
                dialog->findChild<QComboBox*>("measureTarget")->currentData().toString()!="MIN")
                 throw std::runtime_error("saved settings not reflected in reopened dialog");
         }
+    }
+    // Group uses the same setting; close/reject (including Escape) must not commit edits.
+    for (bool enabled : {false,true}) for (bool apply : {false,true}) {
+        const QVariantMap cfg{{"vertical_margin",enabled},{"load_indices",QVariantList{0,1}}};
+        StaticDialog dialog({}, {"L1","L2"},cfg,1,nullptr,StaticDialog::Selection::Group);
+        auto *margin=dialog.findChild<QCheckBox*>("verticalMargin");
+        if (!margin || margin->isChecked()!=enabled) throw std::runtime_error("Group margin restore mismatch");
+        margin->setChecked(!enabled);
+        dialog.findChild<QPushButton*>(apply?"applyBtn":"closeBtn")->click();
+        if (dialog.config().value("vertical_margin").toBool()!=(apply?!enabled:enabled))
+            throw std::runtime_error("Group Apply/Close margin mismatch");
+        TurnOnOffDialog reject(TurnOnOffDialog::TurnOff,{},{},{},{{"vertical_margin",enabled}},1);
+        reject.findChild<QCheckBox*>("verticalMargin")->setChecked(!enabled);
+        QKeyEvent escape(QEvent::KeyPress,Qt::Key_Escape,Qt::NoModifier);
+        QApplication::sendEvent(&reject,&escape);
+        if (reject.config().value("vertical_margin").toBool()!=enabled)
+            throw std::runtime_error("Rejected transient committed margin edit");
     }
     auto verifyInputs = [](auto& dialog) {
         auto* ac=dialog.template findChild<QComboBox*>("acInputCombo");
@@ -138,6 +163,11 @@ int main(int argc,char** argv) {
     staticInput.findChild<QCheckBox*>("autoPeriod")->setChecked(true);
     staticInput.show();app.processEvents();
     staticInput.grab().save(TestEvidence::path("ac-dc-input.png"));
+    auto *margin=staticInput.findChild<QCheckBox*>("verticalMargin");
+    for (int state=0;state<3;++state) {
+        margin->setChecked(state!=0); margin->setEnabled(state!=2); app.processEvents();
+        staticInput.grab().save(TestEvidence::path(QString("margin-state-%1.png").arg(state)));
+    }
     before.resize(600,800);before.show();app.processEvents();
     before.grab().save(TestEvidence::path("transient-dialog.png"));
 }

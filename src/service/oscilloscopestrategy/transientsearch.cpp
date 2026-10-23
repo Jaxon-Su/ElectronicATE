@@ -48,12 +48,12 @@ public:
     void execute();
 
 private:
-    enum class Probe { Hit, Miss, Baseline, Rescale };
+    enum class Probe { Hit, Miss, Baseline, Rescale, BeforeInput, BeforeShort };
     void captureSteadyReference();
     void arm();
     double readEvent(int trial);
     Probe probe(double candidate);
-    Probe processBaseline(AcquisitionResult status, double candidate);
+    Probe processBaseline(AcquisitionResult status, double candidate, bool beforeShort = false);
 
     Execution &run;
     Event &event;
@@ -71,6 +71,8 @@ private:
     double observedPeak = -std::numeric_limits<double>::infinity();
     double baselineFloor = -std::numeric_limits<double>::infinity();
     bool referenceInputAvailable = false;
+    bool dischargedInputAvailable = false;
+    bool excludedFloorKnown = false;
     int acquisitions = 0;
     int scaleAdjustments = 0;
     int searchStep = 0;
@@ -97,6 +99,7 @@ void runSearch(Execution &run, Event &event, bool retainSteadyReference)
     OscilloscopeAcquisition::VerticalScaleState vertical;
     vertical.captureRecord = run.ctx.captureRecord;
     vertical.includeRmsMean = false;
+    vertical.options = run.ctx.verticalScale;
     initialSearchStep(run, trigger); // Validate before enabling hardware.
     run.touched = true;
     // Configure the load while input is off. Hardware callbacks use the same executors as ManualControl.
@@ -156,6 +159,21 @@ void DirectionSearch::execute()
     for (;;) {
         run.check();
         const auto outcome = probe(bracket.candidate());
+        if (outcome == Probe::BeforeInput || outcome == Probe::BeforeShort) {
+            const QString context = outcome == Probe::BeforeShort ? "Pre-short" : "Pre-input";
+            const double next = baselineFloor + tolerance;
+            if (!valid(next) || next <= baselineFloor)
+                throw std::runtime_error((context + " trigger threshold cannot advance").toStdString());
+            run.log(QString("%1 CH%2 %3 trigger: Level %4 -> %5 channel units (step=%6)")
+                    .arg(maximum ? "Rise" : "Fall").arg(trigger)
+                    .arg(context.toLower())
+                    .arg(level, 0, 'g', 16).arg(direction * next, 0, 'g', 16)
+                    .arg(tolerance, 0, 'g', 16));
+            // A pre-event record is neither an event HIT nor a MISS. A changed
+            // noise floor invalidates the bracket, but not prior real event data.
+            bracket = EventSearchBracket(next, tolerance);
+            continue;
+        }
         if (outcome == Probe::Rescale) {
             run.log("Vertical scale adjusted; repeat event with a new acquisition");
             tolerance = initialSearchStep(run, trigger);
@@ -252,8 +270,11 @@ void DirectionSearch::arm()
         throw std::runtime_error("Transient acquisition iteration limit reached");
     run.log(QString("%1: arm Level=%2 channel units").arg(maximum ? "Max" : "Min").arg(level));
     run.configure([&](QString &e) { return run.scope->setChannelTriggerLevel(trigger, level, e); });
-    if (!run.scope->beginSingleAcquisition())
-        throw std::runtime_error("Failed to start single acquisition");
+    if (!run.scope->beginSingleAcquisition()) {
+        const QString detail = run.scope->lastError();
+        throw std::runtime_error(("Failed to start single acquisition" +
+            (detail.isEmpty() ? QString{} : ": " + detail)).toStdString());
+    }
     run.check();
 }
 
@@ -298,6 +319,8 @@ DirectionSearch::Probe DirectionSearch::probe(double candidate)
 {
     if (!valid(candidate))
         throw std::runtime_error("Invalid search threshold");
+    if (excludedFloorKnown && candidate <= baselineFloor)
+        throw std::runtime_error("Pre-event trigger threshold cannot advance beyond excluded floor");
     level = direction * candidate;
     ++searchStep;
     bool hit = false;
@@ -306,16 +329,28 @@ DirectionSearch::Probe DirectionSearch::probe(double candidate)
         run.log(QString("Trial %1/%2").arg(trial + 1).arg(run.ctx.trialsPerLevel));
         // Only the first trial after AUTO reference reuses the powered input.
         // Search consumes this state; event implementations cannot modify it.
-        const auto input = referenceInputAvailable ? TrialInput::ReuseReference : TrialInput::PrepareFresh;
+        const auto input = dischargedInputAvailable ? TrialInput::ReuseDischarged
+            : referenceInputAvailable ? TrialInput::ReuseReference : TrialInput::PrepareFresh;
         referenceInputAvailable = false;
+        dischargedInputAvailable = false;
         const auto record = event.acquireTrial(run, [this] { arm(); }, input);
+        if (record.origin == RecordOrigin::BeforeInput) {
+            baselineFloor = std::max(baselineFloor, candidate);
+            excludedFloorKnown = true;
+            dischargedInputAvailable = true;
+            return Probe::BeforeInput;
+        }
+        if (record.origin == RecordOrigin::BeforeShort) {
+            return processBaseline(record.status, candidate, true);
+        }
         if (record.origin == RecordOrigin::Baseline)
             return processBaseline(record.status, candidate);
         const auto eventStatus = record.status;
         if (OscilloscopeAcquisition::hasCompletedRecord(eventStatus)) {
-            if (OscilloscopeAcquisition::expandClippedChannels(run.scope, run.stop, scaleAdjustments,
+            if (OscilloscopeAcquisition::expandVerticalRange(run.scope, run.stop, scaleAdjustments,
                                                              &vertical, "Measurement",
-                                                             eventStatus == AcquisitionResult::CompletedAfterTimeout)) {
+                                                             eventStatus == AcquisitionResult::CompletedAfterTimeout,
+                                                             QDeadlineTimer(qMax(0, run.ctx.phaseTimeoutMs - int(run.phase.elapsed()))))) {
                 run.configure([&](QString &e) { return run.scope->stopAcquisition(e); });
                 return Probe::Rescale;
             }
@@ -329,11 +364,27 @@ DirectionSearch::Probe DirectionSearch::probe(double candidate)
     return hit ? Probe::Hit : Probe::Miss;
 }
 
-DirectionSearch::Probe DirectionSearch::processBaseline(AcquisitionResult status, double candidate)
+DirectionSearch::Probe DirectionSearch::processBaseline(AcquisitionResult status, double candidate, bool beforeShort)
 {
-    if (OscilloscopeAcquisition::expandClippedChannels(run.scope, run.stop, scaleAdjustments,
+    OscilloscopeAcquisition::RecordExtremum extremum{
+        trigger, maximum ? ScopeMeasurement::Maximum : ScopeMeasurement::Minimum};
+    const bool rescaled = OscilloscopeAcquisition::expandVerticalRange(run.scope, run.stop, scaleAdjustments,
                                                      &vertical, "Baseline",
-                                                     status == AcquisitionResult::CompletedAfterTimeout)) {
+                                                     status == AcquisitionResult::CompletedAfterTimeout,
+                                                     QDeadlineTimer(qMax(0, run.ctx.phaseTimeoutMs - int(run.phase.elapsed()))),
+                                                     beforeShort ? &extremum : nullptr);
+    if (beforeShort) {
+        // Rescaling invalidates the record for later measurement, not the pre-short
+        // threshold it already excluded. Only use extrema saved before scale writes.
+        baselineFloor = std::max(baselineFloor, candidate);
+        if (!extremum.clipped) baselineFloor = std::max(baselineFloor, direction * extremum.value);
+        excludedFloorKnown = true;
+        run.configure([&](QString &e) { return run.scope->stopAcquisition(e); });
+        run.log("Baseline trigger excluded from event results");
+        if (rescaled) tolerance = initialSearchStep(run, trigger);
+        return Probe::BeforeShort;
+    }
+    if (rescaled) {
         run.configure([&](QString &e) { return run.scope->stopAcquisition(e); });
         return Probe::Rescale;
     }
