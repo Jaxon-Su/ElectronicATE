@@ -175,6 +175,8 @@ struct CommunicationConfig {
     // 檢查是否有效配置
     bool isValid() const
     {
+        if (timeout <= 0)
+            return false;
         switch (protocol) {
         case ProtocolType::GPIB:
             return gpibAddress >= 0 && gpibAddress <= 30;
@@ -190,7 +192,8 @@ struct CommunicationConfig {
                    QStringList{"N", "E", "O", "S", "M"}.contains(parity) &&
                    QStringList{"1", "1.5", "2"}.contains(stopBits) &&
                    QStringList{"N", "HW", "SW"}.contains(flowControl) &&
-                   (protocol != ProtocolType::Modbus_RTU || (slaveId >= 1 && slaveId <= 255));
+                   (protocol != ProtocolType::Modbus_RTU ||
+                    (dataBits == 8 && slaveId >= 1 && slaveId <= 247));
         case ProtocolType::Modbus_TCP:
             return !ipAddress.isEmpty();
         case ProtocolType::USB:
@@ -389,6 +392,7 @@ struct CommunicationConfig {
             return;
         }
 
+        bool seenSlaveId = false;
         while (!reader.atEnd() &&
                !(reader.isEndElement() && reader.name() == QString("CommunicationConfig"))) {
             reader.readNext();
@@ -420,8 +424,19 @@ struct CommunicationConfig {
                 stopBits = text;
             else if (name == "FlowControl")
                 flowControl = text;
-            else if (name == "SlaveId")
-                slaveId = text.toInt();
+            else if (name == "SlaveId") {
+                if (seenSlaveId) {
+                    reader.raiseError("Duplicate CommunicationConfig field: SlaveId");
+                    return;
+                }
+                seenSlaveId = true;
+                bool validInteger = false;
+                slaveId = text.toInt(&validInteger);
+                if (!validInteger) {
+                    reader.raiseError("CommunicationConfig SlaveId must be an integer");
+                    return;
+                }
+            }
             else if (name == "VendorId")
                 vendorId = text;
             else if (name == "ProductId")
@@ -433,5 +448,8 @@ struct CommunicationConfig {
                 return;
             }
         }
+        if (!reader.hasError() && !seenSlaveId &&
+            (protocol == ProtocolType::Modbus_RTU || protocol == ProtocolType::Modbus_TCP))
+            reader.raiseError("CommunicationConfig requires SlaveId for Modbus");
     }
 };

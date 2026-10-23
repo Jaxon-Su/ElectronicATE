@@ -609,7 +609,7 @@ add_executable(local_five_test integration/local_five_test.cpp
 target_include_directories(local_five_test PRIVATE ../src/views/instrumentsetup/dialogs)
 target_link_libraries(local_five_test PRIVATE ElectronicATEInstrumentSettings ElectronicATEDrivers ElectronicATEConnectionTest ElectronicATEScopeSession
     ElectronicATEOperations ElectronicATEModels Qt6::Widgets Qt6::SerialPort)
-foreach(scenario connection retirement rules outputs serial instrument_setup_serial)
+foreach(scenario connection retirement rules outputs serial instrument_setup_serial tcp)
     add_test(NAME local_five_${scenario} COMMAND local_five_test ${scenario})
     set_tests_properties(local_five_${scenario} PROPERTIES TIMEOUT 20 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endforeach()

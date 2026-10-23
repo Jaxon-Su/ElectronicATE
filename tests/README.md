@@ -17,8 +17,8 @@ if ($LASTEXITCODE -ne 0) { throw 'CI failed' }
 
 | Profile | 範圍 |
 | --- | --- |
-| ci-offline | 主 832（含 VISA）＋OCR 2＋WFM 1＝835 個 CTest；全部必須執行。 |
-| local-full | 預設完整模式，與 CI 相同 835 個 CTest；需要官方 VISA 標頭及固定 WFM 樣本。 |
+| ci-offline | 主 833（含 VISA）＋OCR 2＋WFM 1＝836 個 CTest；全部必須執行。 |
+| local-full | 預設完整模式，與 CI 相同 836 個 CTest；需要官方 VISA 標頭及固定 WFM 樣本。 |
 
 WFM 的單一 CTest 內含 101 個 QtTest 結果（99 個功能資料列＋init／cleanup），按固定清單逐列驗證並另列報告，不與 CTest 數量相加。manifest v3 起兩種 profile 不再排除 VISA；歷史 833／834 的結果仍只代表當時範圍。
 

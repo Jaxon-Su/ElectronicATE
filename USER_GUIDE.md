@@ -24,6 +24,19 @@ TestSequence 尚未設定的任務可作草稿保存，包括新加入的 Write 
 
 WaveformOcr 完成或停止辨識後，可雙擊 Max／Min／RMS／Mean、按 F2，或按「修改數值」編輯，Enter 儲存、Esc 取消。可輸入含單位的數值（如 `5.1 V`、`-185.3 mA`）；只改數字時會沿用該欄位原有單位，或該列唯一的有效單位。沒有可用單位時請一併輸入單位。清空欄位表示缺值，格式錯誤以黃色底色提示。通道、統計範圍及「已核對」皆為選填，不影響匯出；需要時可勾選「顯示通道／統計範圍」修改。Excel 匯出採用修改後的數值，並保留原始辨識文字、辨識原值及手動修改標記。
 
+### 儀器通訊設定
+
+按儀器的設定按鈕選擇通訊方式，OK 提交，Cancel／Escape 放棄本次修改。
+
+| 通訊方式 | 設定方式 |
+| --- | --- |
+| TCP/IP (VXI-11) | 填儀器 IP；Port 由 VISA 處理，畫面不顯示 Socket Port 或埠號提示。資源範例：`TCPIP0::192.168.1.100::INSTR`。 |
+| TCP/IP (Socket) | 填 IP 與儀器指定的 Port。資源範例：`TCPIP0::192.168.1.100::5025::SOCKET`。切換回 VXI-11 再返回時保留已輸入 Port。 |
+| Serial (RS-232/RS-485) | 設定 COM、Baud、Data bits、Parity、Stop bits 及 Flow control。 |
+| Modbus RTU | 與 Serial 共用串口欄位，使用 8 data bits、Slave ID 1–247，無 Flow control。切回 Serial 保留原本 Data bits／Flow control 草稿。 |
+
+RTU 的「測試連線」只開啟並關閉串口，不發送 SCPI 或 Modbus 命令；「串口已開啟，未驗證設備回應」不代表從站通訊成功。其他原有連線測試維持既有查詢行為。XML 保留所選協議與適用參數；無效的舊 RTU Data bits／Slave ID 會保留供修正，不能直接 OK。
+
 ### WFM Viewer
 
 按 **Open WFM…** 開啟 Tektronix WFM v3 的單筆類比 YT 波形。支援 Sample 與 Peak Detect 的 Min/Max 成對記錄，時間與取樣間隔由檔頭自動解析，不限定 Time/div 或取樣率。最多 1,000 萬儲存數值（Min/Max 為 500 萬組）、512 MiB 檔案；FastFrame、summary frame、digital、IQ、histogram、XY、roll 及舊版格式會明確提示不支援。

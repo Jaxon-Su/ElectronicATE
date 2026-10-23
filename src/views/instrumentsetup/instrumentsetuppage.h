@@ -107,6 +107,7 @@ class InstrumentSetupPage : public QWidget {
     void updateSyncRoleComboBox(int row, int col, bool enable, const QString& type);
 
     void openCommConfigDialog(const QString& instName);
+    CommunicationConfig communicationForAddress(const QString& instName, const QString& address) const;
 
     // Index 管理
     void enforceUniqueIndices();

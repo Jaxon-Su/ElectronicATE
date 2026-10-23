@@ -253,14 +253,15 @@ void adapterTest(const QString &scenario){
     TestSequenceExecutionContext c;c.inputs={{"3phase","90","50","0"}};c.loads={{"L1",{"1"}}};
     InstrumentConfig ac;ac.name="ACSource";ac.type="InputSource";ac.modelName="61509";
     ac.commConfig=CommunicationConfig::fromResourceString("GPIB0::30::INSTR");
+    ac.commConfig.timeout=321;
     if(scenario=="adapter_6530"){ac.modelName="6530";c.inputs[0].phaseMode="1phase";}
     InstrumentConfig load;load.name="Load1";load.type="Load";load.modelName="63600-5";
     load.commConfig=CommunicationConfig::fromResourceString("GPIB0::1::INSTR");
     load.channels={{"63640-80-80",1}};load.channelNumbers={3};c.instrumentSetup.instruments={ac,load};
     auto v=BrownOut::defaults();v["ac_input_index"]=0;v["load_index"]=0;BrownOut::Settings cfg(v);
-    int creates=0,on=0,off=0;Transport*source=nullptr;bool stopped=false;
+    int creates=0,on=0,off=0;Transport*source=nullptr;Transport*monitor=nullptr;bool stopped=false;
     InstrumentOperations ops;ops.load=[&](const auto&,const auto&,int,const auto&,LoadAction action,bool){if(action==LoadAction::LoadOn){++on;if(scenario=="adapter_cancel")stopped=true;}else if(action==LoadAction::LoadOff)++off;return InstrumentOperationResult{};};
-    const auto create=[&](const QString&address)->ICommunication*{++creates;auto*t=new Transport;if(address.contains("30"))source=t;return t;};
+    const auto create=[&](const QString&address)->ICommunication*{++creates;auto*t=new Transport;if(address.contains("30"))source=t;else monitor=t;return t;};
     auto factory=prepareBrownOutIo(c,cfg,ops,create);expect(creates==0,"preflight opened transport");
     auto io=factory();
     if(scenario=="adapter_cancel") {
@@ -269,6 +270,7 @@ void adapterTest(const QString &scenario){
         QString error;expect(io->shutdown(error)&&off==1,"cancelled startup skipped cleanup");return;
     }
     io->start([] { return false; });expect(creates==2&&on==1,"Brown Out input/load setup failed");
+    expect(source->timeout==321 && monitor->timeout==1000,"Brown Out lost configured timeout or operation cap");
     if(scenario=="adapter_6530") {
         const auto before=source->trace.size();io->setVoltage(60);
         expect(source->trace.mid(before)==QStringList{"V 60.0","VOLTage?"},"6530 ramp did not change live voltage without toggling output");

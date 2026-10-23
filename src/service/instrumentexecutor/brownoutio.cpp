@@ -155,7 +155,8 @@ class BrownOutIo final : public IBrownOutIo
     {
         std::unique_ptr<ICommunication> comm(m_create(config.getResourceString()));
         require(bool(comm), "Unsupported Brown Out communication address");
-        comm->setTimeoutMs(1000);
+        // Brown Out keeps its short operation cap while honoring shorter configured waits.
+        comm->setTimeoutMs(qMin(config.commConfig.timeout, 1000));
         return comm;
     }
     static void connectDriver(InstrumentWithCommBase *driver)

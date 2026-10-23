@@ -9,6 +9,7 @@
 #include <QStackedWidget>
 #include <QDialogButtonBox>
 #include <QGroupBox>
+#include <QFormLayout>
 #include "communicationconfig.h"
 #include "../../../service/connection/connectiontestservice.h"
 
@@ -36,11 +37,9 @@ class CommunicationConfigDialog : public QDialog {
     void createGpibPage();
     void createTcpPage();
     void createSerialPage();
-    void createModbusRtuPage();
     void createModbusTcpPage();
     void createUsbPage();
 
-    void updatePageFromProtocol(ProtocolType protocol);
     void populateSerialPorts(QComboBox* comboBox);
 
     // 主要控件
@@ -60,10 +59,15 @@ class CommunicationConfigDialog : public QDialog {
     QWidget* m_pageTcp = nullptr;
     QLineEdit* m_edtIpAddress = nullptr;
     QSpinBox* m_spnPort = nullptr;
-    QComboBox* m_cmbTcpProtocol = nullptr;
+    QFormLayout* m_tcpForm = nullptr;
+    QLabel* m_lblTcpHint = nullptr;
 
     // Serial 頁面控件
     QWidget* m_pageSerial = nullptr;
+    QFormLayout* m_serialForm = nullptr;
+    QLabel* m_lblSerialPreview = nullptr;
+    int m_serialDataBits = 8;
+    int m_timeout = 5000;
     QComboBox* m_cmbPortName = nullptr;
     QComboBox* m_cmbBaudRate = nullptr;
     QComboBox* m_cmbDataBits = nullptr;
@@ -72,15 +76,8 @@ class CommunicationConfigDialog : public QDialog {
     QComboBox* m_cmbFlowControl = nullptr;
     QPushButton* m_btnRefreshPorts = nullptr;
 
-    // Modbus RTU 頁面控件
-    QWidget* m_pageModbusRtu = nullptr;
-    QComboBox* m_cmbModbusRtuPort = nullptr;
-    QComboBox* m_cmbModbusRtuBaud = nullptr;
-    QComboBox* m_cmbModbusRtuDataBits = nullptr;
-    QComboBox* m_cmbModbusRtuParity = nullptr;
-    QComboBox* m_cmbModbusRtuStopBits = nullptr;
+    // Modbus RTU shares the serial form; only the slave address is protocol-specific.
     QSpinBox* m_spnModbusRtuSlaveId = nullptr;
-    QPushButton* m_btnRefreshModbusPorts = nullptr;
 
     // Modbus TCP 頁面控件
     QWidget* m_pageModbusTcp = nullptr;

@@ -39,6 +39,7 @@ InstrumentCreator::ACSourceResult InstrumentCreator::createACSource(const Instru
         auto communication = std::unique_ptr<ICommunication>(CommunicationFactory::create(resource));
         if (!communication)
             return {nullptr, nullptr, false, "Invalid AC source communication resource"};
+        communication->setTimeoutMs(instrument.commConfig.timeout);
         auto source = std::unique_ptr<ACSource>(
             ACSourceFactory::createACSource(instrument.modelName, communication.get()));
         if (!source)
@@ -69,6 +70,7 @@ InstrumentCreator::DCLoadResult InstrumentCreator::createDCLoads(const Instrumen
     Q_UNUSED(kind)
     DCLoadResult result;
     QStringList errors;
+    QMap<QString, int> timeouts;
     auto record = [&](const QString &name, const QString &error) { errors << name + ": " + error; };
     for (const auto &ic : config.instruments) {
         if (!ic.enabled || ic.type != "Load") continue;
@@ -79,6 +81,12 @@ InstrumentCreator::DCLoadResult InstrumentCreator::createDCLoads(const Instrumen
                 continue;
             }
             ICommunication *comm = result.m_commMap.value(resource, nullptr);
+            if (comm && timeouts.value(resource) != ic.commConfig.timeout) {
+                record(ic.name, "conflicting timeout for shared load resource");
+                if (!forShutdown)
+                    continue;
+                // OFF still needs every mapped channel, using the existing session timeout.
+            }
             if (!comm) {
                 comm = CommunicationFactory::create(resource);
                 if (!comm) {
@@ -86,6 +94,8 @@ InstrumentCreator::DCLoadResult InstrumentCreator::createDCLoads(const Instrumen
                     continue;
                 }
                 result.m_commMap[resource] = comm;
+                timeouts[resource] = ic.commConfig.timeout;
+                comm->setTimeoutMs(ic.commConfig.timeout);
             }
             int mapped = 0;
             for (int i = 0; i < ic.channels.size(); ++i) {
@@ -147,6 +157,7 @@ InstrumentCreator::RelayResult InstrumentCreator::createRelays(const InstrumentS
     result.success = false;
 
     QMap<QString, ICommunication *> commMap;
+    QMap<QString, int> timeouts;
     QVector<RelayBase *> relays;
     bool transferred = false;
     const auto rollback = qScopeGuard([&] {
@@ -176,6 +187,10 @@ InstrumentCreator::RelayResult InstrumentCreator::createRelays(const InstrumentS
 
                 // 步驟 1: 創建或獲取通信對象
                 ICommunication *comm = commMap.value(resource, nullptr);
+                if (comm && timeouts.value(resource) != inst.commConfig.timeout) {
+                    communicationErrors << inst.name + ": conflicting timeout for shared relay resource";
+                    // Keep this mapping for OFF; runRelay rejects initialization errors before ON.
+                }
 
                 if (!comm) {
                     comm = CommunicationFactory::create(resource);
@@ -189,6 +204,8 @@ InstrumentCreator::RelayResult InstrumentCreator::createRelays(const InstrumentS
                     }
 
                     commMap.insert(resource, comm);
+                    timeouts[resource] = inst.commConfig.timeout;
+                    comm->setTimeoutMs(inst.commConfig.timeout);
                 }
 
                 // 步驟 2: 打開通信連接

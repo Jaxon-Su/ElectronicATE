@@ -38,7 +38,7 @@ class ProfileTests(Fixture):
         ci = load_manifest(path, profile='ci-offline')
         def names(data):
             return {(suite,c['name']) for suite,cases in data['suites'].items() for c in cases}
-        self.assertEqual(len(names(full)), 835)
+        self.assertEqual(len(names(full)), 836)
         self.assertEqual(names(ci), names(full))
         self.assertIn(('main','review_fix_visa_partial'), names(ci))
         for suite,cases in ci['suites'].items():
@@ -82,7 +82,7 @@ class EvidenceTests(Fixture):
         shutil.copyfile(self.manifest, self.folder/'ctest-manifest.json')
         data = load_manifest(self.manifest, 'ci-offline')
         self.summary = {'status':'PASS', 'profile':'ci-offline', 'head':'tested-sha',
-                        'expected':835, 'reported':835, 'excluded':[],
+                        'expected':836, 'reported':836, 'excluded':[],
                         'local_supplement':{'required':False,'status':'INCLUDED','cases':[]},
                         'suites':{}, 'qt_results':{}}
         lock = read_lock()
@@ -118,7 +118,7 @@ class EvidenceTests(Fixture):
         return verify_run(self.folder, self.manifest, 'tested-sha')
 
     def test_complete_ci_evidence_accepted(self):
-        self.assertEqual(self.verify()['reported'], 835)
+        self.assertEqual(self.verify()['reported'], 836)
 
     def test_wrong_profile_sha_status_or_total_rejected(self):
         for field,value in [('profile','local-full'),('head','stale-sha'),('status','FAIL'),('reported',832)]:

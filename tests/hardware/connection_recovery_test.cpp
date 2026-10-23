@@ -26,7 +26,13 @@ class Comm : public ICommunication {
 public:
     QString resource, last; bool opened = false; QByteArray response;
     explicit Comm(QString value) : resource(std::move(value)) {}
-    bool open() override { return opened = !(resource == badResource && fault == "open"); }
+    int timeout = 3000;
+    void setTimeoutMs(int value) override { timeout = value; }
+    int timeoutMs() const override { return timeout; }
+    bool open() override {
+        check(timeout == 1234, "configured timeout missing at open: " + resource);
+        return opened = !(resource == badResource && fault == "open");
+    }
     bool isOpen() const override { return opened; }
     void close() override { opened = false; }
     QString lastError() const override { return "injected communication error"; }
@@ -34,6 +40,7 @@ public:
         response.clear();
         const bool bad = resource == badResource;
         if (resource.startsWith("MODBUS")) {
+            check(quint8(bytes[0]) == 17, "Relay Slave ID did not reach wire request");
             const int fn = quint8(bytes[1]);
             const int ch = quint8(bytes[3]);
             trace << resource + QString(":FC%1:%2").arg(fn).arg(ch);
@@ -75,8 +82,9 @@ static InstrumentConfig instrument(QString type, QString model, int index) {
     InstrumentConfig i; i.type = type; i.modelName = model;
     i.name = type == "InputSource" ? "ACSource" : type == "InputDCSource" ? QString("DC Source%1").arg(index) : type + QString::number(index);
     i.commConfig = CommunicationConfig::fromResourceString(type == "Relay"
-        ? QString("MODBUS::COM%1:9600:8:N:1::SLAVE:1").arg(index + 3)
+        ? QString("MODBUS::COM%1:9600:8:N:1::SLAVE:17").arg(index + 3)
         : QString("GPIB0::%1::INSTR").arg(index));
+    i.commConfig.timeout = 1234;
     i.channels = {{model, index, 0}}; i.channelNumbers = {1}; return i;
 }
 static InstrumentOperationResult relay(const InstrumentSetupConfig &c, RelayAction action = RelayAction::RelayOn) {
@@ -87,7 +95,26 @@ static void waitFor(const std::function<bool()> &done) {
     while (!done() && timer.elapsed() < 5000) { QCoreApplication::processEvents(); QThread::msleep(1); }
     check(done(), "async operation did not settle");
 }
+static void sharedTimeoutCleanup(const QString& type) {
+    reset();
+    auto first = instrument(type, type == "Relay" ? "Modbus_RTU_4CH" : "63102", 1);
+    auto second = first; second.name = type + "2"; second.commConfig.timeout = 2345;
+    second.channels[0].index = 2; second.channelNumbers = {2};
+    InstrumentSetupConfig config; config.instruments = {first, second}; config.loadOutputs = config.relayOutputs = 2;
+    const auto on = type == "Relay" ? InstrumentExecutor::runRelay(config, {{"on", {"ON", "ON"}}}, 0, RelayAction::RelayOn) :
+        InstrumentExecutor::runLoad(config, {{"load", {"1", "1"}}}, 0, {}, LoadAction::LoadOn);
+    check(!on.success && on.errorMessage.contains("conflicting timeout"), "conflicting timeout did not reject ON: " + on.errorMessage);
+    trace.clear();
+    const auto off = type == "Relay" ? InstrumentExecutor::runRelay(config, {{"on", {"ON", "ON"}}}, 0, RelayAction::RelayOff) :
+        InstrumentExecutor::runLoad(config, {{"load", {"1", "1"}}}, 0, {}, LoadAction::LoadOff);
+    check(!off.success && off.errorMessage.contains("conflicting timeout"), "OFF hid conflicting timeout");
+    if (type == "Relay")
+        check(trace.join('|').contains(":FC5:0") && trace.join('|').contains(":FC5:1"), "timeout conflict skipped Relay OFF channel");
+    else
+        check(trace.join('|').contains(":CHAN 2") && trace.filter("LOAD OFF").size() == 2, "timeout conflict skipped Load OFF channel");
+}
 static void relayProbe() {
+    sharedTimeoutCleanup("Relay");
     InstrumentSetupConfig cfg; cfg.relayOutputs = 3;
     cfg.instruments = {instrument("Relay", "Modbus_RTU_4CH", 1), instrument("Relay", "Modbus_RTU_4CH", 2)};
     cfg.instruments[1].channels.append({"", 3, 0}); cfg.instruments[1].channelNumbers.append(2);
@@ -116,6 +143,7 @@ static void relayProbe() {
     check(relay(cfg, RelayAction::RelayOff).confirmedOutput == false, "valid relay OFF failed");
 }
 static void sourceProbe() {
+    sharedTimeoutCleanup("Load");
     for (const QString type : {"AC", "DC", "DCGroup", "Load", "Dynamic"}) {
         QStringList models = type == "AC" ? QStringList{"61505", "61509", "6530", "DE-A3000AB"} :
             (type == "DC" || type == "DCGroup") ? QStringList{"62050H-40"} :
