@@ -53,10 +53,13 @@ Peak Detect 預設只畫每組 Min–Max 垂直範圍線；勾選 **上下界連
 
 ### 自動測試項目
 
+Static／Dynamic／Turn on／Turn off／Short then turn on／Turn on then short（含 Group）可在 Dialog 選 **Trigger source**，按 Apply 保存。每次測試、Group 成員及重試開始前先設定並確認所選來源，再上電／量測；該通道須事先啟用，量測仍涵蓋已啟用通道。新測項預設 CH1；舊設定缺少此欄位時顯示 **Keep current source**，保留示波器原來源，選擇 CH 後才改變。
+
 - **Single／Group Test（單組／群組測試）**：Static、Dynamic、Turn on、Turn off、Short then turn on、Turn on then short；Group 依序測試多個負載條件，逐負載列出結果。每筆有效 Trial 均保存 Max／Min／RMS／Mean，並分 Rise／Fall 選出完整四值代表結果。
 - Turn on／Short then turn on／Turn on then short（含 Group）每次事件 Single 成功後等待 **3000 ms**，再走原 READY／Baseline 檢查；提前觸發後重新 Single 也等待。Stop 可中斷，時間計入 Phase time limit；原 Level 避讓、短路退出及 Rise／Fall 保留，AUTO 參考不加等待。
 - **Descent 單組測試**：Turn off (descent)、Turn on then short (descent)。Trigger CH 選負緣觸發 Channel，量測沿用已啟用的示波器通道。Turn off (descent) 另有 **Enable**（預設勾選），只控制觸發 CH 的顯示／量測，未勾選仍使用該 CH 觸發；其他 CH 不變。若關閉觸發 CH，WFM／CSV Capture 須另選已啟用 CH，PNG 不受此限制。Trigger levels 可新增、刪除與編輯，依列順序執行；每次重新上電後觸發，依序保存四值與 Level。原有 Rise／Fall 追蹤保持不變，詳細流程見 [量測策略](MEASUREMENT_STRATEGIES.md)。
-- 兩種 descent 每個 Level／Trial 的 Single 後固定等待 **3000 ms**，再確認 READY 才關電或短路；Stop 可中斷，等待計入 Phase time limit。等待不保證 READY，若仍為 SAVE 等錯誤狀態則回報失敗並清理。
+- Turn off (descent) 上電穩定後自動檢查啟用通道，截波則將該通道 V/div ×2 並重新擷取；正式事件仍截波時重做同一組 Level／Trial，結束後還原自動調整的刻度。原固定 Trigger source／Level 保留，重試受次數與 Phase time limit 限制。
+- 兩種 descent 每個 Level／Trial 的正式事件 Single 後固定等待 **3000 ms**，再確認 READY 才關電或短路；Stop 可中斷，等待計入 Phase time limit。AUTO 預檢不加此等待。等待不保證 READY，若仍為 SAVE 等錯誤狀態則回報失敗並清理。
 - Brown Out 初次事件 Single／RUN 後等待 **3000 ms** 再確認 READY；Track＋Capture 每次重新 Single 也等待後才恢復降壓。等待可 Stop，Vout 監測持續；未開 Capture 的連續 RUN 後續 Level 更新不增加等待。
 - **Dell/HP Test**：Brown Out 降壓測試，流程見 [TestSequence：量測策略](MEASUREMENT_STRATEGIES.md)。
 - **輔助任務**：Relay、Write Oscilloscope、Delay。

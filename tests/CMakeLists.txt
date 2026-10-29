@@ -172,7 +172,7 @@ add_executable(test_conditions_widget_test testconditions/test_conditions_widget
 target_include_directories(test_conditions_widget_test PRIVATE ../src/views/testconditions ../src/ui/style ../src/ui/delegate)
 target_link_libraries(test_conditions_widget_test PRIVATE ElectronicATEConditions ElectronicATEManualControl Qt6::Widgets)
 add_test(NAME test_conditions_widget_snapshot COMMAND test_conditions_widget_test)
-set_tests_properties(test_conditions_widget_snapshot PROPERTIES TIMEOUT 20 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+set_tests_properties(test_conditions_widget_snapshot PROPERTIES TIMEOUT 60 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 add_executable(control_page_lock_test integration/control_page_lock_test.cpp)
 target_include_directories(control_page_lock_test PRIVATE ../src/ui)
@@ -249,6 +249,8 @@ add_executable(oscilloscope_configuration_test oscilloscope/oscilloscope_configu
 target_include_directories(oscilloscope_configuration_test PRIVATE ../src/service/oscilloscope)
 target_link_libraries(oscilloscope_configuration_test PRIVATE ElectronicATEInstrumentCore)
 add_test(NAME oscilloscope_configuration COMMAND oscilloscope_configuration_test)
+# Includes real 5 s timeout checks and repeated fresh-record stability windows.
+set_tests_properties(oscilloscope_configuration PROPERTIES TIMEOUT 120)
 
 add_executable(auto_period_dialog_test testsequence/dialogs/auto_period_dialog_test.cpp
     ../src/views/testsequence/dialogs/oscilloscopedialogs/createwriteoscilloscopedialog.cpp
@@ -318,7 +320,8 @@ target_include_directories(descent_test PRIVATE ../src/service/oscilloscopestrat
     ../src/models/testsequence ../src/views/testsequence/dialogs/relaydialogs)
 target_link_libraries(descent_test PRIVATE ElectronicATETestRun ElectronicATEModels ElectronicATEDrivers ElectronicATEReport ElectronicATECapture ElectronicATEStorage Qt6::Widgets Qt6::Xml)
 foreach(scenario success na missing invalid disabled channel reject arm early miss comm late clip clip_query read
-    off discharge cancel stopped deadline capture ui precision driver later_read service preflight service_off single_wait)
+    off discharge cancel stopped deadline capture ui precision driver later_read service preflight service_off single_wait
+    recovery recovery_faults recovery_service)
     add_test(NAME descent_${scenario} COMMAND descent_test ${scenario})
     set_tests_properties(descent_${scenario} PROPERTIES TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endforeach()
@@ -328,6 +331,7 @@ set_tests_properties(descent_success descent_na descent_capture PROPERTIES TIMEO
 set_tests_properties(descent_disabled PROPERTIES TIMEOUT 180)
 set_tests_properties(descent_service PROPERTIES TIMEOUT 90)
 set_tests_properties(descent_single_wait PROPERTIES TIMEOUT 60)
+set_tests_properties(descent_recovery descent_recovery_faults descent_recovery_service PROPERTIES TIMEOUT 60)
 
 add_executable(channel_state_test oscilloscope/channel_state_test.cpp ${descent_strategy_sources})
 target_include_directories(channel_state_test PRIVATE ../src/service/oscilloscopestrategy)

@@ -8,6 +8,93 @@ namespace {
 using TransientDetail::Execution;
 using OscilloscopeAcquisition::AcquisitionResult;
 
+// Only Turn off descent recovers clipping. Keep one adjustment budget across
+// preflight records, event retries, Levels and Trials in this execution.
+bool expandCompleted(Execution &run, AcquisitionResult status, int &adjustments, const QString &phase)
+{
+    ScopeCaptureRecord diagnostic;
+    diagnostic.phase = phase;
+    for (const auto &channel : run.channels) {
+        OscChannelMeasure value;
+        value.channel = channel.channel;
+        diagnostic.channels.append(value);
+    }
+    bool captureAttempted = false;
+    auto capture = [&] {
+        if (run.stop.loadAcquire()) throw std::runtime_error("Stopped by user");
+        captureAttempted = true;
+        if (run.ctx.captureRecord) run.ctx.captureRecord(diagnostic);
+    };
+    OscilloscopeAcquisition::VerticalScaleState vertical;
+    vertical.options = run.ctx.verticalScale;
+    vertical.options.margin = false;
+    vertical.readCaptureMeasurements = false;
+    vertical.captureRecord = [&](const ScopeCaptureRecord &record) {
+        diagnostic = record;
+        if (record.clipped || status == AcquisitionResult::CompletedAfterTimeout) capture();
+    };
+    try {
+        return OscilloscopeAcquisition::expandVerticalRange(
+            run.scope, run.stop, adjustments, &vertical, phase,
+            status == AcquisitionResult::CompletedAfterTimeout,
+            QDeadlineTimer(qMax(0, run.ctx.phaseTimeoutMs - int(run.phase.elapsed()))));
+    } catch (...) {
+        QString failure;
+        try { throw; }
+        catch (const std::exception &error) { failure = QString::fromUtf8(error.what()); }
+        catch (...) { failure = "Unexpected descent clipping check error"; }
+        if (status == AcquisitionResult::CompletedAfterTimeout &&
+            !failure.contains("Acquisition completed after timeout"))
+            failure.prepend("Acquisition completed after timeout; ");
+        // A completed record remains diagnostic evidence when queries or the
+        // phase deadline fail; cancellation takes priority over transfers.
+        if (!captureAttempted && !run.stop.loadAcquire()) {
+            try { capture(); }
+            catch (const std::exception &saveError) {
+                failure += "; Capture: " + QString::fromUtf8(saveError.what());
+            } catch (...) { failure += "; Unexpected Capture error"; }
+        }
+        throw std::runtime_error(failure.toStdString());
+    }
+}
+
+void prepareUnclippedReference(Execution &run, int &adjustments)
+{
+    if (run.channels.isEmpty()) return; // Trigger-only runs have no displayed waveform to scale.
+    run.log("Descent preflight: checking enabled channels with AUTO reference");
+    // AUTO can complete on a DC line and does not require displaying the
+    // selected trigger channel. Keep source, slope, Position and Offset intact.
+    QString failure;
+    try {
+        run.configure([&](QString &e) { return run.scope->setTriggerMode(ScopeTriggerMode::Auto, e); });
+        for (;;) {
+            run.check();
+            QString error;
+            const auto status = OscilloscopeAcquisition::acquireAutoRecord(run.scope, run.stop,
+                qMax(0,run.ctx.phaseTimeoutMs-int(run.phase.elapsed())), error, run.ctx.log);
+            if (!OscilloscopeAcquisition::hasCompletedRecord(status))
+                throw std::runtime_error(("Descent preflight: " + error).toStdString());
+            if (!expandCompleted(run, status, adjustments, "Descent preflight")) break;
+            run.log("Descent preflight: scale expanded; acquiring a new reference");
+        }
+    } catch (const std::exception &error) { failure = QString::fromUtf8(error.what()); }
+      catch (...) { failure = "Unexpected descent preflight error"; }
+    // Restore STOP/NORMAL even on Stop or timeout; preserve the original error
+    // and do not let a failed restoration become a successful reference.
+    auto restore = [&](const QString &label, const auto &operation) {
+        QString error;
+        try { if (operation(error)) return; }
+        catch (const std::exception &ex) { error = QString::fromUtf8(ex.what()); }
+        catch (...) { error = "unexpected error"; }
+        run.result.cleanupFailed = true;
+        failure += (failure.isEmpty() ? "" : "; ") + label + ": " + error;
+    };
+    restore("Descent preflight STOP", [&](QString &e) { return run.scope->stopAcquisition(e); });
+    restore("Descent preflight NORMAL", [&](QString &e) { return run.scope->setTriggerMode(ScopeTriggerMode::Normal, e); });
+    if (!failure.isEmpty()) throw std::runtime_error(failure.toStdString());
+    run.check();
+}
+
 void saveCompleted(Execution &run, AcquisitionResult status, int step, int trial, double level)
 {
     // The record is frozen, and short exit has already succeeded. Preserve a
@@ -132,36 +219,51 @@ OscMeasureResult DescentStrategy::execute(IScopeMeasurement *scope, QAtomicInt &
         run.configure([&](QString &e) { return scope->setTriggerMode(ScopeTriggerMode::Normal, e); });
         run.configure([&](QString &e) { return context.load(true, e); });
         run.phase.start();
+        int scaleAdjustments = 0;
         for (int step = 0; step < context.descentLevels.size(); ++step) {
             const double level = context.descentLevels[step];
             for (int trial = 1; trial <= context.trialsPerLevel; ++trial) {
-                run.check();
-                if (m_shortTest) run.requireShortExit();
-                else {
-                    run.power(false);
-                    run.delay(context.powerOffMs);
-                    run.relays(false, false);
+                for (;;) {
+                    run.check();
+                    if (m_shortTest) run.requireShortExit();
+                    else {
+                        run.power(false);
+                        run.delay(context.powerOffMs);
+                        run.relays(false, false);
+                    }
+                    if (m_shortTest)
+                        run.configure([&](QString &e) { return scope->setChannelTriggerLevel(context.descentChannel, level, e); });
+                    run.log(QString("Descent %1/%2: CH%3 Falling Level=%4; Trial %5/%6")
+                                .arg(step + 1).arg(context.descentLevels.size()).arg(context.descentChannel)
+                                .arg(level, 0, 'g', 16).arg(trial).arg(context.trialsPerLevel));
+                    run.power(true);
+                    run.delay(context.settleMs);
+                    if (!m_shortTest) {
+                        prepareUnclippedReference(run, scaleAdjustments);
+                        run.configure([&](QString &e) { return scope->setChannelTriggerLevel(context.descentChannel, level, e); });
+                    }
+                    run.check();
+                    if (!scope->beginSingleAcquisition())
+                        throw std::runtime_error(("Failed to start descent acquisition: " + scope->lastError()).toStdString());
+                    run.log("Single processing wait: 3000 ms before READY");
+                    run.delay(3000);
+                    run.requireReady();
+                    if (m_shortTest) run.relays(true, false);
+                    else run.power(false);
+                    const auto status = run.waitForEvent();
+                    if (m_shortTest) run.requireShortExit(); // Includes a trigger miss.
+                    if (!OscilloscopeAcquisition::hasCompletedRecord(status))
+                        throw std::runtime_error("Descent Trigger timeout: no completed event record");
+                    if (!m_shortTest && expandCompleted(run, status, scaleAdjustments,
+                            QString("Descent Level %1 Trial %2 (%3)").arg(step + 1).arg(trial).arg(level, 0, 'g', 16))) {
+                        run.log(QString("Descent waveform clipped: scale expanded; retry Level %1 Trial %2")
+                                    .arg(step + 1).arg(trial));
+                        continue;
+                    }
+                    saveCompleted(run, status, step + 1, trial, level);
+                    run.configure([&](QString &e) { return scope->stopAcquisition(e); });
+                    break;
                 }
-                run.configure([&](QString &e) { return scope->setChannelTriggerLevel(context.descentChannel, level, e); });
-                run.log(QString("Descent %1/%2: CH%3 Falling Level=%4; Trial %5/%6")
-                            .arg(step + 1).arg(context.descentLevels.size()).arg(context.descentChannel)
-                            .arg(level, 0, 'g', 16).arg(trial).arg(context.trialsPerLevel));
-                run.power(true);
-                run.delay(context.settleMs);
-                run.check();
-                if (!scope->beginSingleAcquisition())
-                    throw std::runtime_error(("Failed to start descent acquisition: " + scope->lastError()).toStdString());
-                run.log("Single processing wait: 3000 ms before READY");
-                run.delay(3000);
-                run.requireReady();
-                if (m_shortTest) run.relays(true, false);
-                else run.power(false);
-                const auto status = run.waitForEvent();
-                if (m_shortTest) run.requireShortExit(); // Includes a trigger miss.
-                if (!OscilloscopeAcquisition::hasCompletedRecord(status))
-                    throw std::runtime_error("Descent Trigger timeout: no completed event record");
-                saveCompleted(run, status, step + 1, trial, level);
-                run.configure([&](QString &e) { return scope->stopAcquisition(e); });
             }
         }
         run.check();

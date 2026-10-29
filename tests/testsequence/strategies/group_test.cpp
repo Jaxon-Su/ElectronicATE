@@ -3,6 +3,7 @@
 #undef main
 
 struct GroupState : State {
+    QStringList diagnosticLogs;
     bool armed = false, event = false;
     double level = 0;
     ScopeTriggerMode triggerMode = ScopeTriggerMode::Normal;
@@ -22,7 +23,11 @@ struct GroupState : State {
 class GroupScope : public Scope {
 public:
     explicit GroupScope(GroupState &state) : Scope(state), g(state) {}
-    int triggerChannel() override { return 1; }
+    bool beginAutoReference(int &budget,QString &) override {budget=10000;return beginSingleAcquisition();}
+    ScopeReferenceStatus pollAutoReference(QString &state,QString &) override {
+        state="fake group AUTO reference";
+        return acquisitionState()==ScopeAcquisitionState::Completed?ScopeReferenceStatus::Completed:ScopeReferenceStatus::Pending;
+    }
     bool isClipping(int) override { return g.mode == "pre_short_rescale" && g.early; }
     bool isChannelEnabled(int channel) override { return channel == 1; }
     bool selectEdgeTrigger(QString&) override { g.trace << "edge"; return true; }
@@ -228,11 +233,12 @@ QVector<TestSequenceResultRecord> executeGroup(TestSequenceTaskKind::Kind kind, 
             require(!g.inputOn && !g.dcOn && !g.loadOn && g.relayMask == QVector<QString>({"OFF", "OFF"}), "previous member left output active");
         return std::make_unique<GroupStrategy>(g, *c);
     });
-    d.autoPeriod = [&](IScopeAutoPeriod*, QAtomicInt&, QString&, const OscCaptureObserver&, const VerticalScaleOptions&) { ++g.periods; return true; };
+    d.autoPeriod = [&](IScopeAutoPeriod*, QAtomicInt&, QString&, const OscCaptureObserver&, const VerticalScaleOptions&,const std::function<void(const QString&)>&) { ++g.periods; return true; };
     TestRunService service(d);
     cancel = [&] { service.stop(); };
     // Scope startup is after the settle log; this also checks per-member ordering.
     QObject::connect(&service, &TestRunService::logMessage, [&](const QString &line) {
+        g.diagnosticLogs << line;
         if (line.contains("settling for")) g.trace << "settled";
         if (line.contains("Check scope before short")) g.checkingShort = true;
     });
@@ -259,6 +265,13 @@ QVector<TestSequenceResultRecord> executeGroup(TestSequenceTaskKind::Kind kind, 
     } else tasks.append(task);
     service.startTasks(tasks, ctx);
     require(!results.isEmpty(), "no results published");
+    if (g.base == "Turn off" && mode == "success" && !singles) {
+        require(g.diagnosticLogs.filter("Turn off: Diagnostic: Settings:").size()==2,
+                "Turn off Group lost per-member settings diagnostics");
+        require(g.diagnosticLogs.filter("stage=Initial Settle; begin").size()==4 &&
+                g.diagnosticLogs.filter("phase complete;").size()==4,
+                "Turn off Group lost per-member/per-direction diagnostics");
+    }
     if (!singles) {
         for (const auto &record : results + progress)
             require(record.channels.isEmpty() && record.loadCondition.index == -1, "Group emitted a mixed summary/source");

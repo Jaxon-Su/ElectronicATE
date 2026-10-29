@@ -160,6 +160,9 @@ int main(int argc, char **argv)
                     } else comparableLogs << line;
                 }
             }
+            // Only the explicitly authorized diagnostics are ignored; hardware/read/Capture
+            // traces, event logs, thresholds and results must still match the snapshot.
+            comparableLogs.removeIf([](const QString &line){return line.startsWith("Diagnostic:");});
             if (kind == TransientKind::TurnOff && scenario != "stop_before") {
                 // The authorized startup delta is checked once at its exact position;
                 // every subsequent command/read/Capture/log still matches the legacy flow.
@@ -167,7 +170,7 @@ int main(int argc, char **argv)
                         "Turn off startup STOP/NORMAL missing or out of order");
                 comparableTrace.remove(0, 2);
                 const int inputOff = before.logs.indexOf("Input OFF");
-                require(inputOff >= 0 && after.logs.mid(inputOff, 2) ==
+                require(inputOff >= 0 && comparableLogs.mid(inputOff, 2) ==
                             QStringList({"Scope preparation: STOP", "Scope preparation: NORMAL"}),
                         "Turn off preparation logs not before initial Input OFF");
                 comparableLogs.remove(inputOff, 2);
@@ -181,6 +184,8 @@ int main(int argc, char **argv)
                     }
                 throw std::runtime_error("device/read/Capture sequence changed");
             }
+            // Reference diagnostics are an authorized addition; event/relay/search logs stay comparable.
+            comparableLogs.removeIf([](const QString &line){return line.startsWith("AUTO reference");});
             require(before.logs == comparableLogs, "logs changed");
             require(before.arms == after.arms && before.events == after.events
                     && before.levels == after.levels, "event count/search thresholds changed");

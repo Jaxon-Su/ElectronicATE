@@ -37,14 +37,16 @@ OscMeasureResult runTransientStrategy(TransientKind kind, const TransientContext
     }
 
     auto event = selectEvent(kind);
-    TransientDetail::Execution run(ctx, scope, stop, event->needsShortProtection);
+    TransientDetail::Execution run(ctx, scope, stop, event->needsShortProtection, kind == TransientKind::TurnOff);
     try {
         TransientDetail::runSearch(run, *event,
                                   kind == TransientKind::TurnOff || kind == TransientKind::TurnOnThenShort);
     } catch (const std::exception &ex) {
         run.result.errorMessage = QString::fromUtf8(ex.what());
+        run.diagnostic("failed: " + run.result.errorMessage);
     } catch (...) {
         run.result.errorMessage = "Unexpected transient strategy error";
+        run.diagnostic("failed: " + run.result.errorMessage);
     }
     // Explicit cleanup covers normal completion, Stop and every exception.
     return run.finish();

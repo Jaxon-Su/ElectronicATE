@@ -293,8 +293,11 @@ void TestRunService::startTasks(const QVector<TaskPayload> &payloads, const Test
             if (const auto *brownOut = std::get_if<BrownOut::Settings>(&prepared[i].settings))
                 channel = brownOut->triggerChannel;
             else if (const auto *transient = std::get_if<TaskSettings::Transient>(&prepared[i].settings)) {
-                if (transient->descent) channel = transient->descent->channel;
-            }
+                channel = transient->descent ? transient->descent->channel : transient->triggerChannel.value_or(0);
+            } else if (const auto *steady = std::get_if<TaskSettings::Steady>(&prepared[i].settings))
+                channel = steady->triggerChannel.value_or(0);
+            else if (const auto *group = std::get_if<TaskSettings::Group>(&prepared[i].settings))
+                channel = group->measurement().triggerChannel.value_or(0);
             if (channel > channelCount) {
                 rejectRun(i, QString("Trigger CH%1 is unavailable on this %2-channel oscilloscope")
                                  .arg(channel).arg(channelCount));

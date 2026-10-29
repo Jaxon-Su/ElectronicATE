@@ -49,23 +49,61 @@ public:
         if(displayStop)displayStop->storeRelease(1);
         return true;
     }
-    double getChannelScale(int) override {return 10;}
-    bool isClipping(int) override {if (clipThrow) throw std::runtime_error("clip query"); return clip;}
-    bool setVerticalScale(int,double,QString &) override {throw std::runtime_error("descent changed scale");}
+    double getChannelScale(int channel) override {
+        error.clear();
+        if(scaleWritten&&scaleFault=="read"){error="scale read failure";return NAN;}
+        if(scaleWritten&&scaleFault=="invalid")return NAN;
+        return scales.value(channel,10);
+    }
+    bool isClipping(int channel) override {
+        require(isChannelEnabled(channel),"clipping queried hidden CH");
+        if((clipThrow&&!autoRecord)||(autoRecord&&referenceFault=="clip"))throw std::runtime_error("clip query");
+        if(autoRecord&&referenceFault=="unknown")throw 7;
+        return clip||scales.value(channel,10)<(autoRecord?referenceRange:(arms>=eventRangeArm?eventRange:QMap<int,double>{})).value(channel,0);
+    }
+    bool setVerticalScale(int channel,double scale,QString &e) override {
+        require(!shortMode,"short descent changed scale");
+        trace<<QString("scale %1 %2").arg(channel).arg(scale);
+        if(scaleFault=="write"||(scaleFault=="restore"&&scale==10)){e="scale write failure";return false;}
+        scaleWritten=true;
+        if(scaleFault!="mismatch")scales[channel]=scale;
+        if(onScale)onScale();
+        return true;
+    }
     int triggerChannel() override {return source;}
     bool selectEdgeTrigger(QString &) override {trace<<"edge";return true;}
     bool setEdgeTriggerChannel(int channel,QString &e) override {trace<<"source";source=channel;if(rejectSource){e="source rejected";return false;}return true;}
     bool setEdgeSlope(ScopeTriggerSlope value,QString &) override {require(value==ScopeTriggerSlope::Fall,"not Falling");return true;}
-    bool setTriggerMode(ScopeTriggerMode value,QString &) override {require(value==ScopeTriggerMode::Normal,"AUTO used");return true;}
+    bool setTriggerMode(ScopeTriggerMode value,QString &e) override {
+        require(!shortMode||value==ScopeTriggerMode::Normal,"short descent used AUTO");
+        if(value==ScopeTriggerMode::Normal&&autoArms&&referenceFault=="normal"){e="normal failed";return false;}
+        automatic=value==ScopeTriggerMode::Auto;trace<<(automatic?"auto":"normal");
+        if(automatic&&referenceFault=="mode"){e="auto mode failed";return false;}return true;
+    }
     bool setChannelTriggerLevel(int channel,double level,QString &) override {require(channel==4,"wrong trigger source");levels<<level;return true;}
     bool stopAcquisition(QString &e) override {armed=false;trace<<"stop";if(displayWritten&&displayFault=="cleanup"){e="cleanup stop failed";return false;}return true;}
     void stop() override {armed=false;}
+    bool beginAutoReference(int &budget, QString &e) override {
+        budget=20;if(beginSingleAcquisition())return true;e="reference arm failed";return false;
+    }
+    ScopeReferenceStatus pollAutoReference(QString &state, QString &e) override {
+        const auto value=acquisitionState();state="mode=AUTO";
+        if(value==ScopeAcquisitionState::Invalid){e="reference communication error";return ScopeReferenceStatus::Error;}
+        return value==ScopeAcquisitionState::Completed?ScopeReferenceStatus::Completed:ScopeReferenceStatus::Pending;
+    }
     bool beginSingleAcquisition() override {
+        autoRecord=automatic;
+        if(automatic) {
+            require(powerOn&&!shortOn,"preflight before stable input");
+            trace<<"auto arm";++autoArms;armed=true;event=true;
+            return referenceFault!="arm";
+        }
         trace<<"arm";armed=true;event=false;ready=false;++arms;armTimer.start();
         if(singleStarted)singleStarted->storeRelease(1);
         return !failArm;
     }
     ScopeTriggerState triggerState() override {
+        if(autoRecord)return ScopeTriggerState::Ready;
         if(measureSingleWait) {
             readinessTimes<<armTimer.elapsed();
             require(armTimer.elapsed()>=3000,"READY queried before 3000 ms processing wait");
@@ -74,6 +112,12 @@ public:
         ready=true;trace<<"ready";return ScopeTriggerState::Ready;
     }
     ScopeAcquisitionState acquisitionState() override {
+        if(autoRecord) {
+            if(referenceFault=="comm")return ScopeAcquisitionState::Invalid;
+            if(referenceFault=="timeout")return ScopeAcquisitionState::Running;
+            if(referenceFault=="late"){QThread::msleep(30);referenceFault.clear();}
+            return ScopeAcquisitionState::Completed;
+        }
         if(commError)return ScopeAcquisitionState::Invalid;
         if(event&&late){QThread::msleep(30);late=false;}
         return event&&arms!=missArm?ScopeAcquisitionState::Completed:ScopeAcquisitionState::Running;
@@ -115,6 +159,13 @@ public:
     ScopeTriggerState earlyState=ScopeTriggerState::Triggered;
     bool displayWritten=false,allHidden=false;
     QString displayFault;
+    bool automatic=false,autoRecord=false;
+    int autoArms=0;
+    QMap<int,double> scales,referenceRange,eventRange;
+    QString scaleFault,referenceFault;
+    bool scaleWritten=false;
+    int eventRangeArm=1;
+    std::function<void()> onScale;
 };
 TransientContext configuration(Scope &scope)
 {
@@ -123,6 +174,111 @@ TransientContext configuration(Scope &scope)
     c.power=[&](bool on,QString&e){return scope.power(on,e);};
     c.relays=[&](bool sh,bool dis,QString&e){return scope.relay(sh,dis,e);};
     c.load=[&](bool on,QString&){scope.trace<<(on?"load on":"load off");return true;};return c;
+}
+
+void clippingRecoveryCase()
+{
+    Scope scope;scope.referenceRange={{1,40}};QAtomicInt stop{0};auto cfg=configuration(scope);
+    cfg.descentChannelEnabled=false;cfg.descentLevels={15};cfg.trialsPerLevel=1;
+    DescentStrategy strategy(false,cfg);int diagnostics=0,events=0;
+    strategy.setCaptureObserver([&](const ScopeCaptureRecord &record){
+        require(record.channels.size()==3,"hidden Trigger entered Capture");
+        if(record.clipped){++diagnostics;scope.trace<<"diagnostic";}
+        else ++events;
+    });
+    const auto result=strategy.execute(&scope,stop);
+    require(result.success,qPrintable(result.errorMessage));
+    require(scope.autoArms==3&&scope.getChannelScale(1)==40,"missing enabled-channel preflight expansion");
+    require(scope.arms==1&&result.trials.size()==1&&events==1&&diagnostics==2,"reference counted as event");
+    require(scope.source==4&&scope.disabled==4&&scope.levels==QVector<double>({15}),"fixed trigger changed");
+    require(scope.trace.indexOf("diagnostic")<scope.trace.indexOf("scale 1 20")&&
+            scope.trace.indexOf("scale 1 40")<scope.trace.indexOf("arm"),"scale/event before diagnostic/preflight");
+
+    Scope eventScope;eventScope.referenceRange={{1,20},{3,40},{2,1000}};eventScope.otherDisabled=2;
+    eventScope.eventRange={{1,40}};eventScope.eventRangeArm=2;
+    auto eventCfg=configuration(eventScope);eventCfg.descentChannelEnabled=false;
+    eventCfg.descentLevels={15,5,5};eventCfg.trialsPerLevel=1;
+    DescentStrategy eventStrategy(false,eventCfg);int eventDiags=0;
+    eventStrategy.setCaptureObserver([&](const ScopeCaptureRecord &r){
+        if(r.clipped){++eventDiags;eventScope.trace<<"diagnostic";}
+    });
+    const auto eventResult=eventStrategy.execute(&eventScope,stop);
+    require(eventResult.success,qPrintable(eventResult.errorMessage));
+    require(eventScope.levels==QVector<double>({15,5,5,5})&&eventScope.arms==4,"retry skipped/changed Level");
+    require(eventResult.trials.size()==3&&eventDiags==3,"clipped/reference became valid Trial");
+    require(eventResult.trials[0].channels[0].maximum==110&&eventResult.trials[1].channels[0].maximum==130&&
+            eventResult.trials[2].channels[0].maximum==140,"previous Trial overwritten or clipped values retained");
+    for(int i=0;i<3;++i)require(eventResult.trials[i].step==i+1&&eventResult.trials[i].trial==1,"retry changed Step/Trial");
+    require(eventScope.getChannelScale(1)==40&&eventScope.getChannelScale(3)==40&&eventScope.getChannelScale(2)==10&&
+            eventScope.getChannelScale(4)==10,"wrong channel expanded/shrank");
+    require(eventScope.trace.count("on")==4&&eventScope.autoArms==6,"event retry did not repower/preflight");
+}
+
+void clippingFaultCases(const QString &onlyMode = {})
+{
+    for(const QString mode:{"limit","mode","arm","comm","timeout","late","clip","unknown","normal",
+                           "write","read","invalid","mismatch","capture","stop","phase","capture_query","late_capture"}) {
+        if(!onlyMode.isEmpty()&&mode!=onlyMode)continue;
+        Scope scope;QAtomicInt stop{0};auto cfg=configuration(scope);
+        cfg.descentLevels={15};cfg.trialsPerLevel=1;cfg.descentChannelEnabled=false;
+        scope.referenceRange={{1,20}};
+        if(mode=="limit")scope.clip=true;
+        else if(QStringList{"write","read","invalid","mismatch"}.contains(mode))scope.scaleFault=mode;
+        else if(mode=="capture_query")scope.referenceFault="clip";
+        else if(mode=="late_capture")scope.referenceFault="late";
+        else scope.referenceFault=mode;
+        if(mode=="phase")cfg.phaseTimeoutMs=100;
+        int captures=0;
+        DescentStrategy strategy(false,cfg);
+        strategy.setCaptureObserver([&](const ScopeCaptureRecord &record){
+            ++captures;require(record.channels.size()==3,"diagnostic channel list lost");
+            require(!scope.trace.contains("read"),"preflight read event metrics");
+            if(mode=="capture"||mode=="capture_query"||mode=="late_capture")throw std::runtime_error("save failed");
+            if(mode=="stop")stop.storeRelease(1);
+            if(mode=="phase")QThread::msleep(120);
+        });
+        const auto result=strategy.execute(&scope,stop);
+        require(!result.success&&result.trials.isEmpty()&&scope.arms==0,qPrintable("preflight failure applied event: "+mode));
+        require(!scope.powerOn&&!scope.shortOn&&scope.trace.last()=="load off","preflight failure lost cleanup");
+        require(!scope.automatic||mode=="normal","AUTO leaked after failure");
+        if(mode=="limit")require(scope.autoArms==9&&captures==9&&scope.scales[1]==2560&&
+                                 result.errorMessage.contains("adjustment limit"),"adjustment budget reset");
+        if(mode=="capture"||mode=="stop"||mode=="phase")require(!scope.scaleWritten,"scale written after Capture error/Stop/deadline");
+        if(mode=="capture_query")require(result.errorMessage.contains("clip query")&&result.errorMessage.contains("save failed"),"Capture hid query error");
+        if(mode=="late")require(captures==1&&!scope.scaleWritten&&result.errorMessage.contains("after timeout"),"late record lost/retried");
+        if(mode=="late_capture")require(captures==1&&!scope.scaleWritten&&result.errorMessage.contains("after timeout")&&
+            result.errorMessage.contains("save failed"),"Capture hid completed-record timeout");
+        if(mode=="normal")require(result.cleanupFailed,"NORMAL restore failure not retained");
+    }
+    if(!onlyMode.isEmpty())return;
+    // Seven reference adjustments leave only one event adjustment: a retry
+    // must not reset the common budget, even when Capture is disabled.
+    {
+        Scope scope;scope.referenceRange={{1,1280}};scope.eventRange={{1,5120}};
+        QAtomicInt stop{0};auto cfg=configuration(scope);cfg.descentLevels={15};cfg.trialsPerLevel=1;
+        DescentStrategy strategy(false,cfg);const auto result=strategy.execute(&scope,stop);
+        require(!result.success&&result.errorMessage.contains("adjustment limit")&&scope.scales[1]==2560&&
+                scope.arms==2&&result.trials.isEmpty(),"reference/event retry reset budget or needs Capture");
+    }
+    for(const QString mode:{"event_capture","event_stop","event_phase"}) {
+        Scope scope;scope.eventRange={{1,20}};scope.eventRangeArm=2;
+        QAtomicInt stop{0};auto cfg=configuration(scope);cfg.descentLevels={15,5};cfg.trialsPerLevel=1;
+        if(mode=="event_phase")cfg.phaseTimeoutMs=12000;
+        QElapsedTimer elapsed;
+        DescentStrategy strategy(false,cfg);int diagnostics=0;
+        strategy.setCaptureObserver([&](const ScopeCaptureRecord &record){
+            if(!record.clipped)return;
+            ++diagnostics;
+            if(mode=="event_capture")throw std::runtime_error("event save failed");
+            if(mode=="event_stop")stop.storeRelease(1);
+            if(mode=="event_phase")QThread::msleep(qMax<qint64>(0,cfg.phaseTimeoutMs-elapsed.elapsed())+100);
+        });
+        elapsed.start();
+        const auto result=strategy.execute(&scope,stop);
+        require(!result.success&&result.trials.size()==1&&result.trials[0].channels[0].maximum==110&&
+                diagnostics==1&&scope.arms==2&&!scope.scaleWritten,"event error lost partial record or retried");
+        require(!scope.powerOn&&scope.trace.last()=="load off","event error lost cleanup");
+    }
 }
 
 void singleWaitCase()
@@ -217,7 +373,7 @@ void strategyCase(const QString &mode,bool shortTest)
         require(!result.success,"fault passed");
         if(mode=="miss") require(result.trials.size()==1&&captures==1&&scope.arms==2,"miss lost partial data or continued");
         if(mode=="later_read") require(result.trials.size()==1&&captures==2&&scope.arms==2,"later read lost partial data/diagnostic");
-        if(mode=="clip"||mode=="clip_query"||mode=="read"||mode=="late"||mode=="deadline")require(captures==1&&result.trials.isEmpty(),"diagnostic missing/fabricated valid trial");
+        if(mode=="clip"||mode=="clip_query"||mode=="read"||mode=="late"||mode=="deadline")require(captures==((mode=="clip"&&!shortTest)?9:1)&&result.trials.isEmpty(),"diagnostic missing/fabricated valid trial");
         if(mode=="early")require(scope.trace.count("event")==0&&captures==1,"pre-READY event applied or diagnosis lost");
         if(mode=="off")require(result.cleanupFailed&&scope.shortOn&&captures==0&&scope.arms==1,"OFF failure released short");
         if(mode=="discharge")require(result.cleanupFailed&&scope.arms==0&&captures==0,"startup discharge failure continued");
@@ -228,9 +384,16 @@ void strategyCase(const QString &mode,bool shortTest)
 void serviceCase(const QString &mode, bool triggerEnabled = true, bool allHidden = false)
 {
     for(bool sh:{false,true}) {
+        const bool restoreTest=mode.startsWith("restore_");
+        if(sh&&restoreTest)continue;
         if(sh&&allHidden)continue;
         if(mode=="service_off"&&!sh)continue;
         Scope scope;scope.shortMode=sh;scope.offFailure=mode=="service_off";
+        if(restoreTest) {
+            scope.referenceRange={{1,20}};
+            if(mode=="restore_fail")scope.readError=true;
+            if(mode=="restore_reject")scope.scaleFault="restore";
+        }
         scope.allHidden=allHidden;
         TestSequenceExecutionContext context;context.scope=&scope;
         context.inputs={{"1phase","120","60","0"}};context.loads={{"Load",{"1"}}};
@@ -244,6 +407,7 @@ void serviceCase(const QString &mode, bool triggerEnabled = true, bool allHidden
         task.settings["delay_ms"]=0;task.settings["discharge_ms"]=1;
         task.settings["trig_timeout_ms"]=20;task.settings["phase_timeout_ms"]=60000;
         task.settings["trigger_levels"]=QVariantList{10.0,5.0};
+        if(restoreTest)task.settings["trigger_levels"]=QVariantList{10.0};
         if(!sh)task.settings["trigger_channel_enabled"]=triggerEnabled;
         if(sh){task.settings["relay_index"]=0;task.settings["discharge_index"]=1;}
         TestRunDependencies deps;int creations=0;
@@ -262,14 +426,30 @@ void serviceCase(const QString &mode, bool triggerEnabled = true, bool allHidden
             require(bool(algorithm),"Service factory missing");algorithm->setCaptureObserver(r.capture);
             return std::make_unique<ScopeMeasurementStrategy>(std::move(algorithm),r.scope);};
         TestRunService service(deps);QVector<TestSequenceResultRecord> records;bool held=false;
+        if(mode=="restore_stop")scope.onScale=[&]{service.stop();};
         QObject::connect(&service,&TestRunService::logMessage,[](const QString &message){std::cerr<<message.toStdString()<<'\n';});
         QObject::connect(&service,&TestRunService::resultRecordsReady,[&](const auto&r){records=r;});
         QObject::connect(&service,&TestRunService::outputsUncertain,[&](const auto&,const auto&,const ShortCircuitProtection&p){held=p.active()&&p.shortMayBeOn;});
         QVector<TaskPayload> tasks{task};
         if(mode=="preflight") {auto invalid=task;invalid.settings["trigger_levels"]=QVariantList{"5"};tasks<<invalid;}
         if(mode=="service_off") {tasks[0].retry=2;tasks<<task;}
+        if(mode=="restore_success")tasks<<task;
+        if(mode=="restore_reject"){tasks[0].retry=2;tasks<<task;}
         service.startTasks(tasks,context);
-        if(mode=="preflight")require(creations==0&&scope.trace.isEmpty()&&records.size()==2&&records[0].status=="Skipped"&&records[1].status=="Fail","bad later row allowed IO");
+        if(restoreTest) {
+            require(!scope.powerOn&&!scope.shortOn,"restore before output cleanup");
+            require(scope.trace.indexOf("load off")<scope.trace.indexOf("scale 1 10"),"Scale restored before output cleanup");
+            require(scope.getChannelScale(2)==10&&scope.getChannelScale(3)==10&&scope.getChannelScale(4)==10,"restored untouched channel");
+            if(mode=="restore_reject")require(records.size()==2&&records[0].status=="Fail"&&records[1].status=="Skipped"&&creations==1&&
+                 scope.getChannelScale(1)==20&&records[0].error.contains("restore failed"),"restore failure lost/retried");
+            else {
+                require(scope.getChannelScale(1)==10,"original Scale not restored");
+                if(mode=="restore_success")require(records.size()==2&&records[0].status=="Pass"&&records[1].status=="Pass"&&
+                    scope.trace.count("scale 1 20")==2&&scope.trace.count("scale 1 10")==2,"next row did not begin at original scale");
+                else require(records.size()==1&&records[0].status==(mode=="restore_stop"?"Cancelled":"Fail"),"restore hid failure/Stop");
+            }
+        }
+        else if(mode=="preflight")require(creations==0&&scope.trace.isEmpty()&&records.size()==2&&records[0].status=="Skipped"&&records[1].status=="Fail","bad later row allowed IO");
         else if(mode=="service_off")require(creations==1&&scope.arms==1&&scope.shortOn&&held&&records.size()==2&&records[0].status=="Fail"&&records[1].status=="Skipped","Service retried or bypassed short protection");
         else {
             require(records.size()==1&&records[0].status=="Pass"&&records[0].trials.size()==2,"Service dispatch/results");
@@ -539,7 +719,11 @@ int main(int argc,char**argv){
     QFontDatabase::addApplicationFont("C:/Windows/Fonts/msjh.ttc");
     app.setFont(QFont("Arial",10));
     try{const QString mode=argc>1?argv[1]:"success";
-        if(mode=="single_wait")singleWaitCase();
+        if(mode=="recovery")clippingRecoveryCase();
+        else if(mode=="recovery_faults")clippingFaultCases();
+        else if(mode=="late_capture")clippingFaultCases(mode);
+        else if(mode=="recovery_service")for(const QString s:{"restore_success","restore_fail","restore_stop","restore_reject"})serviceCase(s,false);
+        else if(mode=="single_wait")singleWaitCase();
         else if(mode=="ui"){uiCase();triggerEnableSettings();}else if(mode=="precision")precisionCase();else if(mode=="driver")driverCase();
         else if(mode=="service"||mode=="preflight"||mode=="service_off"){
             serviceCase(mode);if(mode=="service"){serviceCase(mode,false);serviceCase(mode,false,true);}}

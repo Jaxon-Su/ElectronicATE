@@ -56,12 +56,13 @@ class MsoPeriodSession final : public IScopePeriodSession
             return false;
         }
         if (!query("ACQuire:STATE?", state, error) || !query("ACQuire:STOPAfter?", m_stopAfter, error) ||
-            !query("MEASUrement:LIST?", list, error))
+            !query("TRIGger:A:MODe?", m_triggerMode, error) || !query("MEASUrement:LIST?", list, error))
             return false;
         state = state.toUpper();
         m_stopAfter = m_stopAfter.toUpper();
         if (!QStringList{"0", "1", "STOP", "RUN", "OFF", "ON"}.contains(state) ||
-            !QStringList{"RUNSTOP", "SEQUENCE"}.contains(m_stopAfter))
+            !QStringList{"RUNSTOP", "SEQUENCE"}.contains(m_stopAfter) ||
+            !QStringList{"AUTO", "NORMAL"}.contains(m_triggerMode.toUpper()))
         {
             error = "Auto Period: invalid acquisition settings";
             return false;
@@ -89,6 +90,34 @@ class MsoPeriodSession final : public IScopePeriodSession
         return true;
     }
     double horizontalDivisions() const override { return m_divisions; }
+    bool readHorizontalContext(HorizontalContext &context, QString &error) override
+    {
+        HorizontalContext current;
+        if (!query("HORizontal:MODe?", current.mode, error)) return false;
+        current.mode = current.mode.toUpper();
+        if (current.mode != "AUTO" && current.mode != "MANUAL") {
+            error = "Auto Period: invalid Horizontal Mode";
+            return false;
+        }
+        if (current.mode == "MANUAL") {
+            if (!query("HORizontal:MODe:MANual:CONFigure?", current.manualInputs, error)) return false;
+            current.manualInputs = current.manualInputs.toUpper();
+            if (current.manualInputs != "RECORDLENGTH" && current.manualInputs != "HORIZONTALSCALE") {
+                error = "Auto Period: invalid Manual Inputs";
+                return false;
+            }
+        }
+        if (!numeric("HORizontal:MODe:SAMPLERate?", current.sampleRate, error) ||
+            !numeric("HORizontal:MODe:RECOrdlength?", current.recordLength, error)) return false;
+        if (!std::isfinite(current.sampleRate) || current.sampleRate <= 0 || current.sampleRate >= 1e30 ||
+            !std::isfinite(current.recordLength) || current.recordLength < 1 || current.recordLength >= 1e30 ||
+            std::floor(current.recordLength) != current.recordLength) {
+            error = "Auto Period: invalid sample rate or record length";
+            return false;
+        }
+        context = current;
+        return true;
+    }
     bool readTimeScale(double &value, QString &error) override
     {
         return numeric("HORizontal:SCAle?", value, error);
@@ -146,6 +175,7 @@ class MsoPeriodSession final : public IScopePeriodSession
         if (m_created)
             restoreCommand("MEASUrement:DELete \"" + m_id + "\"");
         restoreCommand("ACQuire:STOPAfter " + m_stopAfter);
+        restoreCommand("TRIGger:A:MODe " + m_triggerMode);
         if (resume && ok && m_wasRunning && m_ready())
             restoreCommand("ACQuire:STATE RUN");
         return ok;
@@ -188,7 +218,7 @@ class MsoPeriodSession final : public IScopePeriodSession
     }
     Oscilloscope &m_scope;
     Continue m_ready;
-    QString m_source, m_stopAfter, m_id;
+    QString m_source, m_stopAfter, m_triggerMode, m_id;
     double m_divisions = 0;
     bool m_wasRunning = false, m_created = false, m_restoreNeeded = false;
 };

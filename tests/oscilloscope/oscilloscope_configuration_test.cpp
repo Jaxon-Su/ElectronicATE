@@ -55,12 +55,15 @@ public:
     double period = .001;
     QList<double> capturePeriods;
     bool rejectTimeScale = false;
+    double minimumTimeScale = 0;
+    QString horizontalMode = "AUTO", manualInputs = "RECORDLENGTH", readFailure;
+    QStringList queries;
     QString source = "CH1";
     QString state = "1";
     QString failure;
     QString throwingCommand;
     int captures = 0;
-    int captureDelayMs = 0, measurementDelayMs = 0;
+    int captureDelayMs = 0, measurementDelayMs = 0, referenceBudgetMs = 10000;
     QElapsedTimer captureTimer, resultTimer;
     bool malformed = false;
     double verticalScale = 1;
@@ -76,13 +79,17 @@ public:
     double getChannelScale(int) override { return verticalScale; }
     double measureSignalPeak(int, const QString& type) override { return type=="MINimum"?-1:1; }
     QAtomicInt* cancel = nullptr;
-    bool queryConfiguration(const QString& command, QString& response, QString&) override {
+    bool queryConfiguration(const QString& command, QString& response, QString& error) override {
+        queries << command;
+        if (command == readFailure) { error="injected horizontal query error"; return false; }
         if (command == "*ESR?") response = "0";
-        else if (command == "HORizontal:MODe?") response = "AUTO";
+        else if (command == "HORizontal:MODe?") response = horizontalMode;
+        else if (command == "HORizontal:MODe:MANual:CONFigure?") response = manualInputs;
         else if (command == "HORizontal:MODe:SAMPLERate?") response = "1000000";
-        else if (command == "HORizontal:MODe:RECOrdlength?") response = QString::number(scale * 1e7);
+        else if (command == "HORizontal:MODe:RECOrdlength?") response = QString::number(std::round(scale * 1e7));
         else if (command.startsWith("CH")) response = "0";
         else if (command == "TRIGger:A:EDGE:SOUrce?") response = source;
+        else if (command == "TRIGger:A:MODe?") response = "NORMAL";
         else if (command.startsWith("DISplay")) response = "1";
         else if (command == "HORizontal:DIVisions?") response = "10";
         else if (command == "HORizontal:SCAle?") response = QString::number(scale, 'g', 16);
@@ -101,7 +108,8 @@ public:
         commands << command;
         if (command == throwingCommand && captures > 0) throw std::runtime_error("cleanup threw");
         if (command == failure) { error = "simulated reject"; return false; }
-        if (command.startsWith("HORizontal:SCAle ") && !rejectTimeScale) scale = command.section(' ', -1).toDouble();
+        if (command.startsWith("HORizontal:SCAle ") && !rejectTimeScale)
+            scale = std::max(minimumTimeScale, command.section(' ', -1).toDouble());
         if (command.startsWith("CH2:SCAle ") && !stuckScale) verticalScale = command.section(' ', -1).toDouble();
         return true;
     }
@@ -110,12 +118,94 @@ public:
         ++captures; captureTimer.start();resultTimer.invalidate();return true;
     }
     QString getTriggerState() override { return "AUTO"; }
+    bool beginAutoReference(int &budget, QString &) override {
+        budget = referenceBudgetMs;
+        return beginSingleAcquisition(); // Preserve the fake's timing hooks; driver protocol is tested separately.
+    }
+    ScopeReferenceStatus pollAutoReference(QString &state, QString &) override {
+        state = "fake AUTO reference";
+        return getAcquisitionState() == "0" ? ScopeReferenceStatus::Completed : ScopeReferenceStatus::Pending;
+    }
     QString getAcquisitionState() override {
         if (captures==1 && captureTimer.elapsed()<captureDelayMs) return "1";
         if (!resultTimer.isValid()) resultTimer.start();
         return "0";
     }
 };
+void testAcceptedPeriodWindow() {
+    QString error; QAtomicInt stop(0);
+    PeriodScope scope; scope.scale=8e-6; scope.period=11.89e-6; scope.rejectTimeScale=true;
+    const bool accepted = adjustOscilloscopeAutoPeriod(&scope,stop,error);
+    require(accepted, qPrintable(error));
+    require(scope.captures==3 && scope.scale==8e-6,
+            "stable 6.73-cycle initial window must be accepted after three fresh records");
+    for (const auto &command : scope.commands)
+        require(!command.startsWith("HORizontal:SCAle "), "accepted window changed time scale");
+    std::cout << "PASS initial 6.73-cycle window without scale writes\n";
+    for (double initial : {.0003, .0008}) {
+        PeriodScope boundary; boundary.scale=initial; boundary.period=.001; boundary.rejectTimeScale=true;
+        require(adjustOscilloscopeAutoPeriod(&boundary,stop,error) && boundary.captures==3,
+                "inclusive 3/8-cycle boundary rejected");
+    }
+    for (const auto &cycles : {QVector<double>{8.2,8.1,8.,8.,8.},
+                              QVector<double>{2.9,2.95,3.,3.,3.},
+                              QVector<double>{8.,8.1,8.,8.,8.}}) {
+        PeriodScope crossing; crossing.scale=.0008; crossing.rejectTimeScale=true;
+        for(double count:cycles) crossing.capturePeriods.append(.008/count);
+        QStringList crossingLogs;
+        require(adjustOscilloscopeAutoPeriod(&crossing,stop,error,{}, {},
+                    [&](const QString &line){crossingLogs<<line;}), qPrintable(error));
+        require(crossing.captures==5,"Auto Period accepted before three consecutive in-window records");
+        for(const auto &command:crossing.commands)
+            require(!command.startsWith("HORizontal:SCAle "),"boundary crossing unnecessarily changed time scale");
+        require(crossingLogs.join('\n').contains("in-window=3/3"),"consecutive window diagnostic missing");
+    }
+    PeriodScope quantized; quantized.scale=20e-6; quantized.period=11.89e-6; quantized.minimumTimeScale=8e-6;
+    quantized.horizontalMode="MANUAL";
+    QStringList logs;
+    const bool quantizedOk=adjustOscilloscopeAutoPeriod(&quantized,stop,error,{}, {},
+        [&](const QString &line){logs<<line;});
+    require(quantizedOk, qPrintable(error));
+    require(quantized.captures==6 && quantized.scale==8e-6,
+            "quantized timebase was not verified with three new records");
+    const auto output=logs.join('\n');
+    require(output.contains("Mode=MANUAL") && output.contains("Inputs=Time Scale + Sample Rate") &&
+            output.contains("RECORDLENGTH") && output.contains("target=") && output.contains("actual=") &&
+            output.contains("attempt=6/24") && output.contains("adjustments=1/6") &&
+            output.contains("SampleRate=") && output.contains("RecordLength=") && output.contains("accepted"),
+            "Auto Period diagnostic context/counters missing");
+    PeriodScope manual; manual.scale=.0005; manual.horizontalMode="MANUAL"; manual.manualInputs="HORIZONTALSCALE";
+    logs.clear();
+    require(adjustOscilloscopeAutoPeriod(&manual,stop,error,{}, {},[&](const QString &line){logs<<line;}) &&
+            logs.join(' ').contains("Inputs=Sample Rate + Record Length"), "Manual Inputs mapping reversed");
+    PeriodScope contextError; contextError.readFailure="HORizontal:MODe:RECOrdlength?";
+    const bool contextOk=adjustOscilloscopeAutoPeriod(&contextError,stop,error);
+    require(!contextOk && error.contains("injected horizontal query error") && contextError.captures==0 &&
+            contextError.commands.contains("ACQuire:STATE STOP"), "horizontal context error lost or skipped cleanup");
+    PeriodScope sixth;
+    for(int group=0;group<7;++group) {
+        const double period=.001/std::pow(2.0,std::min(group,5));
+        for(int i=0;i<3;++i) sixth.capturePeriods.append(period);
+    }
+    const bool sixthOk=adjustOscilloscopeAutoPeriod(&sixth,stop,error);
+    require(sixthOk, qPrintable(error));
+    require(sixth.captures==21,"sixth adjustment never received its verification acquisitions");
+    int writes=0; for(const auto &command:sixth.commands) writes+=command.startsWith("HORizontal:SCAle ");
+    require(writes==6,"timebase adjustment budget changed");
+    PeriodScope exhausted;
+    for(int group=0;group<7;++group)
+        for(int i=0;i<3;++i) exhausted.capturePeriods.append(.001/std::pow(2.0,group));
+    const bool exhaustedOk=adjustOscilloscopeAutoPeriod(&exhausted,stop,error);
+    writes=0; for(const auto &command:exhausted.commands) writes+=command.startsWith("HORizontal:SCAle ");
+    require(!exhaustedOk && writes==6 && exhausted.captures==21 && error.contains("adjustments=6/6"),
+            "exhausted adjustment budget wrote a seventh scale or lost diagnostics");
+    PeriodScope unstable; unstable.scale=20e-6; unstable.minimumTimeScale=8e-6;
+    unstable.capturePeriods={11.89e-6,11.89e-6,11.89e-6};
+    for(int i=3;i<24;++i) unstable.capturePeriods.append(i%2 ? 11.89e-6 : 20e-6);
+    require(!adjustOscilloscopeAutoPeriod(&unstable,stop,error) && unstable.captures==24 &&
+            error.contains("attempt=24/24"), "quantized window accepted without fresh stable PERIOD");
+    std::cout << "PASS window boundaries, quantized verification, diagnostics and sixth adjustment\n";
+}
 void testAutoPeriod() {
     QString error; QAtomicInt stop(0);
     PeriodScope scope;
@@ -129,6 +219,12 @@ void testAutoPeriod() {
     require(scope.commands.contains("MEASUrement:ADDNew \"MEAS2\"")
         && !scope.commands.contains("MEASUrement:DELete \"MEAS1\""), "existing measurement overwritten");
     require(scope.commands.last() != "ACQuire:STATE RUN", "Capture resumed unobserved continuous RUN");
+    PeriodScope averaged; averaged.scale=.1; averaged.period=.2; averaged.referenceBudgetMs=37000;
+    QStringList referenceLog;
+    require(adjustOscilloscopeAutoPeriod(&averaged,stop,error,{}, {},
+                [&](const QString &line){referenceLog<<line;}) &&
+            referenceLog.join(' ').contains("wait limit=37000"),
+            "Auto Period truncated the averaging-aware reference budget to one record window");
     // 20 ms/div must shrink for ten cycles, but grow when only one cycle fits.
     for (double actualPeriod : {0.02, 0.2}) {
         PeriodScope range; range.scale = 0.02; range.period = actualPeriod;
@@ -224,6 +320,8 @@ void testAutoPeriod() {
 int main(int argc,char** argv) {
     QCoreApplication app(argc,argv);
     try {
+        testAcceptedPeriodWindow();
+        if (app.arguments().contains("--window")) return 0;
         testAutoPeriod();
         QVariantMap cfg{{"horz_mode","MANual"},{"horz_config","RECORDLength"},
             {"timescale","200ms"},{"sample_rate","6.25GS/s"},{"record_length","62.5M"},

@@ -17,8 +17,8 @@ if ($LASTEXITCODE -ne 0) { throw 'CI failed' }
 
 | Profile | 範圍 |
 | --- | --- |
-| ci-offline | 主 836（含 VISA）＋OCR 2＋WFM 1＝839 個 CTest；全部必須執行。 |
-| local-full | 預設完整模式，與 CI 相同 839 個 CTest；需要官方 VISA 標頭及固定 WFM 樣本。 |
+| ci-offline | 主 839（含 VISA）＋OCR 2＋WFM 1＝842 個 CTest；全部必須執行。 |
+| local-full | 預設完整模式，與 CI 相同 842 個 CTest；需要官方 VISA 標頭及固定 WFM 樣本。 |
 
 WFM 的單一 CTest 內含 101 個 QtTest 結果（99 個功能資料列＋init／cleanup），按固定清單逐列驗證並另列報告，不與 CTest 數量相加。manifest v3 起兩種 profile 不再排除 VISA；歷史 833／834 的結果仍只代表當時範圍。
 
@@ -38,6 +38,8 @@ WFM 的單一 CTest 內含 101 個 QtTest 結果（99 個功能資料列＋init�
 | waveformocr/、integration/ | OCR 合成資料、mock HTTP 與跨功能整合 |
 | wfmviewer/ | 官方／合成 WFM、解析、CSV、縮放／平移、雙軸游標及離屏 Widget |
 | support/、cmake/、tools/、ci/ | fixture、CTest policy、完整 runner、報告與故障回歸 |
+
+AUTO 起始參考回歸分兩層：`scope_architecture_measurement` 以真 Driver／假 transport 檢查 RUNSTOP、新計數、停止與模式讀回、Average 完成數及 Single 一次；`normal_trigger_acquisition` 以真策略檢查平線起始、參考時限、取消與錯誤。共用的 descent、Brown Out、Auto Period、Group 與 Capture 案例另驗證接線及清理；假設備通過不等於實機觸發或波形同步已驗收。
 
 ## 完整 PASS 的條件
 

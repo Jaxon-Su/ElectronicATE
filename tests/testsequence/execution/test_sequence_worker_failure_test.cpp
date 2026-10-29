@@ -125,7 +125,7 @@ bool prepareOscilloscopeSettings(const QVariantMap&,const QString&,int,Oscillosc
     settings.horizontal.secondsPerDivision=.001; return true;
 }
 
-bool adjustOscilloscopeAutoPeriod(IScopeAutoPeriod*,QAtomicInt&,QString& error,const OscCaptureObserver&,const VerticalScaleOptions&) {
+bool adjustOscilloscopeAutoPeriod(IScopeAutoPeriod*,QAtomicInt&,QString& error,const OscCaptureObserver&,const VerticalScaleOptions&,const std::function<void(const QString&)>&) {
     g.trace<<"AUTO PERIOD";
     require(g.trace.contains("INPUT ON")&&g.trace.contains("LOAD ON"),"Auto Period ran before outputs");
     require(g.trace.contains("TRIGger:A:MODe AUTO"),"Auto Period started without AUTO mode");

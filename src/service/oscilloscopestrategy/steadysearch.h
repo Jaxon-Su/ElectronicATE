@@ -9,7 +9,7 @@ class Search
   public:
     Search(IScopeMeasurement *scope, QAtomicInt &stop, const QString &target,
            int timeoutMs, int phaseTimeoutMs, int maxIterations, const OscCaptureObserver &capture,
-           const VerticalScaleOptions &options = {});
+           const VerticalScaleOptions &options = {}, const OscilloscopeAcquisition::ReferenceLog &log = {});
     OscMeasureResult execute();
 
   private:
@@ -22,6 +22,7 @@ class Search
     IScopeMeasurement *scope;
     QAtomicInt &stopFlag;
     const OscCaptureObserver &captureObserver;
+    OscilloscopeAcquisition::ReferenceLog log;
     const QString m_target;
     const int m_timeoutMs, m_phaseTimeoutMs, m_maxIterations;
     OscMeasureResult result;

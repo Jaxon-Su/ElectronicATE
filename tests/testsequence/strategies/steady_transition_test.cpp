@@ -3,6 +3,121 @@
 #undef main
 #include "transientrelayconditions.h"
 
+static void taskTriggerSource()
+{
+    for (const auto& descriptor : TestSequenceTaskKind::descriptors) {
+        const auto kind = descriptor.kind;
+        if (!TestSequenceTaskKind::isSteady(kind) &&
+            !(TestSequenceTaskKind::isTransient(kind) && !TestSequenceTaskKind::isDescent(kind))) continue;
+        for (const QVariant value : {QVariant(0),QVariant(9),QVariant(1.5),QVariant(true),QVariant("1"),QVariant{}}) {
+            auto invalid=task(descriptor.name); invalid.settings["trigger_channel"]=value;
+            bool rejected=false;
+            try { TaskSettings::decode(descriptor.name,invalid.settings); }
+            catch (const std::invalid_argument&) { rejected=true; }
+            require(rejected,"runtime accepted invalid Trigger source");
+        }
+        for (const QString mode : {"explicit","legacy","retry","prior-enable","stop","stop-read","stop-enabled","write-error",
+                                   "stop-error","edge-error","echo","read-error","disabled","enabled-error","unavailable"}) {
+            class SourceScope : public Scope {
+            public:
+                int source = 4, writes = 0;
+                bool enabled = true;
+                QString mode, error;
+                QStringList calls;
+                std::function<void()> cancel;
+                bool applySettings(const OscilloscopeSettings& settings, QAtomicInt&, QString&,
+                                   OscilloscopeConfigurationResult*) override {
+                    calls << "WRITE";
+                    for (const auto& channel : settings.channels) if (channel.index==1) enabled=channel.enabled;
+                    return true;
+                }
+                QString lastError() const override { return error; }
+                bool stopAcquisition(QString& out) override {
+                    calls << "STOP"; if (mode=="stop-error") { out="stop failed"; return false; } return true;
+                }
+                bool selectEdgeTrigger(QString& out) override {
+                    calls << "EDGE"; if (mode=="edge-error") { out="edge failed"; return false; } return true;
+                }
+                bool setEdgeTriggerChannel(int ch, QString& out) override {
+                    calls << "SET"; ++writes;
+                    if (mode=="stop") cancel();
+                    if (mode=="write-error") { out="source write failed"; return false; }
+                    if (mode!="echo") source=ch;
+                    return true;
+                }
+                int triggerChannel() override {
+                    calls << "READ"; error=mode=="read-error" ? "source read failed" : "";
+                    if (mode=="stop-read") cancel();
+                    return source;
+                }
+                bool isChannelEnabled(int ch) override {
+                    calls << "ENABLED"; error=mode=="enabled-error" ? "channel state failed" : "";
+                    if (mode=="stop-enabled") cancel();
+                    return ch==1 && enabled && mode!="disabled";
+                }
+            } scope;
+            scope.mode=mode;
+            scope.enabled=mode!="prior-enable";
+            auto c=context(); c.scope=&scope;
+            auto p=task(descriptor.name); p.settings["trigger_channel"]=mode=="unavailable"?8:1;
+            if (mode=="legacy") p.settings.remove("trigger_channel");
+            if (mode=="retry") p.retry=1;
+            const bool steady=TestSequenceTaskKind::isSteady(kind);
+            if (steady) p.settings["auto_period"]=true;
+            const bool pass=mode=="explicit" || mode=="legacy" || mode=="retry" || mode=="prior-enable";
+            int on=0, executed=0, created=0, periods=0, relayIO=0;
+            auto checkSource=[&] { require(scope.source==(mode=="legacy"?4:1),"test used stale trigger source"); };
+            TestRunDependencies deps; deps.validateMeasurement=validateMeasurementConditions;
+            deps.prepareConfiguration=[](const auto&,int,const QVariantMap& values,OscilloscopeSettings& out,QString&) {
+                OscilloscopeSettings::Channel channel; channel.index=1; channel.enabled=values.value("ch1_enabled").toBool();
+                out.channels.append(channel); return true;
+            };
+            deps.instruments.input=[&](const auto&,const auto&,InputAction action) { if(action==InputAction::PowerOn){++on;checkSource();} return InstrumentOperationResult{}; };
+            deps.instruments.dcGroup=[&](const auto&,const auto&,InputAction action) { if(action==InputAction::PowerOn){++on;checkSource();} return InstrumentOperationResult{}; };
+            deps.instruments.load=[&](const auto&,const auto&,int,const auto&,LoadAction action,bool) { if(action==LoadAction::LoadOn){++on;checkSource();} return InstrumentOperationResult{}; };
+            deps.instruments.dynamic=[&](const auto&,const auto&,int,const auto&,DynamicLoadAction action,bool,bool) { if(action==DynamicLoadAction::LoadOn){++on;checkSource();} return InstrumentOperationResult{}; };
+            deps.instruments.relay=[&](const auto&,const auto&,int,RelayAction) { ++relayIO; return InstrumentOperationResult{}; };
+            deps.autoPeriod=[&](IScopeMeasurement*,QAtomicInt&,QString&,const OscCaptureObserver&,const VerticalScaleOptions&,const std::function<void(const QString&)>&) {++periods;checkSource();return true;};
+            deps.strategy=[&](const MeasurementStrategyRequest& request) {
+                ++created; checkSource();
+                const auto ctx=std::get<ScopeMeasurementRequest>(request).context;
+                return std::make_unique<Strategy>([&,ctx] {
+                    ++executed; checkSource();
+                    if (ctx.power) {
+                        QString error; require(ctx.power(true,error),error); require(ctx.power(false,error),error);
+                        require(ctx.relays(false,false,error),error); require(ctx.load(false,error),error);
+                    }
+                    MeasurementResult result; result.success=mode!="retry" || executed>1;
+                    if(!result.success) result.error="injected retry";
+                    scope.source=4; // The next Group member/retry must apply its own saved source again.
+                    return result;
+                });
+            };
+            TestRunService runner(deps); scope.cancel=[&] {runner.stop();};
+            QVector<TestSequenceResultRecord> records;
+            QObject::connect(&runner,&TestRunService::resultRecordsReady,[&](auto r){records=r;});
+            TaskPayload first; first.task.name="Relay"; first.settings["relay_index"]=0;
+            if(mode=="prior-enable") { first.task.name="Write Oscilloscope";first.settings={{"ch1_enabled",true}}; }
+            runner.startTasks(mode=="unavailable"||mode=="prior-enable"?QVector<TaskPayload>{first,p}:QVector<TaskPayload>{p},c);
+            require(!records.isEmpty(),"trigger source result missing");
+            const auto label=QString(descriptor.name)+" / "+mode+": "+records.last().error;
+            if(pass) {
+                const int expected=(TestSequenceTaskKind::isGroup(kind)?2:1)+(mode=="retry"?1:0);
+                require(records.last().status=="Pass" && executed==expected,label);
+                require(scope.writes==(mode=="legacy"?0:expected),"source was not reapplied per member/attempt");
+                require(periods==(steady?expected:0),"Auto Period did not execute after source preparation");
+                if(mode!="legacy") require(scope.calls.mid(mode=="prior-enable"?1:0,5)==QStringList({"STOP","EDGE","SET","READ","ENABLED"}),"source preparation order");
+                if(mode=="prior-enable") require(records.first().status=="Pass" && scope.enabled,"prior Write Scope did not enable source");
+            } else {
+                require(on==0 && executed==0 && created==0 && periods==0,"source failure/Stop entered output or strategy");
+                require(records.last().status==(mode=="stop"||mode=="stop-read"||mode=="stop-enabled"?"Cancelled":"Fail"),label);
+                if(mode=="unavailable") require(scope.calls.isEmpty() && records.last().attempt==0 &&
+                    relayIO==0 && records.size()==2 && records.first().status=="Skipped","bad later channel touched IO");
+            }
+        }
+    }
+}
+
 static void verticalMarginLifecycle()
 {
     for (bool margin : {false, true}) for (bool group : {false, true}) for (bool autoPeriod : {false,true}) {
@@ -22,7 +137,7 @@ static void verticalMarginLifecycle()
         deps.instruments.dcGroup=[](const auto &,const auto &,auto) { return InstrumentOperationResult{}; };
         deps.instruments.load=[](const auto &,const auto &,int,const auto &,auto,bool) { return InstrumentOperationResult{}; };
         int measurements=0;
-        deps.autoPeriod=[&](IScopeMeasurement *,QAtomicInt &,QString &,const OscCaptureObserver &,const VerticalScaleOptions &options) {
+        deps.autoPeriod=[&](IScopeMeasurement *,QAtomicInt &,QString &,const OscCaptureObserver &,const VerticalScaleOptions &options,const std::function<void(const QString&)>&) {
             require(options.margin==margin && bool(options.beforeChange),"Auto Period option missing");
             const bool firstMember=!group || measurements%2==0;
             require(scope.scale==(firstMember?4:12),"Auto Period inherited wrong original scale");
@@ -79,7 +194,7 @@ static void verticalMarginFailures()
             options.beforeChange(2,2,4);scope.scales[2]=4;
         };
         TestRunService *service=nullptr;
-        deps.autoPeriod=[&](IScopeMeasurement *,QAtomicInt &,QString &error,const OscCaptureObserver &,const VerticalScaleOptions &options) {
+        deps.autoPeriod=[&](IScopeMeasurement *,QAtomicInt &,QString &error,const OscCaptureObserver &,const VerticalScaleOptions &options,const std::function<void(const QString&)>&) {
             if (++periodCalls==1) {expand(options);error="injected Auto Period failure";return false;}
             return true;
         };
@@ -239,6 +354,7 @@ int main(int argc,char **argv)
     try {
         const QString mode=app.arguments().value(1);
         if (mode=="settings") {
+            taskTriggerSource();
             verticalMarginLifecycle();
             verticalMarginFailures();
             require(!TaskSettings::Steady({}).verticalMargin && !TaskSettings::Transient({}).verticalMargin,

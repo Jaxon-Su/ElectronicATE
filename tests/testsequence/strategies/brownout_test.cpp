@@ -159,17 +159,23 @@ void runner(const QString &scenario) {
 struct WaitState : State {
     std::atomic_int monitored{0}, armCount{0};
     std::atomic_bool processing{false};
-    int readyChecks=0,diagnostics=0;
+    int readyChecks=0,diagnostics=0,rearmSteps=-1;
 };
 class WaitIo : public Io {
 public:
     explicit WaitIo(WaitState &s):Io(s),state(s){}
+    void setVoltage(double voltage) override {
+        expect(!state.processing,"voltage write during Single processing wait");
+        Io::setVoltage(voltage);
+    }
     double outputVoltage() override {
         ++state.monitored;
         if(state.processing && (state.scenario=="monitor" ||
            (state.scenario=="monitor_rearm" && state.armCount>1)))
             throw std::runtime_error("monitor failed during processing wait");
         if(state.processing && state.scenario=="low")return 0;
+        // This case exercises Stop after a delayed first event, not low-Vout shutdown.
+        if(state.scenario=="stop_rearm_late_record")return 12;
         return Io::outputVoltage();
     }
     WaitState &state;
@@ -189,6 +195,7 @@ public:
     bool advanceLevel(double level,QString &error) override {
         if(!Session::advanceLevel(level,error))return false;
         if(armed && cfg.captureEnabled) {
+            state.rearmSteps=state.steps.load();
             if(state.scenario=="rearm_failure"){error="rearm rejected";return false;}
             started();
         }
@@ -205,6 +212,8 @@ public:
         return Session::readyToRamp(error);
     }
     BrownOutRecordStatus poll(BrownOutRecord &record,QString &error) override {
+        if(armed && state.scenario=="stop_rearm_late_record" && state.steps<2)
+            return BrownOutRecordStatus::Pending;
         if(armed && state.scenario=="early") {
             record={2,{{4,"V",12.2,11.8,12.,12.}}};return BrownOutRecordStatus::Ready;
         }
@@ -222,15 +231,16 @@ public:
 };
 void singleWaitCases(const QString &only={}) {
     for(const QString mode:{"fixed","track","capture","stop","monitor","low","arm",
-                            "stop_rearm","monitor_rearm","rearm_failure","ready_timeout","early"}) {
+                            "stop_rearm","stop_rearm_late_record","monitor_rearm","rearm_failure","ready_timeout","early"}) {
         if(!only.isEmpty()&&only!=mode)continue;
         WaitState state;state.scenario=mode;QAtomicInt stop{0};state.stop=&stop;WaitScope scope(state);
         auto v=settings();const bool rearm=mode.contains("rearm");
+        const bool stopping=mode=="stop" || mode.startsWith("stop_rearm");
         if(mode=="track"||mode=="capture"||rearm)v["mode"]="TRACK";
         if(mode=="capture"||rearm)v["capture_enabled"]=true;
         BrownOut::Settings cfg(v);
         std::unique_ptr<std::thread> stopper;
-        if(mode=="stop"||mode=="stop_rearm")stopper=std::make_unique<std::thread>([&]{
+        if(stopping)stopper=std::make_unique<std::thread>([&]{
             QElapsedTimer deadline;deadline.start();
             while(state.armCount<(rearm?2:1)&&deadline.elapsed()<15000)QThread::msleep(5);
             QThread::msleep(100);stop.storeRelease(1);
@@ -252,11 +262,19 @@ void singleWaitCases(const QString &only={}) {
             if(mode=="stop"||mode=="monitor"||mode=="low"||mode=="arm")
                 expect(state.steps==0&&state.readyChecks==0&&result.trials.isEmpty()&&elapsed.elapsed()<2500,
                        "wait cancellation/fault reached READY, ramp or was not prompt");
-            if(mode=="stop"||mode=="stop_rearm")expect(result.error.contains("Stopped by user"),"Stop reason lost");
+            if(stopping)expect(result.error.contains("Stopped by user"),"Stop reason lost");
             if(mode=="monitor"||mode=="monitor_rearm")expect(result.error.contains("monitor failed during processing wait"),"monitor reason lost");
             if(mode=="low")expect(result.error.contains("before ramp"),"pre-ramp shutdown reason lost");
             if(mode=="arm")expect(result.error.contains("Single rejected")&&state.armCount==0,"failed arm entered wait");
-            if(rearm)expect(state.steps==1&&state.readyChecks==1&&result.trials.size()==1&&elapsed.elapsed()<6000,"rearm fault resumed descent or lost partial trial");
+            if(rearm) {
+                // Poll and voltage steps are independent: the first record can arrive
+                // after more than one step. The rearm pause must preserve its entry state.
+                expect(state.rearmSteps>=1 && state.steps==state.rearmSteps,"descent resumed after rearm entry");
+                expect(state.readyChecks==1,"rearm fault reached another READY");
+                expect(result.trials.size()==1,"rearm fault lost the partial event trial");
+                expect(elapsed.elapsed()<6000,"rearm fault did not exit promptly");
+                if(mode=="stop_rearm_late_record")expect(state.rearmSteps>=2,"late-record fixture completed before the second step");
+            }
             if(mode=="rearm_failure")expect(result.error.contains("rearm rejected")&&state.armCount==1,"failed rearm entered wait");
             if(mode=="ready_timeout")expect(result.error.contains("READY reply arrived after timeout")&&state.steps==0,"READY budget was removed");
             if(mode=="early")expect(result.error.contains("before ramp")&&state.diagnostics==1&&result.trials.isEmpty()&&state.steps==0,"early record was accepted or not archived");
@@ -401,4 +419,43 @@ void service(bool cleanupFailure) {
            "cleanup failure presented Pass or continued retries/tasks");
     expect(final[0].channels.size()==1&&final[0].channels[0].maximum==15,"cleanup failure discarded partial values");
 }
-int main(int argc,char**argv){QCoreApplication app(argc,argv);try{QString mode=app.arguments().value(1);if(mode=="single_wait")singleWaitCases(app.arguments().value(2));else if(mode=="xml")xml();else if(mode=="service"||mode=="service_cleanup")service(mode=="service_cleanup");else runner(mode);std::cout<<"OK\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}
+void referenceCaptureDeadline()
+{
+    class TimedSession : public Session {
+    public:
+        using Session::Session;
+        int referenceTimeoutMs() const override {return 100;}
+        BrownOutRecordStatus poll(BrownOutRecord &r,QString &e) override {
+            if(!armed && s.scenario=="late_poll")QThread::msleep(150);
+            return Session::poll(r,e);
+        }
+    };
+    class TimedScope : public Scope {
+    public:
+        using Scope::Scope;
+        std::unique_ptr<IScopeBrownOutSession> beginBrownOut(const BrownOut::Settings &c,QAtomicInt &,QString &) override {
+            return std::make_unique<TimedSession>(s,c);
+        }
+    };
+    for(int scenario=0;scenario<3;++scenario) {
+        const bool late=scenario!=0;
+        State state;state.scenario=late?"late_poll":"slow_capture";
+        QAtomicInt stop{0};state.stop=&stop;TimedScope scope(state);int referencesSaved=0;
+        const auto capture=[&](const ScopeCaptureRecord &record) {
+            if(record.phase=="Auto reference") {
+                ++referencesSaved;
+                if(!late)QThread::msleep(150);
+                if(scenario==2)throw std::runtime_error("save failure");
+            }
+        };
+        auto strategy=makeMeasurementStrategyFactory({})(BrownOutMeasurementRequest{
+            BrownOut::Settings(settings()),scope,[&]{return std::make_unique<Io>(state);},capture});
+        const auto result=strategy->execute(stop);
+        expect(result.success!=late && referencesSaved==1,
+               "Brown Out confused late acquisition with slow reference file transfer");
+        expect(state.cleaned==1&&state.finish==1,"reference deadline bypassed cleanup");
+        if(late)expect(state.steps==0&&result.error.contains("timeout"),"late reference allowed ramp");
+        if(scenario==2)expect(result.error.contains("save failure"),"diagnostic save lost its own error");
+    }
+}
+int main(int argc,char**argv){QCoreApplication app(argc,argv);try{QString mode=app.arguments().value(1);if(mode=="delayed_reference")referenceCaptureDeadline();if(mode=="single_wait")singleWaitCases(app.arguments().value(2));else if(mode=="xml")xml();else if(mode=="service"||mode=="service_cleanup")service(mode=="service_cleanup");else runner(mode);std::cout<<"OK\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

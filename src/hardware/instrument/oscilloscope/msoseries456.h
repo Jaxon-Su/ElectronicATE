@@ -25,6 +25,8 @@ class MSOSeries456 : public Oscilloscope
     bool setVerticalScale(int channel, double scale, QString &error) override;
     bool readVerticalRange(int channel, ScopeVerticalRange &range, QString &error) override;
     bool beginSingleAcquisition() override;
+    bool beginAutoReference(int &timeoutMs, QString &error) override;
+    ScopeReferenceStatus pollAutoReference(QString &state, QString &error) override;
     bool prepareSteadyAcquisition(QAtomicInt &stop, QString &error, bool startContinuous = true) override;
     std::unique_ptr<IScopePeriodSession> beginPeriodSession(IScopePeriodSession::Continue ready,
                                                            QString &error) override;
@@ -122,6 +124,10 @@ class MSOSeries456 : public Oscilloscope
 
   private:
     friend class MsoBrownOutSession;
+    bool m_referenceActive = false;
+    bool m_referenceStopping = false;
+    quint64 m_referenceRequired = 1;
+    quint64 m_referenceFrozenAfter = 0;
     // 共用查詢輔助：查詢 DISplay:GLObal:<source>:STATE，回傳是否為 ON
     bool queryGlobalDisplayState(const QString &source, const QString &logTag);
 

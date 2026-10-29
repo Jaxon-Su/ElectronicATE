@@ -17,6 +17,16 @@ void require(bool ok, const char *message) { if (!ok) throw std::runtime_error(m
 // Deliberately has no model name, transport, command strings or Oscilloscope base.
 class SemanticScope : public IScopeMeasurement {
 public:
+    bool beginAutoReference(int &budget, QString &error) override {
+        budget=10000;
+        if (beginSingleAcquisition()) return true;
+        error="reference arm failed";return false;
+    }
+    ScopeReferenceStatus pollAutoReference(QString &state, QString &error) override {
+        const auto current=acquisitionState();state="mode=AUTO";
+        if(current==ScopeAcquisitionState::Invalid){error="reference state invalid";return ScopeReferenceStatus::Error;}
+        return current==ScopeAcquisitionState::Completed?ScopeReferenceStatus::Completed:ScopeReferenceStatus::Pending;
+    }
     QString lastError() const override { return lastFailure; }
     int triggerChannel() override { return 2; }
     int getTotalChannel() override { return 2; }

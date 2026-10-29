@@ -785,13 +785,27 @@ bool MSOSeries456::buildCsvViaCurve(int channel, QByteArray& csvOut)
 bool MSOSeries456::beginSingleAcquisition()
 {
     QString error;
-    for (const auto& command : {"ACQuire:STATE STOP", "ACQuire:STOPAfter SEQuence", "ACQuire:STATE RUN"}) {
+    // A previous front-panel sequence count must not turn one event into N events.
+    // 4/5/6 MSO programmer manual 077130526, pp.246-248.
+    for (const auto& command : {"ACQuire:STATE STOP", "ACQuire:SEQuence:MODe NUMACQS",
+                               "ACQuire:SEQuence:NUMSEQuence 1", "ACQuire:STOPAfter SEQuence"}) {
         if (!writeScpiSettingChecked(QString::fromLatin1(command), error)) {
             m_lastError = error;
             return false;
         }
     }
-    return true;
+    QString count, mode, sequenceMode;
+    if (!queryConfiguration("ACQuire:SEQuence:MODe?", sequenceMode, error) ||
+        !queryConfiguration("ACQuire:SEQuence:NUMSEQuence?", count, error) ||
+        !queryConfiguration("ACQuire:STOPAfter?", mode, error)) return false;
+    bool valid = false;
+    if (sequenceMode.simplified().section(' ', -1).compare("NUMACQS", Qt::CaseInsensitive) != 0 ||
+        count.simplified().section(' ', -1).toInt(&valid) != 1 || !valid ||
+        mode.simplified().section(' ', -1).compare("SEQUENCE", Qt::CaseInsensitive) != 0) {
+        m_lastError = "Single readback mismatch: sequence-mode=" + sequenceMode + "; count=" + count + "; stop-after=" + mode;
+        return false;
+    }
+    return writeConfigurationCommand("ACQuire:STATE RUN", error);
 }
 
 bool MSOSeries456::writeConfigurationCommand(const QString& command, QString& error)

@@ -40,7 +40,8 @@ QSet<int> validateRecord(const BrownOutRecord &record)
 }
 
 MeasurementResult runBrownOut(const BrownOut::Settings &cfg, IScopeBrownOut &scope,
-                          const BrownOutIoFactory &createIo, QAtomicInt &stop, const OscCaptureObserver &capture)
+                          const BrownOutIoFactory &createIo, QAtomicInt &stop, const OscCaptureObserver &capture,
+                          const std::function<void(const QString &)> &log)
 {
     MeasurementResult result;
     QString error;
@@ -203,12 +204,21 @@ MeasurementResult runBrownOut(const BrownOut::Settings &cfg, IScopeBrownOut &sco
         const int recordDurationMs = session->recordDurationMs();
         require(recordDurationMs > 0, "Invalid scope acquisition duration");
         const qint64 acquisitionTimeoutMs = qint64(recordDurationMs) + cfg.dataTimeoutMs;
+        const qint64 referenceLimit = qMin(acquisitionTimeoutMs,qint64(session->referenceTimeoutMs()));
+        require(referenceLimit > 0 && referenceLimit <= 60000, "Invalid AUTO reference timeout budget");
+        QElapsedTimer fresh;
+        qint64 lastRecordPollElapsed = 0;
         // Error records with a sequence/channel list are frozen diagnostics supplied
         // by the driver. Save them before propagating their original read failure.
         auto pollRecord = [&](BrownOutRecord &record, const QString &phase, quint64 previousSequence = 0) {
             record = {};
             QString readError;
             const auto status = session->poll(record, readError);
+            // Capture may be slow: classify acquisition completion before file transfer.
+            lastRecordPollElapsed = fresh.elapsed();
+            if (phase == "Auto reference" && status == BrownOutRecordStatus::Ready &&
+                lastRecordPollElapsed >= referenceLimit)
+                readError = "AUTO reference timeout; completed record is diagnostic only";
             if (status == BrownOutRecordStatus::Ready ||
                 (status == BrownOutRecordStatus::Error && record.sequence > 0 && !record.channels.isEmpty())) {
                 require(record.sequence > previousSequence, "Scope returned an old record; diagnostic capture rejected");
@@ -251,13 +261,23 @@ MeasurementResult runBrownOut(const BrownOut::Settings &cfg, IScopeBrownOut &sco
             }
         };
         BrownOutRecord baseline;
-        QElapsedTimer fresh; fresh.start();
+        if (log) log(QString("AUTO reference: fresh RUNSTOP record; wait limit=%1 ms").arg(referenceLimit));
+        fresh.start();
+        QString lastReferenceState;
         while (true) {
             check();
             const auto status = pollRecord(baseline, "Auto reference");
-            if (status == BrownOutRecordStatus::Ready) break;
-            require(fresh.elapsed() < acquisitionTimeoutMs,
-                    "No coherent steady reference; increase time/div or reduce record length");
+            const auto state = session->referenceState();
+            if (log && state != lastReferenceState) {
+                log(QString("AUTO reference: %1; elapsed=%2 ms").arg(state).arg(lastRecordPollElapsed));
+                lastReferenceState = state;
+            }
+            require(lastRecordPollElapsed < referenceLimit,
+                    "AUTO reference timeout; no timely coherent reference; " + state);
+            if (status == BrownOutRecordStatus::Ready) {
+                if (log) log("AUTO reference complete; preparing Normal ramp trigger");
+                break;
+            }
             QThread::msleep(100);
         }
         require(!baseline.clipped, "Brown Out reference is clipped");

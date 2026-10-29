@@ -20,6 +20,7 @@ bool valid(double value)
 
 double initialSearchStep(Execution &run, int trigger)
 {
+    run.diagnosticStage("Trigger scale read");
     run.check();
     const double scale = run.scope->getChannelScale(trigger);
     run.check();
@@ -30,6 +31,7 @@ double initialSearchStep(Execution &run, int trigger)
             .arg(trigger)
             .arg(scale)
             .arg(step));
+    run.diagnostic("complete");
     return step;
 }
 
@@ -84,6 +86,8 @@ void runSearch(Execution &run, Event &event, bool retainSteadyReference)
 {
     QMap<int, OscChannelMeasure> steadyChannels;
     bool haveValidEvent = false;
+    run.diagnosticSettings();
+    run.diagnosticStage("Channel validation");
     run.check();
     const int trigger = run.scope->triggerChannel();
     for (int ch = 1; ch <= run.scope->getTotalChannel(); ++ch) {
@@ -96,6 +100,10 @@ void runSearch(Execution &run, Event &event, bool retainSteadyReference)
     }
     if (!run.channels.contains(trigger))
         throw std::runtime_error("Trigger source must be an enabled analog channel");
+    QStringList enabledChannels;
+    for (int ch : run.channels.keys()) enabledChannels << QString("CH%1").arg(ch);
+    run.diagnostic(QString("complete; Trigger source=CH%1; enabled channels=%2")
+        .arg(trigger).arg(enabledChannels.join(",")));
     OscilloscopeAcquisition::VerticalScaleState vertical;
     vertical.captureRecord = run.ctx.captureRecord;
     vertical.includeRmsMean = false;
@@ -105,7 +113,9 @@ void runSearch(Execution &run, Event &event, bool retainSteadyReference)
     // Configure the load while input is off. Hardware callbacks use the same executors as ManualControl.
     event.prepareRun(run);
     QString error;
+    run.diagnosticStage("Load ON");
     run.checked(run.ctx.load(true, error), error);
+    run.diagnostic("complete");
     for (bool maximum : {true, false}) {
         if ((maximum && run.ctx.target == "MIN") || (!maximum && run.ctx.target == "MAX"))
             continue;
@@ -142,15 +152,18 @@ namespace {
 void DirectionSearch::execute()
 {
     run.phase.restart();
+    run.diagnosticPhase(maximum);
     tolerance = initialSearchStep(run, trigger);
     level = maximum ? tolerance : -tolerance;
     if (event.needsSteadyReference)
         captureSteadyReference();
+    run.diagnosticStage("Event trigger configuration");
     run.configure([&](QString &e) { return run.scope->selectEdgeTrigger(e); });
     run.configure([&](QString &e) {
         return run.scope->setEdgeSlope(maximum ? ScopeTriggerSlope::Rise : ScopeTriggerSlope::Fall, e);
     });
     run.configure([&](QString &e) { return run.scope->setTriggerMode(ScopeTriggerMode::Normal, e); });
+    run.diagnostic("complete");
     acquisitions = event.needsSteadyReference ? 1 : 0; // Includes AUTO reference.
     baselineFloor = referenceFloor;
 
@@ -203,6 +216,8 @@ void DirectionSearch::execute()
             return trial.direction == steadyReference.direction;
         }))
         run.result.steadyReferences.append(steadyReference);
+    run.diagnostic(QString("phase complete; acquisitions=%1; search levels=%2; no event bracket=%3")
+        .arg(acquisitions).arg(searchStep).arg(noEvent ? "yes" : "no"));
     if (noEvent) {
         const QString message =
             QString("%1: no event trigger bracket; retaining valid event measurements")
@@ -217,11 +232,15 @@ void DirectionSearch::execute()
 void DirectionSearch::captureSteadyReference()
 {
     event.prepareReferenceInput(run);
+    run.diagnosticStage("AUTO reference");
     const auto reference = OscilloscopeAcquisition::captureAutoReference(
         run.scope, run.stop, qMax(0, run.ctx.phaseTimeoutMs - int(run.phase.elapsed())), &vertical,
         retainSteadyReference ? OscilloscopeAcquisition::ReferenceMetrics::Quartet
-                              : OscilloscopeAcquisition::ReferenceMetrics::CaptureDefault);
+                              : OscilloscopeAcquisition::ReferenceMetrics::CaptureDefault,
+        [&](const QString &message) { run.logProgress(message); }, run.diagnosticsEnabled());
+    if (reference.cleanupFailed) run.result.cleanupFailed = true;
     run.checked(reference.success, reference.errorMessage);
+    run.diagnostic("complete");
     for (const auto &value : reference.channels) {
         if (!run.channels.contains(value.channel))
             continue;
@@ -265,6 +284,7 @@ void DirectionSearch::captureSteadyReference()
 
 void DirectionSearch::arm()
 {
+    run.diagnosticStage("Single arm", QString("Level=%1 channel units").arg(level, 0, 'g', 16));
     run.check();
     if (++acquisitions > run.ctx.maxIterations)
         throw std::runtime_error("Transient acquisition iteration limit reached");
@@ -276,10 +296,12 @@ void DirectionSearch::arm()
             (detail.isEmpty() ? QString{} : ": " + detail)).toStdString());
     }
     run.check();
+    run.diagnostic("complete");
 }
 
 double DirectionSearch::readEvent(int trial)
 {
+    run.diagnosticStage("Event measurements");
     double peak = std::numeric_limits<double>::quiet_NaN();
     MeasurementTrial record{int(run.result.trials.size()) + 1,
                             maximum ? MeasurementDirection::Rise : MeasurementDirection::Fall,
@@ -312,6 +334,7 @@ double DirectionSearch::readEvent(int trial)
         throw std::runtime_error("Trigger measurement: NA");
     run.result.trials.append(record);
     haveValidEvent = true;
+    run.diagnostic("complete");
     return peak;
 }
 
@@ -347,17 +370,18 @@ DirectionSearch::Probe DirectionSearch::probe(double candidate)
             return processBaseline(record.status, candidate);
         const auto eventStatus = record.status;
         if (OscilloscopeAcquisition::hasCompletedRecord(eventStatus)) {
+            run.diagnosticStage("Event record checks / Capture");
             if (OscilloscopeAcquisition::expandVerticalRange(run.scope, run.stop, scaleAdjustments,
                                                              &vertical, "Measurement",
                                                              eventStatus == AcquisitionResult::CompletedAfterTimeout,
                                                              QDeadlineTimer(qMax(0, run.ctx.phaseTimeoutMs - int(run.phase.elapsed()))))) {
-                run.configure([&](QString &e) { return run.scope->stopAcquisition(e); });
+                run.stopScope("Rescale STOP");
                 return Probe::Rescale;
             }
             observedPeak = std::max(observedPeak, direction * readEvent(trial + 1));
             hit = true;
         }
-        run.configure([&](QString &e) { return run.scope->stopAcquisition(e); });
+        run.stopScope("Trial STOP");
     }
     // One hit establishes the lower edge; only all misses establish the upper edge.
     run.log(hit ? "Level: event captured" : "Level: all trials missed");
@@ -366,6 +390,7 @@ DirectionSearch::Probe DirectionSearch::probe(double candidate)
 
 DirectionSearch::Probe DirectionSearch::processBaseline(AcquisitionResult status, double candidate, bool beforeShort)
 {
+    run.diagnosticStage("Baseline record checks / Capture");
     OscilloscopeAcquisition::RecordExtremum extremum{
         trigger, maximum ? ScopeMeasurement::Maximum : ScopeMeasurement::Minimum};
     const bool rescaled = OscilloscopeAcquisition::expandVerticalRange(run.scope, run.stop, scaleAdjustments,
@@ -379,15 +404,17 @@ DirectionSearch::Probe DirectionSearch::processBaseline(AcquisitionResult status
         baselineFloor = std::max(baselineFloor, candidate);
         if (!extremum.clipped) baselineFloor = std::max(baselineFloor, direction * extremum.value);
         excludedFloorKnown = true;
-        run.configure([&](QString &e) { return run.scope->stopAcquisition(e); });
+        run.stopScope("Baseline STOP");
         run.log("Baseline trigger excluded from event results");
         if (rescaled) tolerance = initialSearchStep(run, trigger);
         return Probe::BeforeShort;
     }
     if (rescaled) {
-        run.configure([&](QString &e) { return run.scope->stopAcquisition(e); });
+        run.stopScope("Baseline rescale STOP");
         return Probe::Rescale;
     }
+    run.diagnostic("complete");
+    run.diagnosticStage("Baseline measurements");
     if (run.scope->isClipping(trigger))
         throw std::runtime_error("Baseline waveform clipped; adjust channel scale");
     const double peak =
@@ -397,7 +424,8 @@ DirectionSearch::Probe DirectionSearch::processBaseline(AcquisitionResult status
     if (!valid(peak))
         throw std::runtime_error("Baseline measurement: NA");
     baselineFloor = std::max(candidate, direction * peak);
-    run.configure([&](QString &e) { return run.scope->stopAcquisition(e); });
+    run.diagnostic("complete");
+    run.stopScope("Baseline STOP");
     run.log("Baseline trigger excluded from event results");
     return Probe::Baseline;
 }
