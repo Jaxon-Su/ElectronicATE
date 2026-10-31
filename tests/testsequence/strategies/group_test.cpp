@@ -19,6 +19,7 @@ struct GroupState : State {
     int scaleRestores = 0;
     QMap<int, int> scaleExpansions;
     QMap<QString, double> excludedLevels;
+    int referenceAcquisitions = 0;
 };
 class GroupScope : public Scope {
 public:
@@ -54,12 +55,17 @@ public:
         if (g.mode == "pre_short_rescale" && g.triggerMode == ScopeTriggerMode::Normal && g.excludedLevels.contains(key))
             require((g.falling ? -g.level : g.level) > g.excludedLevels[key], "Group rearmed excluded pre-short level after rescale");
         g.armed = true; g.event = false; g.trace << "arm";
+        if(g.triggerMode==ScopeTriggerMode::Auto)g.referenceAcquisitions=0;
+        else ++g.referenceAcquisitions;
         g.checkingShort = false;
         g.early = g.mode == "pretrigger" && std::abs(g.level) < .10;
         if (g.early) ++g.earlyByLoad[g.current];
         return true;
     }
     ScopeAcquisitionState acquisitionState() override {
+        if(g.mode=="worst_reference")
+            return g.triggerMode==ScopeTriggerMode::Auto || (!g.event && g.referenceAcquisitions<=2)
+                ? ScopeAcquisitionState::Completed : ScopeAcquisitionState::Running;
         if (g.early) return ScopeAcquisitionState::Completed;
         if (g.base == "Static Test" || g.base == "Dynamic Test") return ScopeAcquisitionState::Completed;
         return g.triggerMode == ScopeTriggerMode::Auto ||
@@ -85,9 +91,19 @@ public:
         require(!TestSequenceTaskKind::isTransient(TestSequenceTaskKind::fromName(g.base)) ||
                     (g.event && g.triggerMode != ScopeTriggerMode::Auto) ||
                     ((g.base == "Turn off" || g.base == "Turn on then short") && g.triggerMode == ScopeTriggerMode::Auto) ||
+                    (g.base=="Turn off" && g.mode=="worst_reference") ||
                     (metric != ScopeMeasurement::Rms && metric != ScopeMeasurement::Mean),
                 "transient reference/Baseline queried RMS/Mean");
         require(acquisitionState() == ScopeAcquisitionState::Completed, "stale waveform read");
+        if(g.mode=="worst_reference" && g.triggerMode==ScopeTriggerMode::Normal) {
+            const double extra=g.referenceAcquisitions*10;
+            switch(metric) {
+            case ScopeMeasurement::Maximum:return (g.current==0?4:3)+extra;
+            case ScopeMeasurement::Minimum:return (g.current==0?-1:-3)-extra;
+            case ScopeMeasurement::Rms:return 1+g.current+extra;
+            case ScopeMeasurement::Mean:return .5+g.current+extra;
+            }
+        }
         switch (metric) {
         case ScopeMeasurement::Maximum: return g.current == 0 ? 4 : 3;
         case ScopeMeasurement::Minimum: return g.current == 0 ? -1 : -3;
@@ -458,17 +474,20 @@ int main(int argc, char **argv)
                             require(group.trace.value(i+1) == (group.trace[i] == "input on" ? "dc on" : "dc off"), "AC/DC order changed");
                 }
                 if ((group.base == "Turn off" || group.base == "Turn on then short") && mode == "success")
+                  for (const QString &referenceMode : group.base=="Turn off"
+                       ? QStringList{"no_event","worst_reference"} : QStringList{"no_event"})
                     for (bool single : {false, true}) {
                         GroupState noEvent;
-                        const auto fallbackResults = executeGroup(kind, "no_event", single, noEvent, directory.path());
+                        const auto fallbackResults = executeGroup(kind, referenceMode, single, noEvent, directory.path());
                         for (const auto &fallback : fallbackResults) {
                             require(fallback.status == "Pass" && fallback.trials.isEmpty(), "no-event service result failed");
-                            const auto verify = [](const QVector<TestSequenceChannelResult> &channels, int load) {
+                            const auto verify = [&](const QVector<TestSequenceChannelResult> &channels, int load) {
+                                const double extra=referenceMode=="worst_reference"?20:0;
                                 require(channels.size() == 2, "service lost a fallback direction");
                                 for (const auto &ch : channels)
                                     require(ch.source == MeasurementSource::SteadyReference && ch.sourceSequence == 0 &&
-                                            ch.maximum == (load == 0 ? 4 : 3) && ch.minimum == (load == 0 ? -1 : -3) &&
-                                            ch.rms == 1 + load && ch.mean == .5 + load,
+                                            ch.maximum == (load == 0 ? 4 : 3)+extra && ch.minimum == (load == 0 ? -1 : -3)-extra &&
+                                            ch.rms == 1 + load+extra && ch.mean == .5 + load+extra,
                                             "service lost/mixed reference quartet");
                             };
                             if (single) verify(fallback.channels, fallback.loadCondition.index);

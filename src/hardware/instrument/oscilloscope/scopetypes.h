@@ -9,9 +9,12 @@ enum class ScopeReferenceStatus { Pending, Completed, Error };
 enum class ScopeMeasurement { Maximum, Minimum, Rms, Mean };
 
 // Acquisition window in the same physical units as channel measurements.
-// Display position is deliberately excluded.
+// center is the reported Offset (ADC window); position shifts only the display.
 struct ScopeVerticalRange {
     double scale = 0;
     double center = 0;
     double divisions = 0;
+    double position = 0;
+    double minimumPosition = 0;
+    double maximumPosition = 0;
 };

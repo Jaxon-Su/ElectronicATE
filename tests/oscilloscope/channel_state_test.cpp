@@ -83,19 +83,27 @@ void verticalRangeDriver()
     public:
         QString last,failed;
         QStringList commands;
-        QByteArray scale="4",offset="100";
+        QByteArray scale="4",offset="100",position="-2.2400";
         bool consumed=false;
+        bool rejectPosition=false, wrotePosition=false;
         bool open() override {return true;}
         void close() override {}
         bool isOpen() const override {return true;}
         QString lastError() const override {return "injected range IO failure";}
-        int write(const QByteArray &bytes) override {last=QString::fromUtf8(bytes).trimmed();commands<<last;consumed=false;return bytes.size();}
+        int write(const QByteArray &bytes) override {
+            last=QString::fromUtf8(bytes).trimmed();commands<<last;consumed=false;
+            if(last==failed)return -1;
+            if(last.startsWith("CH2:POSition "))wrotePosition=true;
+            return bytes.size();
+        }
         int read(QByteArray &bytes,int) override {
             if (last==failed) return -1;
             if (consumed) {bytes.clear();return 0;}
             consumed=true;
             if (last=="CH2:SCAle?") bytes=scale;
             else if (last=="CH2:OFFSet?") bytes=offset;
+            else if (last=="CH2:POSition?") bytes=position;
+            else if (last=="*ESR?") bytes=rejectPosition && wrotePosition?"32":"0";
             else throw std::runtime_error("Unexpected vertical range command");
             bytes+='\n';
             return bytes.size();
@@ -107,8 +115,9 @@ void verticalRangeDriver()
         transport.offset=(header?QByteArray(":CH2:OFFSET "):QByteArray())+(invert?"-100":"100");
         transport.commands.clear();
         require(scope.readVerticalRange(2,range,error) && error.isEmpty() && range.scale==4 &&
-                range.center==(invert?-100:100) && range.divisions==10,"Driver range parsing/inversion mismatch");
-        require(transport.commands==QStringList({"CH2:SCAle?","CH2:OFFSet?"}),"Driver changed state or used display position");
+                range.center==(invert?-100:100) && range.divisions==10 && range.position==-2.24 &&
+                range.minimumPosition==-8 && range.maximumPosition==8,"Driver range parsing/inversion mismatch");
+        require(transport.commands==QStringList({"CH2:SCAle?","CH2:OFFSet?","CH2:POSition?"}),"Driver omitted geometry or changed state");
     }
     for (const QByteArray reply : {QByteArray("bad"),QByteArray("nan"),QByteArray("9.9e37"),QByteArray("0"),QByteArray("-4")}) {
         transport.scale=reply; range={9,9,9};
@@ -120,13 +129,26 @@ void verticalRangeDriver()
         require(!scope.readVerticalRange(2,range,error) && !error.isEmpty() && range.divisions==0,"invalid offset yielded usable geometry");
     }
     transport.offset="0";
-    for (const QString command : {"CH2:SCAle?","CH2:OFFSet?"}) {
+    for (const QByteArray reply : {QByteArray("bad"),QByteArray("nan"),QByteArray("9.9e37"),QByteArray("8.1")}) {
+        transport.position=reply;
+        require(!scope.readVerticalRange(2,range,error) && !error.isEmpty() && range.divisions==0,"invalid Position yielded geometry");
+    }
+    transport.position="0";
+    for (const QString command : {"CH2:SCAle?","CH2:OFFSet?","CH2:POSition?"}) {
         transport.failed=command;
         require(!scope.readVerticalRange(2,range,error) && !error.isEmpty(),"Driver masked range IO failure");
     }
     transport.commands.clear();
     require(!scope.readVerticalRange(0,range,error) && !scope.readVerticalRange(5,range,error) && transport.commands.isEmpty(),
             "invalid physical range channel touched transport");
+    transport.failed.clear();
+    require(scope.setVerticalPosition(2,-2.24,error) && transport.commands==QStringList({"*ESR?","CH2:POSition -2.24","*ESR?"}),
+            "Position write did not preserve fractional divisions/checked status");
+    for(double invalid : {double(NAN),9.,-9.}) require(!scope.setVerticalPosition(2,invalid,error),"invalid Position accepted");
+    transport.wrotePosition=false; transport.rejectPosition=true;
+    require(!scope.setVerticalPosition(2,1,error) && error.contains("rejected"),"device Position rejection hidden");
+    transport.rejectPosition=false; transport.failed="CH2:POSition 1";
+    require(!scope.setVerticalPosition(2,1,error) && error.contains("Write failed"),"Position transport failure hidden");
 }
 void check(int kind, const QString &mode, int channel = 2, int failAt = 1) {
     Transport transport; transport.mode = mode; transport.target = channel; transport.failAt = failAt;

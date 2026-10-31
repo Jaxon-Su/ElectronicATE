@@ -161,7 +161,7 @@ void phaseDeadlineContract()
     public:
         bool baseline=false;
         int stalledReads=0;
-        bool readVerticalRange(int,ScopeVerticalRange &range,QString &) override { range={scale,0,10}; return true; }
+        bool readVerticalRange(int,ScopeVerticalRange &range,QString &) override { range={scale,0,10,0,-8,8}; return true; }
         ScopeAcquisitionState acquisitionState() override {
             if (baseline && mode==ScopeTriggerMode::Normal) {
                 completedRecords.insert(records); return ScopeAcquisitionState::Completed;

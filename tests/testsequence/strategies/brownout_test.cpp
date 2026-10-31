@@ -24,6 +24,7 @@ QVariantMap settings() {
 struct State {
     QString scenario;
     bool multiChannel = false;
+    double step=.04;
     std::atomic_int steps{0}, cleaned{0};
     std::atomic_bool ready{false}, started{false}, closed{false};
     QVector<double> levels;
@@ -68,6 +69,9 @@ public:
         if(s.scenario=="delayed_reference"&&!armed&&elapsed.elapsed()<1150)return BrownOutRecordStatus::Pending;
         if(!armed) {
             ++s.baseline; r={1,{{4,s.scenario=="current_trigger"?"A":"V",12.2,11.8,12.,12.}}};
+            if (s.scenario=="rise" || s.scenario=="fall") {
+                r.channels[0].maximum=12.215;r.channels[0].minimum=11.785;
+            }
             if(s.multiChannel)r.channels.append({2,"A",1.5,-1.,.75,.25});
             return BrownOutRecordStatus::Ready;
         }
@@ -85,10 +89,11 @@ public:
         r.channels={{4,s.scenario=="unit_changed"?"A":"V",12.+seq,-double(seq),double(seq),double(seq)}};
         if(s.multiChannel)r.channels.append({2,"A",3.141592653589793,-2.718281828459045,1.4142135623730951,0.});
         if(s.scenario=="invalid")r.channels[0].maximum=std::numeric_limits<double>::quiet_NaN();
+        if(s.scenario=="grid_error")r.channels[0].maximum=1e20;
         return BrownOutRecordStatus::Ready;
     }
     bool advanceLevel(double level,QString &) override {s.levels.append(level);return true;}
-    double levelStep() const override{return .04;}
+    double levelStep() const override{return s.step;}
     int recordDurationMs() const override {
         if(s.scenario=="invalid_duration")return 0;
         return s.scenario=="delayed_reference"||s.scenario=="long_record"?2000:1;
@@ -121,6 +126,7 @@ void runner(const QString &scenario) {
     State s;s.scenario=scenario;QAtomicInt stop{0};s.stop=&stop;Scope scope(s);
     auto v=settings();
     if(scenario=="rise"||scenario=="fall"||scenario=="invalid") {v["mode"]="TRACK";v["direction"]=scenario=="rise"?"RISE":"FALL";}
+    if(scenario=="fall")v["trigger_level"]=20.;
     if(scenario=="rebound")v["tail_ms"]=500;
     BrownOut::Settings cfg(v);
     if(scenario=="timeout")cfg.timeoutMs=1500;
@@ -141,6 +147,9 @@ void runner(const QString &scenario) {
         expect(!result.summary.isEmpty(),"result summary missing");
         if(cfg.mode==BrownOut::Mode::FixedFall)expect(s.levels.size()==1&&s.records==1,"Single repeated");
         else {expect(s.records>=2&&s.levels.size()==s.records+1,"tracking on stale record or missing update");
+            const double first=scenario=="rise"?12.24:11.76;
+            if(std::abs(s.levels[0]-first)>1e-10)std::cerr<<"Track first="<<s.levels[0]<<" expected="<<first<<'\n';
+            expect(std::abs(s.levels[0]-first)<1e-10,"Track reference Level not aligned to Step");
             for(int i=1;i<s.levels.size();++i)expect(scenario=="rise"?s.levels[i]>s.levels[i-1]:s.levels[i]<s.levels[i-1],"wrong direction");}
     }else expect(!result.error.isEmpty(),"failure has no diagnostic");
     if(scenario=="long_record") {
@@ -155,6 +164,20 @@ void runner(const QString &scenario) {
     if(scenario=="cleanup"||scenario=="cleanup_empty"||scenario=="scope_cleanup"||scenario=="prepare_error")expect(result.cleanupFailed,"cleanup failure lost");
     if(scenario=="cleanup"||scenario=="cleanup_empty")expect(result.outputCleanupFailed,"output cleanup uncertainty lost");
     if(scenario=="scope_cleanup"||scenario=="prepare_error")expect(!result.outputCleanupFailed,"scope-only failure marked outputs unknown");
+}
+void gridFailureKeepsTrial() {
+    State state;state.scenario="grid_error";state.multiChannel=true;
+    QAtomicInt stop{0};state.stop=&stop;Scope scope(state);
+    auto values=settings();values["mode"]="TRACK";values["direction"]="RISE";
+    const auto result=makeMeasurementStrategyFactory({})(BrownOutMeasurementRequest{
+        BrownOut::Settings(values),scope,[&]{return std::make_unique<Io>(state);}})->execute(stop);
+    expect(!result.success&&result.error.contains("grid cannot advance"),"unsafe next Level was not rejected");
+    expect(result.trials.size()==1&&result.trials[0].channels.size()==2,"grid failure discarded completed Trial");
+    const auto &channels=result.trials[0].channels;
+    expect(channels[0].maximum==1e20&&channels[0].minimum<0&&channels[0].rms>0&&channels[0].mean==channels[0].rms,
+           "grid failure changed acquired quartet");
+    expect(channels[1].maximum==3.141592653589793&&result.channels.size()==2,"grid failure discarded other channel");
+    expect(state.cleaned==1&&state.finish==1&&state.closed&&!result.cleanupFailed,"grid failure skipped cleanup");
 }
 struct WaitState : State {
     std::atomic_int monitored{0}, armCount{0};
@@ -234,6 +257,7 @@ void singleWaitCases(const QString &only={}) {
                             "stop_rearm","stop_rearm_late_record","monitor_rearm","rearm_failure","ready_timeout","early"}) {
         if(!only.isEmpty()&&only!=mode)continue;
         WaitState state;state.scenario=mode;QAtomicInt stop{0};state.stop=&stop;WaitScope scope(state);
+        if(mode=="capture"||mode=="track")state.step=.39996;
         auto v=settings();const bool rearm=mode.contains("rearm");
         const bool stopping=mode=="stop" || mode.startsWith("stop_rearm");
         if(mode=="track"||mode=="capture"||rearm)v["mode"]="TRACK";
@@ -253,6 +277,9 @@ void singleWaitCases(const QString &only={}) {
         expect(result.success==success,qPrintable(mode+": "+result.error));
         expect(state.cleaned==1&&state.finish==1&&state.closed&&!result.cleanupFailed,"wait cleanup incomplete");
         if(success) {
+            if(cfg.mode==BrownOut::Mode::Track)for(double level:state.levels)
+                expect(std::abs(level/state.step-std::round(level/state.step))<1e-9,"Track/Capture sent fractional grid Level");
+            else expect(state.levels==QVector<double>{cfg.triggerLevel},"Fixed Level was quantized");
             expect(state.steps==3&&!result.trials.isEmpty(),"wait lost valid events or changed descent");
             expect(state.readyChecks==state.armCount,"missing per-arm READY");
             if(mode=="capture")expect(state.armCount>=3,"Capture did not rearm");
@@ -458,4 +485,4 @@ void referenceCaptureDeadline()
         if(scenario==2)expect(result.error.contains("save failure"),"diagnostic save lost its own error");
     }
 }
-int main(int argc,char**argv){QCoreApplication app(argc,argv);try{QString mode=app.arguments().value(1);if(mode=="delayed_reference")referenceCaptureDeadline();if(mode=="single_wait")singleWaitCases(app.arguments().value(2));else if(mode=="xml")xml();else if(mode=="service"||mode=="service_cleanup")service(mode=="service_cleanup");else runner(mode);std::cout<<"OK\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(int argc,char**argv){QCoreApplication app(argc,argv);try{QString mode=app.arguments().value(1);if(mode=="rise")gridFailureKeepsTrial();if(mode=="delayed_reference")referenceCaptureDeadline();if(mode=="single_wait")singleWaitCases(app.arguments().value(2));else if(mode=="xml")xml();else if(mode=="service"||mode=="service_cleanup")service(mode=="service_cleanup");else runner(mode);std::cout<<"OK\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

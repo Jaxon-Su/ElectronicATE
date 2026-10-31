@@ -93,7 +93,10 @@ bool adjustOscilloscopeAutoPeriod(IScopeAutoPeriod *scope, QAtomicInt &stop, QSt
                     "exceeds 5 min)";
             return false;
         }
-        const int measurementTimeoutMs = int(std::ceil(std::clamp(5000 + windowMs * 0.25, 5000.0, 30000.0)));
+        // A frozen acquisition can still have pending measurement results.
+        // Allow processing time for a full window, but poll so ready values do
+        // not incur a fixed delay; the overall deadline remains shared.
+        const int measurementTimeoutMs = int(std::ceil(std::clamp(10000 + windowMs, 10000.0, 60000.0)));
         // Configure PERIOD before the next fresh acquisition, including after
         // clipping retries.
         if (!session->prepareRecord(error))
@@ -142,13 +145,29 @@ bool adjustOscilloscopeAutoPeriod(IScopeAutoPeriod *scope, QAtomicInt &stop, QSt
         double period = 0;
         QElapsedTimer measurement;
         measurement.start();
+        const int measurementLimitMs = qMin(measurementTimeoutMs, qMax(0, totalLimitMs - int(total.elapsed())));
+        if (log) log(QString("Auto Period: PERIOD wait begin; %1; window=%2 s; wait limit=%3 ms; remaining overall=%4 ms")
+            .arg(progress(), number(windowMs / 1000)).arg(measurementLimitMs).arg(qMax(0, totalLimitMs - int(total.elapsed()))));
         double previousReading = 0;
         int consistentReads = 0;
         bool measurementReady = false;
         do
         {
-            if (!session->readPeriod(period, error))
+            if (!ready()) return false;
+            if (measurement.elapsed() >= measurementLimitMs) break;
+            if (!session->readPeriod(period, error)) {
+                error.prepend(QString("Auto Period: PERIOD read failed after %1 ms; %2; ").arg(measurement.elapsed()).arg(progress()));
                 return false;
+            }
+            if (!ready()) return false;
+            if (measurement.elapsed() >= measurementLimitMs) {
+                if (positive(period)) {
+                    error = QString("Auto Period: valid result arrived after PERIOD wait limit; %1; elapsed=%2 ms; limit=%3 ms")
+                        .arg(progress()).arg(measurement.elapsed()).arg(measurementLimitMs);
+                    return false;
+                }
+                break;
+            }
             // Repeated reads only wait for measurement settling; independent captures
             // below establish consistency. Recreating the badge excludes the previous
             // record's statistics.
@@ -161,8 +180,11 @@ bool adjustOscilloscopeAutoPeriod(IScopeAutoPeriod *scope, QAtomicInt &stop, QSt
                 measurementReady = true;
                 break;
             }
-            QThread::msleep(50);
-        } while (measurement.elapsed() < measurementTimeoutMs && ready());
+            QThread::msleep(static_cast<unsigned long>(qMin<qint64>(50, qMax<qint64>(0, measurementLimitMs - measurement.elapsed()))));
+        } while (measurement.elapsed() < measurementLimitMs);
+        if (log) log(QString("Auto Period: PERIOD wait %1; %2; elapsed=%3 ms; limit=%4 ms; last=%5 s")
+            .arg(measurementReady ? "ready" : positive(period) ? "expired (not stable within deadline)" : "expired (NA)", progress())
+            .arg(measurement.elapsed()).arg(measurementLimitMs).arg(positive(period) ? number(period) : "NA"));
         if (!ready() || !session->readTimeScale(scale, error))
             return false;
         if (!positive(scale))
@@ -220,15 +242,22 @@ bool adjustOscilloscopeAutoPeriod(IScopeAutoPeriod *scope, QAtomicInt &stop, QSt
         double actual = 0;
         do
         {
+            if (!ready()) return false;
+            if (readback.elapsed() >= 5000) break;
             if (!session->readTimeScale(actual, error))
                 return false;
+            if (!ready()) return false;
+            if (readback.elapsed() >= 5000) break;
+            // Without a usable PERIOD, only require real forward progress from
+            // a quantized expansion. Fresh records still have to prove 3-8 cycles.
+            const bool forwardExpansion = !measurementReady && positive(actual) && actual > scale * 1.01;
             if (positive(actual) && (std::abs(actual - target) <= target * 0.01 ||
-                                    (measurementReady && inWindow(actual * divisions / period))))
+                                    (measurementReady && inWindow(actual * divisions / period)) || forwardExpansion))
             {
                 applied = true;
                 break;
             }
-            QThread::msleep(20);
+            QThread::msleep(static_cast<unsigned long>(qMin<qint64>(20, qMax<qint64>(0, 5000 - readback.elapsed()))));
         } while (readback.elapsed() < 5000 && ready());
         if (!ready()) return false;
         if (log) log(QString("Auto Period: %1; target=%2 s/div; actual=%3 s/div; %4")

@@ -8,7 +8,7 @@ namespace {
 using TransientDetail::Execution;
 using OscilloscopeAcquisition::AcquisitionResult;
 
-// Only Turn off descent recovers clipping. Keep one adjustment budget across
+// Both descent modes recover clipping. Keep one adjustment budget across
 // preflight records, event retries, Levels and Trials in this execution.
 bool expandCompleted(Execution &run, AcquisitionResult status, int &adjustments, const QString &phase)
 {
@@ -145,7 +145,84 @@ void saveCompleted(Execution &run, AcquisitionResult status, int step, int trial
     if (!failure.isEmpty()) throw std::runtime_error(failure.toStdString());
     run.check();
     run.result.trials.append(record);
+    run.log(QString("Descent event accepted: Step=%1 Trial=%2 Trigger Level=%3 Record=%4")
+        .arg(step).arg(trial).arg(level, 0, 'g', 16).arg(record.sequence));
     for (const auto &channel : capture.channels) run.channels[channel.channel] = channel;
+}
+
+void rejectTrial(Execution &run, AcquisitionResult status, int step, int trial, double level, bool shortTest)
+{
+    const bool completed = OscilloscopeAcquisition::hasCompletedRecord(status);
+    const QString purpose = shortTest ? "Pre-short" : "Pre-power-off";
+    const QString label = QString("Descent Level %1 Trial %2 CH%3 Level=%4")
+        .arg(step).arg(trial).arg(run.ctx.descentChannel).arg(level, 0, 'g', 16);
+    QString reason = !completed ? "Trigger timeout: no completed event record (MISS)"
+        : shortTest ? "acquisition completed before Short ON; no valid short event"
+                    : "acquisition completed before Input OFF; no valid turn-off event";
+    // Preserve a known deadline failure before cleanup or diagnostic Capture,
+    // either of which can fail too. Neither error may hide the other.
+    if (status == AcquisitionResult::CompletedAfterTimeout)
+        reason += "; " + purpose + " acquisition completed after timeout";
+    else if (run.phase.elapsed() >= run.ctx.phaseTimeoutMs)
+        reason += "; Transient phase time limit reached";
+    const QString failure = label + ": Fail — " + reason;
+    run.result.trialIssues.append({MeasurementDirection::Fall, step, trial, level, false, failure});
+    run.result.errorMessage += (run.result.errorMessage.isEmpty() ? "" : "; ") + failure;
+    run.log(failure);
+    // Cleanup must run even if the deadline expired during a blocking query.
+    // Completion was confirmed before STOP; it is not manufactured by cleanup.
+    auto cleanup = [&](const QString &name, const auto &operation) {
+        QString error;
+        try {
+            if (operation(error)) return;
+        } catch (const std::exception &ex) { error = QString::fromUtf8(ex.what()); }
+          catch (...) { error = "unexpected error"; }
+        run.result.cleanupFailed = true;
+        throw std::runtime_error((purpose + " cleanup " + name + ": " + error).toStdString());
+    };
+    if (shortTest) {
+        run.requireShortExit();
+        run.log("Short descent cleanup: protected short exit complete -> Scope STOP");
+    } else {
+        run.log("Pre-power-off cleanup: Input OFF -> Scope STOP");
+        cleanup("Input OFF", [&](QString &e) { return run.ctx.power(false, e); });
+    }
+    cleanup("Scope STOP", [&](QString &e) { return run.scope->stopAcquisition(e); });
+    if (run.stop.loadAcquire()) throw std::runtime_error("Stopped by user");
+    // A MISS has no completed record. STOP must not manufacture event or
+    // diagnostic data; only the pretrigger path may archive a natural record.
+    if (completed) {
+        const auto frozen = run.scope->acquisitionState();
+        const QString queryError = run.scope->lastError();
+        if (run.stop.loadAcquire()) throw std::runtime_error("Stopped by user");
+        if (frozen != ScopeAcquisitionState::Completed || !queryError.isEmpty())
+            throw std::runtime_error(QString("%1 diagnostic record is not frozen: acquisition=%2%3")
+                .arg(purpose, frozen == ScopeAcquisitionState::Completed ? "STOP" : frozen == ScopeAcquisitionState::Running ? "RUN" : "Invalid",
+                     queryError.isEmpty() ? QString{} : "; " + queryError).toStdString());
+        if (run.ctx.captureRecord) {
+            ScopeCaptureRecord record;
+            record.phase = label + (shortTest ? " (pre-short diagnostic; not an event)" : " (pre-power-off diagnostic; not an event)");
+            for (const auto &ch : run.channels) {
+                OscChannelMeasure value; value.channel = ch.channel;
+                record.channels.append(value);
+            }
+            run.ctx.captureRecord(record);
+        }
+    }
+    if (status == AcquisitionResult::CompletedAfterTimeout)
+        throw std::runtime_error((purpose + " acquisition completed after timeout").toStdString());
+    run.check();
+    if (shortTest) {
+        run.log(QString("Descent Level %1 Trial %2: cleanup complete; continuing with remaining Trials/Levels; task remains Fail")
+                    .arg(step).arg(trial));
+        return;
+    }
+    for (int skipped = trial + 1; skipped <= run.ctx.trialsPerLevel; ++skipped)
+        run.result.trialIssues.append({MeasurementDirection::Fall, step, skipped, level, true,
+                                      "Skipped after an earlier pre-power-off trigger at this Level"});
+    run.log(QString("Descent Level %1: remaining trials skipped; cleanup complete; %2")
+        .arg(step).arg(step < run.ctx.descentLevels.size() ? "continuing with next Level; task remains Fail"
+                                                         : "no more Levels; task remains Fail"));
 }
 }
 
@@ -222,6 +299,7 @@ OscMeasureResult DescentStrategy::execute(IScopeMeasurement *scope, QAtomicInt &
         int scaleAdjustments = 0;
         for (int step = 0; step < context.descentLevels.size(); ++step) {
             const double level = context.descentLevels[step];
+            bool skipLevel = false;
             for (int trial = 1; trial <= context.trialsPerLevel; ++trial) {
                 for (;;) {
                     run.check();
@@ -231,30 +309,43 @@ OscMeasureResult DescentStrategy::execute(IScopeMeasurement *scope, QAtomicInt &
                         run.delay(context.powerOffMs);
                         run.relays(false, false);
                     }
-                    if (m_shortTest)
-                        run.configure([&](QString &e) { return scope->setChannelTriggerLevel(context.descentChannel, level, e); });
                     run.log(QString("Descent %1/%2: CH%3 Falling Level=%4; Trial %5/%6")
                                 .arg(step + 1).arg(context.descentLevels.size()).arg(context.descentChannel)
                                 .arg(level, 0, 'g', 16).arg(trial).arg(context.trialsPerLevel));
                     run.power(true);
                     run.delay(context.settleMs);
-                    if (!m_shortTest) {
-                        prepareUnclippedReference(run, scaleAdjustments);
-                        run.configure([&](QString &e) { return scope->setChannelTriggerLevel(context.descentChannel, level, e); });
-                    }
+                    prepareUnclippedReference(run, scaleAdjustments);
+                    run.configure([&](QString &e) { return scope->setChannelTriggerLevel(context.descentChannel, level, e); });
                     run.check();
                     if (!scope->beginSingleAcquisition())
                         throw std::runtime_error(("Failed to start descent acquisition: " + scope->lastError()).toStdString());
                     run.log("Single processing wait: 3000 ms before READY");
                     run.delay(3000);
-                    run.requireReady();
+                    {
+                        if (m_shortTest)
+                            run.log(QString("Descent Level %1 Trial %2: checking READY before Short ON (CH%3 Level=%4)")
+                                .arg(step + 1).arg(trial).arg(context.descentChannel).arg(level, 0, 'g', 16));
+                        else
+                            run.log(QString("Descent Level %1 Trial %2: checking READY before Input OFF (CH%3 Level=%4)")
+                                .arg(step + 1).arg(trial).arg(context.descentChannel).arg(level, 0, 'g', 16));
+                        const auto ready = m_shortTest ? run.waitForShortReady() : run.waitForPowerOffReady();
+                        if (OscilloscopeAcquisition::hasCompletedRecord(ready)) {
+                            rejectTrial(run, ready, step + 1, trial, level, m_shortTest);
+                            skipLevel = !m_shortTest;
+                            break;
+                        }
+                    }
                     if (m_shortTest) run.relays(true, false);
                     else run.power(false);
                     const auto status = run.waitForEvent();
                     if (m_shortTest) run.requireShortExit(); // Includes a trigger miss.
+                    if (m_shortTest && status == AcquisitionResult::NoTrigger) {
+                        rejectTrial(run, status, step + 1, trial, level, true);
+                        break;
+                    }
                     if (!OscilloscopeAcquisition::hasCompletedRecord(status))
                         throw std::runtime_error("Descent Trigger timeout: no completed event record");
-                    if (!m_shortTest && expandCompleted(run, status, scaleAdjustments,
+                    if (expandCompleted(run, status, scaleAdjustments,
                             QString("Descent Level %1 Trial %2 (%3)").arg(step + 1).arg(trial).arg(level, 0, 'g', 16))) {
                         run.log(QString("Descent waveform clipped: scale expanded; retry Level %1 Trial %2")
                                     .arg(step + 1).arg(trial));
@@ -264,11 +355,13 @@ OscMeasureResult DescentStrategy::execute(IScopeMeasurement *scope, QAtomicInt &
                     run.configure([&](QString &e) { return scope->stopAcquisition(e); });
                     break;
                 }
+                if (skipLevel) break;
             }
         }
         run.check();
-        run.result.success = true;
-    } catch (const std::exception &error) { run.result.errorMessage = QString::fromUtf8(error.what()); }
-      catch (...) { run.result.errorMessage = "Unexpected descent strategy error"; }
+        run.result.success = run.result.trialIssues.isEmpty();
+    } catch (const std::exception &error) {
+        run.result.errorMessage += (run.result.errorMessage.isEmpty() ? "" : "; ") + QString::fromUtf8(error.what());
+    } catch (...) { run.result.errorMessage += "; Unexpected descent strategy error"; }
     return run.finish();
 }

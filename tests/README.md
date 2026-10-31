@@ -17,8 +17,8 @@ if ($LASTEXITCODE -ne 0) { throw 'CI failed' }
 
 | Profile | 範圍 |
 | --- | --- |
-| ci-offline | 主 839（含 VISA）＋OCR 2＋WFM 1＝842 個 CTest；全部必須執行。 |
-| local-full | 預設完整模式，與 CI 相同 842 個 CTest；需要官方 VISA 標頭及固定 WFM 樣本。 |
+| ci-offline | 主 853（含 VISA）＋OCR 2＋WFM 1＝856 個 CTest；全部必須執行。 |
+| local-full | 預設完整模式，與 CI 相同 856 個 CTest；需要官方 VISA 標頭及固定 WFM 樣本。 |
 
 WFM 的單一 CTest 內含 101 個 QtTest 結果（99 個功能資料列＋init／cleanup），按固定清單逐列驗證並另列報告，不與 CTest 數量相加。manifest v3 起兩種 profile 不再排除 VISA；歷史 833／834 的結果仍只代表當時範圍。
 
@@ -41,6 +41,8 @@ WFM 的單一 CTest 內含 101 個 QtTest 結果（99 個功能資料列＋init�
 
 AUTO 起始參考回歸分兩層：`scope_architecture_measurement` 以真 Driver／假 transport 檢查 RUNSTOP、新計數、停止與模式讀回、Average 完成數及 Single 一次；`normal_trigger_acquisition` 以真策略檢查平線起始、參考時限、取消與錯誤。共用的 descent、Brown Out、Auto Period、Group 與 Capture 案例另驗證接線及清理；假設備通過不等於實機觸發或波形同步已驗收。
 
+Auto Period 的 `oscilloscope_configuration` 驗證穩定 3～8 週期與上限；`oscilloscope_autoperiod_short_window`／`delayed_result`／`late_result` 三個案例分別覆蓋 NA 後量化擴時基、延遲 PERIOD、PERIOD／刻度逾時回讀與清理。使用真 Service／MSO session 配假 query/write，不代表示波器韌體或實際波形同步已驗收。
+
 ## 完整 PASS 的條件
 
 [固定 manifest](ctest-manifest.json) 鎖定名稱、命令、參數、labels、timeout、QtTest 方法及 WFM 資料列。runner 每輪 configure／build／列舉／執行並比對結果；只有 exit 0 與本輪 summary PASS 才代表完整通過。少測、多測、重複、skip、disabled、timeout、破損報告、依賴不符或來源中途改變都失敗，不能從當次列舉重建 manifest 消除缺項。
@@ -54,3 +56,7 @@ AUTO 起始參考回歸分兩層：`scope_architecture_measurement` 以真 Drive
 desktop、歷史診斷、coverage、SDK、私人波形、產物及維護文件不隨此測試來源發布。部分工作站另有 local 診斷，並不加入固定 CTest 清單。公開來源包含測試、固定依賴來源／hash 與取得腳本；vendor 標頭及官方波形下載至 ignored build，不提交或放入產品 ZIP。沒有實機或模型精確度宣稱。
 
 `waveform_ocr_test` 內的 liveOllama／liveBatch 僅供明確指定 OCR_FIXTURE 的本機診斷，CI 不選取；不要無參數執行該程式。測試字型使用 Windows 系統字型。產生的截圖透過 ELECTRONICATE_TEST_EVIDENCE_DIR 或 temporary 目錄保存，不需要公開任何真實波形。
+
+Turn on then short (descent) 的 `descent_short_continue*` 覆蓋提前觸發／MISS 後依序執行全部剩餘 Trials／Levels、致命錯誤中止，以及真 Service／Detail／Excel 的逐筆狀態與四值；沿用真策略與假儀器，不連接硬體。
+
+Issue #9 的垂直餘量回歸放在既有測試：`vertical_scale_calculation`（顯示位置、直線／一般波形、讀回與失敗）、`channel_state_startup`（真 Driver）、`steady_transition_settings`（Scale／Position 還原）、`test_sequence_gap_ready`（提前觸發與調整交界）。使用合成數據，不包含實機私人波形；CTest 外層數量不代表內部案例數。

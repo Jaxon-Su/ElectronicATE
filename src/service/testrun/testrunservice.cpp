@@ -337,6 +337,7 @@ void TestRunService::startTasks(const QVector<TaskPayload> &payloads, const Test
             m_attemptResult = makeRecord(i, attempt + 1);
             m_attemptActive = true;
             m_originalScales.clear();
+            m_originalPositions.clear();
             try {
                 m_attemptResult.loadCondition = singleLoadSource(prepared[i], m_context);
                 pass = executeTask(prepared[i]);
@@ -444,12 +445,16 @@ VerticalScaleOptions TestRunService::verticalScaleOptions(bool margin)
         if (!m_originalScales.contains(channel)) m_originalScales.insert(channel, previous);
         emit logMessage(QString("  CH%1 automatic Scale: %2 -> %3 units/div")
                             .arg(channel).arg(previous, 0, 'g', 12).arg(requested, 0, 'g', 12));
-    }};
+    }, [this](int channel, double previous, double requested) {
+        if (!m_originalPositions.contains(channel)) m_originalPositions.insert(channel,previous);
+        emit logMessage(QString("  CH%1 automatic Position: %2 -> %3 div")
+                            .arg(channel).arg(previous,0,'g',12).arg(requested,0,'g',12));
+    }, [this](const QString &message) { emit logMessage(message); }};
 }
 
 bool TestRunService::restoreVerticalScales()
 {
-    if (m_originalScales.isEmpty()) return true;
+    if (m_originalScales.isEmpty() && m_originalPositions.isEmpty()) return true;
     QStringList errors;
     auto *scope = m_context.scope;
     try {
@@ -471,9 +476,18 @@ bool TestRunService::restoreVerticalScales()
         } catch (...) { errors << QString("Channel %1: unexpected error").arg(it.key()); }
     }
     m_originalScales.clear();
+    for (auto it=m_originalPositions.cbegin(); it!=m_originalPositions.cend(); ++it) {
+        try {
+            OscilloscopeAcquisition::setPositionChecked(scope,cleanupStop,it.key(),it.value());
+            emit logMessage(QString("  CH%1 Position restored: %2 div").arg(it.key()).arg(it.value(),0,'g',12));
+        } catch (const std::exception &ex) {
+            errors << QString("Channel %1 Position: %2").arg(it.key()).arg(QString::fromUtf8(ex.what()));
+        } catch (...) { errors << QString("Channel %1 Position: unexpected error").arg(it.key()); }
+    }
+    m_originalPositions.clear();
     if (errors.isEmpty()) return true;
     m_cleanupFailed = true;
-    return failTask("Vertical scale restore failed: " + errors.join("; ") +
+    return failTask("Vertical scale/position restore failed: " + errors.join("; ") +
                     ". Reapply user oscilloscope settings before the next Run.");
 }
 

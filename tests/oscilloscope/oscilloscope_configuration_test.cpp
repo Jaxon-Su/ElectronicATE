@@ -1,4 +1,5 @@
 #include "../support/measurement_scope_fixture.h"
+#include "../support/test_evidence.h"
 #include "msoseries456.h"
 #include "msoperiodsession.h"
 #include "../support/configuration_test_helpers.h"
@@ -6,6 +7,9 @@
 #include "oscilloscope.h"
 #include <QCoreApplication>
 #include <QElapsedTimer>
+#include <QFile>
+#include <QRegularExpression>
+#include <QThread>
 #include <iostream>
 #include <cmath>
 #include <stdexcept>
@@ -64,8 +68,13 @@ public:
     QString throwingCommand;
     int captures = 0;
     int captureDelayMs = 0, measurementDelayMs = 0, referenceBudgetMs = 10000;
+    int measurementDelayCaptures = 0;
+    int delayPeriodRead = 0, periodReadDelayMs = 0;
+    int scaleReadbackDelayMs = 0;
+    bool scaleReadbackPending = false;
     QElapsedTimer captureTimer, resultTimer;
     bool malformed = false;
+    bool periodNeedsTwoCycles = false;
     double verticalScale = 1;
     int clippedCaptures = 0, periodReads = 0;
     bool stuckScale = false, throwClip = false;
@@ -92,14 +101,23 @@ public:
         else if (command == "TRIGger:A:MODe?") response = "NORMAL";
         else if (command.startsWith("DISplay")) response = "1";
         else if (command == "HORizontal:DIVisions?") response = "10";
-        else if (command == "HORizontal:SCAle?") response = QString::number(scale, 'g', 16);
+        else if (command == "HORizontal:SCAle?") {
+            if (scaleReadbackPending) {
+                scaleReadbackPending = false;
+                QThread::msleep(scaleReadbackDelayMs);
+            }
+            response = QString::number(scale, 'g', 16);
+        }
         else if (command == "ACQuire:STATE?") response = state;
         else if (command == "ACQuire:STOPAfter?") response = "RUNSTOP";
         else if (command == "MEASUrement:LIST?") response = ":MEASUREMENT:LIST MEAS1,MEAS3";
         else if (command.endsWith(":MEAN?")) {
             require(captures > clippedCaptures, "PERIOD queried on clipped record");
             ++periodReads;
-            response = malformed ? "bad" : QString::number(resultTimer.elapsed() < measurementDelayMs ? 9.91e37 : (capturePeriods.isEmpty() ? period : capturePeriods[qMin(captures - 1, capturePeriods.size() - 1)]), 'g', 16);
+            if(periodReads==delayPeriodRead)QThread::msleep(periodReadDelayMs);
+            response = malformed ? "bad" : QString::number(((measurementDelayCaptures==0||captures<=measurementDelayCaptures)&&resultTimer.elapsed() < measurementDelayMs) ||
+                (periodNeedsTwoCycles && scale * 10 < period * 2) ? 9.91e37 :
+                (capturePeriods.isEmpty() ? period : capturePeriods[qMin(captures - 1, capturePeriods.size() - 1)]), 'g', 16);
             if (cancel) cancel->storeRelease(1);
         } else return false;
         return true;
@@ -108,8 +126,10 @@ public:
         commands << command;
         if (command == throwingCommand && captures > 0) throw std::runtime_error("cleanup threw");
         if (command == failure) { error = "simulated reject"; return false; }
-        if (command.startsWith("HORizontal:SCAle ") && !rejectTimeScale)
+        if (command.startsWith("HORizontal:SCAle ") && !rejectTimeScale) {
             scale = std::max(minimumTimeScale, command.section(' ', -1).toDouble());
+            scaleReadbackPending = true;
+        }
         if (command.startsWith("CH2:SCAle ") && !stuckScale) verticalScale = command.section(' ', -1).toDouble();
         return true;
     }
@@ -132,6 +152,74 @@ public:
         return "0";
     }
 };
+void savePeriodEvidence(const QString &name,const QStringList &log) {
+    QFile file(TestEvidence::path("auto-period/"+name+".txt"));
+    require(file.open(QIODevice::WriteOnly),"cannot save Auto Period evidence");
+    file.write(log.join('\n').toUtf8());
+}
+void testShortPeriodWindow() {
+    QString error; QAtomicInt stop(0);
+    PeriodScope scope; scope.scale=.00002; scope.period=.001;
+    scope.periodNeedsTwoCycles=true; scope.minimumTimeScale=.0003;
+    QStringList log;
+    const bool ok=adjustOscilloscopeAutoPeriod(&scope,stop,error,{}, {},[&](const QString &line){log<<line;});
+    if(!ok)std::cerr<<error.toStdString()<<'\n';
+    require(ok,"short window: quantized forward expansion failed before fresh PERIOD verification");
+    require(scope.captures==4&&std::abs(scope.scale-.0003)<1e-15,"short window accepted without three fresh 3-cycle records");
+    require(scope.commands.filter(QRegularExpression("^HORizontal:SCAle ")).size()==1,"short window changed time scale after acceptance");
+    require(log.join('\n').contains("expired (NA)")&&log.join('\n').contains("actual=0.0003 s/div"),"short window diagnostic missing");
+    savePeriodEvidence("quantized",log);
+    PeriodScope stuck;stuck.scale=.00002;stuck.period=.001;stuck.periodNeedsTwoCycles=true;stuck.rejectTimeScale=true;
+    require(!adjustOscilloscopeAutoPeriod(&stuck,stop,error)&&stuck.captures==1&&error.contains("not applied"),
+            "unapplied expansion was mistaken for forward progress");
+    require(stuck.commands.contains("MEASUrement:DELete \"MEAS2\"")&&!stuck.commands.contains("ACQuire:STATE RUN"),
+            "unapplied expansion leaked measurement or resumed acquisition");
+}
+void testDelayedPeriodResult() {
+    QString error; QAtomicInt stop(0);
+    PeriodScope scope; scope.scale=1; scope.period=2;
+    scope.captureDelayMs=500;scope.measurementDelayMs=8000;scope.measurementDelayCaptures=1;
+    scope.failure="HORizontal:SCAle 10";
+    QStringList log;
+    const bool ok=adjustOscilloscopeAutoPeriod(&scope,stop,error,{}, {},[&](const QString &line){log<<line;});
+    if(!ok)std::cerr<<error.toStdString()<<'\n';
+    require(ok,"delayed PERIOD: expanded time scale before the frozen record's result became available");
+    require(scope.captures==3&&scope.commands.filter(QRegularExpression("^HORizontal:SCAle ")).isEmpty(),
+            "delayed PERIOD did not retain the initial five-cycle timebase");
+    require(log.join('\n').contains("PERIOD wait begin")&&log.join('\n').contains("wait limit=20000 ms")&&
+            log.join('\n').contains("PERIOD wait ready"),"delayed result wait diagnostic missing");
+    savePeriodEvidence("delayed",log);
+    for(bool cancel:{false,true}) {
+        PeriodScope failed;failed.scale=.0005;
+        if(cancel)failed.cancel=&stop;
+        else failed.readFailure="MEASUrement:MEAS2:RESUlts:CURRentacq:MEAN?";
+        require(!adjustOscilloscopeAutoPeriod(&failed,stop,error)&&failed.captures==1&&
+                failed.commands.filter(QRegularExpression("^HORizontal:SCAle ")).isEmpty(),"PERIOD error/Stop expanded time scale");
+        require(error.contains(cancel?"stopped":"PERIOD read failed",Qt::CaseInsensitive)&&
+                failed.commands.contains("MEASUrement:DELete \"MEAS2\"")&&!failed.commands.contains("ACQuire:STATE RUN"),
+                "PERIOD error/Stop lost reason or cleanup");
+        stop.storeRelease(0);
+    }
+}
+void testLateScaleReadback() {
+    QString error; QAtomicInt stop(0); PeriodScope scope;
+    scope.scaleReadbackDelayMs = 6000;
+    require(!adjustOscilloscopeAutoPeriod(&scope, stop, error) && error.contains("not applied") && scope.captures == 3,
+            "time scale returned after 5-second deadline was accepted for verification");
+    require(scope.commands.contains("MEASUrement:DELete \"MEAS2\"") && !scope.commands.contains("ACQuire:STATE RUN"),
+            "late time scale readback lost cleanup or resumed acquisition");
+}
+void testLatePeriodResult() {
+    QString error; QAtomicInt stop(0);PeriodScope scope;scope.scale=.0005;
+    scope.delayPeriodRead=4;scope.periodReadDelayMs=11000;
+    scope.failure="HORizontal:SCAle 0.005";
+    const bool ok=adjustOscilloscopeAutoPeriod(&scope,stop,error);
+    if(ok||!error.contains("after PERIOD wait limit"))std::cerr<<error.toStdString()<<'\n';
+    require(!ok&&error.contains("after PERIOD wait limit")&&scope.captures==1&&
+        scope.commands.filter(QRegularExpression("^HORizontal:SCAle ")).isEmpty(),"late valid PERIOD was accepted or treated as missing cycles");
+    require(scope.commands.contains("MEASUrement:DELete \"MEAS2\"")&&!scope.commands.contains("ACQuire:STATE RUN"),"late result cleanup missing");
+    testLateScaleReadback();
+}
 void testAcceptedPeriodWindow() {
     QString error; QAtomicInt stop(0);
     PeriodScope scope; scope.scale=8e-6; scope.period=11.89e-6; scope.rejectTimeScale=true;
@@ -320,6 +408,10 @@ void testAutoPeriod() {
 int main(int argc,char** argv) {
     QCoreApplication app(argc,argv);
     try {
+        if(app.arguments().contains("--issue4-short-window")){testShortPeriodWindow();return 0;}
+        if(app.arguments().contains("--issue4-delayed-result")){testDelayedPeriodResult();return 0;}
+        if(app.arguments().contains("--issue4-late-result")){testLatePeriodResult();return 0;}
+        if(app.arguments().contains("--issue4-late-readback")){testLateScaleReadback();return 0;}
         testAcceptedPeriodWindow();
         if (app.arguments().contains("--window")) return 0;
         testAutoPeriod();

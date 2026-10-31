@@ -116,13 +116,14 @@ void turnOffNegativeFallbackUnchanged() {
     QStringList logs;cfg.log=[&](const QString& line){logs<<line;};
     QAtomicInt stop(0);
     const auto result=runTransientStrategy(TransientKind::TurnOff,cfg,&scope,stop);
-    const double levels[]={2.4,-8.2875,-7.0875,-6.4875,-6.1875,-6.0375};
-    require(scope.levels.size()==6,"fallback search level count changed");
-    for(int i=0;i<6;++i)require(std::abs(scope.levels[i]-levels[i])<1e-8,"Fall thresholds changed");
+    // No integer grid point exists between the reference floor -5.8875 and MISS -7.2.
+    const double levels[]={2.4,-7.2};
+    require(scope.levels.size()==2,"fallback searched below the one-Step resolution");
+    for(int i=0;i<2;++i)require(std::abs(scope.levels[i]-levels[i])<1e-8,"Fall grid thresholds changed");
     require(result.success && result.trials.isEmpty() && result.steadyReferences.size()==1,"fallback provenance changed");
     const auto& values=result.steadyReferences[0].channels[0];
     require(values.maximum==476.76563 && values.minimum==-5.8875 && values.rms==275.44099 && values.mean==238.91049,"fallback quartet changed");
-    require(logs.count("Power off; wait for event")==4 && logs.count("Baseline trigger excluded from event results")==1,"event/baseline count changed");
+    require(logs.count("Power off; wait for event")==1 && logs.count("Baseline trigger excluded from event results")==0,"grid convergence repeated an excluded level");
 }
 void turnOffTrialStopFailure() {
     Scope scope;scope.never=true;

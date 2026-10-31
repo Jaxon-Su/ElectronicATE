@@ -45,6 +45,9 @@ public:
     // NoTrigger means READY and still acquiring; completed records belong to
     // the powered baseline, before short. The caller diagnoses them after exit.
     OscilloscopeAcquisition::AcquisitionResult waitForShortReady();
+    // Like the powered pre-short check, but never operates a relay. A natural
+    // pre-power-off record is returned separately from a valid off event.
+    OscilloscopeAcquisition::AcquisitionResult waitForPowerOffReady();
     OscMeasureResult finish();
 
     const TransientContext &ctx;
@@ -59,7 +62,7 @@ private:
     const bool diagnostics;
     QString phaseName = "not-started";
     QString diagnosticStageName = "Initialization";
-    enum class ReadinessPurpose { Event, PowerOn, Short };
+    enum class ReadinessPurpose { Event, PowerOn, Short, PowerOff };
     OscilloscopeAcquisition::AcquisitionResult waitForReadiness(ReadinessPurpose purpose);
     OscilloscopeAcquisition::AcquisitionResult waitForRecord(bool exitShortOnCompletion);
     bool exitShort();

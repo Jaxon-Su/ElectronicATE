@@ -24,13 +24,13 @@ double initialSearchStep(Execution &run, int trigger)
     run.check();
     const double scale = run.scope->getChannelScale(trigger);
     run.check();
-    const double step = scale * 0.04;
+    const double step = scale / 25.0;
     if (!valid(scale) || !valid(step) || step <= 0)
         throw std::runtime_error("Invalid trigger channel scale for search step");
-    run.log(QString("CH%1 Scale=%2 units/div; initial search step=%3 units (0.04 div)")
+    run.log(QString("CH%1 Scale=%2 units/div; initial search step=%3 units (Scale/25)")
             .arg(trigger)
-            .arg(scale)
-            .arg(step));
+            .arg(scale, 0, 'g', 16)
+            .arg(step, 0, 'g', 16));
     run.diagnostic("complete");
     return step;
 }
@@ -42,16 +42,17 @@ class DirectionSearch {
 public:
     DirectionSearch(Execution &run, Event &event, VerticalScaleState &vertical,
                     QMap<int, OscChannelMeasure> &steadyChannels, bool &haveValidEvent,
-                    int trigger, bool maximum, bool retainSteadyReference)
+                    int trigger, bool maximum, ReferenceResults references)
         : run(run), event(event), vertical(vertical), steadyChannels(steadyChannels),
           haveValidEvent(haveValidEvent), trigger(trigger), maximum(maximum),
-          direction(maximum ? 1.0 : -1.0), retainSteadyReference(retainSteadyReference) {}
+          direction(maximum ? 1.0 : -1.0), references(references) {}
 
     void execute();
 
 private:
     enum class Probe { Hit, Miss, Baseline, Rescale, BeforeInput, BeforeShort };
     void captureSteadyReference();
+    void updateBaselineReference(double triggerPeak);
     void arm();
     double readEvent(int trial);
     Probe probe(double candidate);
@@ -65,7 +66,7 @@ private:
     const int trigger;
     const bool maximum;
     const double direction;
-    const bool retainSteadyReference;
+    const ReferenceResults references;
     MeasurementReference steadyReference;
     double tolerance = 0;
     double level = 0;
@@ -82,7 +83,7 @@ private:
 
 } // namespace
 
-void runSearch(Execution &run, Event &event, bool retainSteadyReference)
+void runSearch(Execution &run, Event &event, ReferenceResults references)
 {
     QMap<int, OscChannelMeasure> steadyChannels;
     bool haveValidEvent = false;
@@ -120,7 +121,7 @@ void runSearch(Execution &run, Event &event, bool retainSteadyReference)
         if ((maximum && run.ctx.target == "MIN") || (!maximum && run.ctx.target == "MAX"))
             continue;
         DirectionSearch(run, event, vertical, steadyChannels, haveValidEvent, trigger, maximum,
-                        retainSteadyReference).execute();
+                        references).execute();
     }
     run.check();
     // Merge references only after all selected searches finish normally. Errors never become fallback
@@ -174,7 +175,7 @@ void DirectionSearch::execute()
         const auto outcome = probe(bracket.candidate());
         if (outcome == Probe::BeforeInput || outcome == Probe::BeforeShort) {
             const QString context = outcome == Probe::BeforeShort ? "Pre-short" : "Pre-input";
-            const double next = baselineFloor + tolerance;
+            const double next = TriggerLevelGrid(tolerance).above(baselineFloor);
             if (!valid(next) || next <= baselineFloor)
                 throw std::runtime_error((context + " trigger threshold cannot advance").toStdString());
             run.log(QString("%1 CH%2 %3 trigger: Level %4 -> %5 channel units (step=%6)")
@@ -199,9 +200,9 @@ void DirectionSearch::execute()
                 : bracket.observe(outcome == Probe::Hit, observedPeak, baselineFloor);
         if (bracket.bounded())
             run.log(QString("Bracket [%1, %2]; width=%3 channel units")
-                    .arg(direction * bracket.hit())
-                    .arg(direction * bracket.miss())
-                    .arg(bracket.miss() - bracket.hit()));
+                    .arg(direction * bracket.hit(), 0, 'g', 16)
+                    .arg(direction * bracket.miss(), 0, 'g', 16)
+                    .arg(bracket.miss() - bracket.hit(), 0, 'g', 16));
         if (progress == EventSearchBracket::Progress::NoEvent) {
             noEvent = true;
             break;
@@ -211,7 +212,7 @@ void DirectionSearch::execute()
     }
     // Publish only after a normal direction search, never from an interrupted reference/search.
     // A later MISS does not replace earlier events, including events with a legal NA metric.
-    if (retainSteadyReference && !steadyReference.channels.isEmpty() &&
+    if (references != ReferenceResults::None && !steadyReference.channels.isEmpty() &&
         std::none_of(run.result.trials.cbegin(), run.result.trials.cend(), [&](const auto &trial) {
             return trial.direction == steadyReference.direction;
         }))
@@ -235,8 +236,8 @@ void DirectionSearch::captureSteadyReference()
     run.diagnosticStage("AUTO reference");
     const auto reference = OscilloscopeAcquisition::captureAutoReference(
         run.scope, run.stop, qMax(0, run.ctx.phaseTimeoutMs - int(run.phase.elapsed())), &vertical,
-        retainSteadyReference ? OscilloscopeAcquisition::ReferenceMetrics::Quartet
-                              : OscilloscopeAcquisition::ReferenceMetrics::CaptureDefault,
+        references != ReferenceResults::None ? OscilloscopeAcquisition::ReferenceMetrics::Quartet
+                                             : OscilloscopeAcquisition::ReferenceMetrics::CaptureDefault,
         [&](const QString &message) { run.logProgress(message); }, run.diagnosticsEnabled());
     if (reference.cleanupFailed) run.result.cleanupFailed = true;
     run.checked(reference.success, reference.errorMessage);
@@ -263,17 +264,16 @@ void DirectionSearch::captureSteadyReference()
     for (const auto &value : reference.channels)
         if (value.channel == trigger) {
             referenceFloor = maximum ? value.maxVal : -value.minVal;
-            level = maximum ? std::max(initialSearchStep(run, trigger), value.maxVal + tolerance)
-                            : value.minVal - tolerance;
+            level = direction * TriggerLevelGrid(tolerance).above(referenceFloor);
             found = true;
             run.log(QString("AUTO steady reference Max=%1 Min=%2; initial Level=%3 channel units")
-                    .arg(value.maxVal)
-                    .arg(value.minVal)
-                    .arg(level));
+                    .arg(value.maxVal, 0, 'g', 16)
+                    .arg(value.minVal, 0, 'g', 16)
+                    .arg(level, 0, 'g', 16));
         }
     if (!found)
         throw std::runtime_error("AUTO reference trigger channel missing");
-    if (retainSteadyReference) {
+    if (references != ReferenceResults::None) {
         steadyReference.direction = maximum ? MeasurementDirection::Rise : MeasurementDirection::Fall;
         for (const auto &value : reference.channels)
             steadyReference.channels.append({value.channel, {}, value.maxVal, value.minVal,
@@ -282,13 +282,45 @@ void DirectionSearch::captureSteadyReference()
     referenceInputAvailable = true;
 }
 
+void DirectionSearch::updateBaselineReference(double triggerPeak)
+{
+    if (references != ReferenceResults::WorstSteady) return;
+    // Keep references separate from event trials. Each channel's winning quartet
+    // comes from one frozen acquisition, and is published only after normal completion.
+    for (auto &value : steadyReference.channels) {
+        auto read = [&](ScopeMeasurement type) {
+            run.check();
+            const double result = OscilloscopeAcquisition::readMeasurementChecked(run.scope, value.channel, type);
+            run.check();
+            return valid(result) ? result : std::numeric_limits<double>::quiet_NaN();
+        };
+        run.check();
+        const double rank = value.channel == trigger ? triggerPeak
+            : read(maximum ? ScopeMeasurement::Maximum : ScopeMeasurement::Minimum);
+        const double previous = maximum ? value.maximum : value.minimum;
+        if (!valid(rank) || (valid(previous) && !(maximum ? rank > previous : rank < previous)))
+            continue;
+        const double other = read(maximum ? ScopeMeasurement::Minimum : ScopeMeasurement::Maximum);
+        const double rms = read(ScopeMeasurement::Rms), mean = read(ScopeMeasurement::Mean);
+        value.maximum = maximum ? rank : other;
+        value.minimum = maximum ? other : rank;
+        value.rms = rms;
+        value.mean = mean;
+        run.log(QString("CH%1 %2 Baseline reference updated: Max=%3 Min=%4 RMS=%5 Mean=%6")
+            .arg(value.channel).arg(maximum ? "Rise" : "Fall")
+            .arg(formatOscMeasurement(value.maximum), formatOscMeasurement(value.minimum),
+                 formatOscMeasurement(value.rms), formatOscMeasurement(value.mean)));
+    }
+}
+
 void DirectionSearch::arm()
 {
     run.diagnosticStage("Single arm", QString("Level=%1 channel units").arg(level, 0, 'g', 16));
     run.check();
     if (++acquisitions > run.ctx.maxIterations)
         throw std::runtime_error("Transient acquisition iteration limit reached");
-    run.log(QString("%1: arm Level=%2 channel units").arg(maximum ? "Max" : "Min").arg(level));
+    run.log(QString("%1: arm Level=%2 channel units; Step=%3 (Scale/25)")
+        .arg(maximum ? "Max" : "Min").arg(level, 0, 'g', 16).arg(tolerance, 0, 'g', 16));
     run.configure([&](QString &e) { return run.scope->setChannelTriggerLevel(trigger, level, e); });
     if (!run.scope->beginSingleAcquisition()) {
         const QString detail = run.scope->lastError();
@@ -423,6 +455,7 @@ DirectionSearch::Probe DirectionSearch::processBaseline(AcquisitionResult status
     run.check();
     if (!valid(peak))
         throw std::runtime_error("Baseline measurement: NA");
+    updateBaselineReference(peak);
     baselineFloor = std::max(candidate, direction * peak);
     run.diagnostic("complete");
     run.stopScope("Baseline STOP");

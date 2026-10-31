@@ -9,6 +9,14 @@
 
 namespace
 {
+struct MarginAdjustment {
+    ScopeVerticalRange range;
+    double scale = 0;
+    double anchor = 0;
+    double value = 0;
+    double position(double actualScale) const { return anchor - (value-range.center)/actualScale; }
+};
+
 QString triggerStateName(ScopeTriggerState state)
 {
     switch (state) {
@@ -230,7 +238,11 @@ bool OscilloscopeAcquisition::expandVerticalRange(IScopeMeasurement *scope, QAto
         if (vertical && vertical->options.beforeChange)
             vertical->options.beforeChange(channel, previous, target);
         checkPhase();
-        setScaleChecked(scope, stop, channel, target, true);
+        const double actual = setScaleChecked(scope, stop, channel, target, true, phaseDeadline);
+        if (vertical && vertical->options.log)
+            vertical->options.log(QString("CH%1 Scale readback: requested=%2 actual=%3 units/div")
+                .arg(channel).arg(target,0,'g',12).arg(actual,0,'g',12));
+        return actual;
     };
     ScopeCaptureRecord record;
     record.phase = phase;
@@ -250,6 +262,7 @@ bool OscilloscopeAcquisition::expandVerticalRange(IScopeMeasurement *scope, QAto
         extremum->value = std::numeric_limits<double>::quiet_NaN();
     }
     QMap<int, QPair<double, double>> expansions;
+    QMap<int, MarginAdjustment> margins;
     const bool margin = vertical && vertical->options.margin;
     std::exception_ptr queryFailure;
     try {
@@ -282,16 +295,39 @@ bool OscilloscopeAcquisition::expandVerticalRange(IScopeMeasurement *scope, QAto
                         throw std::runtime_error(QString("CH%1 vertical range: %2").arg(value.channel).arg(error).toStdString());
                     checkPhase();
                     if (!valid(range.scale) || range.scale <= 0 || !valid(range.center) ||
-                        !valid(range.divisions) || range.divisions <= 0 ||
+                        !valid(range.divisions) || range.divisions <= 0 || !valid(range.position) ||
+                        !valid(range.minimumPosition) || !valid(range.maximumPosition) ||
+                        range.minimumPosition >= -range.divisions*0.4 ||
+                        range.maximumPosition <= range.divisions*0.4 ||
+                        range.position < range.minimumPosition || range.position > range.maximumPosition ||
                         !valid(value.maxVal) || !valid(value.minVal) || value.maxVal < value.minVal)
                         throw std::runtime_error(QString("CH%1 invalid vertical range or extrema for 10% margin").arg(value.channel).toStdString());
-                    const double peak = std::max(std::abs(value.maxVal - range.center),
-                                                 std::abs(value.minVal - range.center));
-                    const double required = peak / (range.divisions * 0.4);
-                    if (!valid(required)) throw std::runtime_error("Invalid calculated margin scale");
-                    // Relative tolerance only absorbs floating-point/readback rounding.
-                    if (required > range.scale * (1 + 1e-9))
-                        expansions.insert(value.channel, {range.scale, required});
+                    const double top = (value.maxVal-range.center)/range.scale + range.position;
+                    const double bottom = (value.minVal-range.center)/range.scale + range.position;
+                    if (top <= range.divisions*0.4 + 1e-9 && bottom >= -range.divisions*0.4 - 1e-9)
+                        continue;
+                    // Position affects display only. ADC clipping above still uses x2.
+                    const double span = value.maxVal-value.minVal;
+                    const double edge = range.divisions*0.395;
+                    const bool flat = span <= range.scale*0.1;
+                    MarginAdjustment plan{range, std::max(range.scale,span/(2*edge)),
+                                          0, value.minVal+span/2};
+                    if (flat && value.minVal > 0) { plan.anchor=edge; plan.value=value.maxVal; }
+                    else if (flat && value.maxVal < 0) { plan.anchor=-edge; plan.value=value.minVal; }
+                    const double delta = plan.value-range.center;
+                    // Leave the ADC Offset unchanged; expand only when span or Position limits require it.
+                    plan.scale = std::max(plan.scale, delta >= 0 ? delta/(plan.anchor-range.minimumPosition)
+                                                               : -delta/(range.maximumPosition-plan.anchor));
+                    if (!valid(plan.scale) || plan.scale <= 0)
+                        throw std::runtime_error("Invalid calculated margin scale");
+                    margins.insert(value.channel,plan);
+                    if (plan.scale > range.scale*(1+1e-9))
+                        expansions.insert(value.channel,{range.scale,plan.scale});
+                    if (vertical->options.log)
+                        vertical->options.log(QString("CH%1 10% display margin: %2; Max=%3 Min=%4 Offset=%5 Position=%6 div; requested Scale=%7")
+                            .arg(value.channel).arg(flat ? "flat edge/zero center" : "waveform center")
+                            .arg(value.maxVal,0,'g',12).arg(value.minVal,0,'g',12).arg(range.center,0,'g',12)
+                            .arg(range.position,0,'g',12).arg(plan.scale,0,'g',12));
                 }
             }
         }
@@ -330,10 +366,28 @@ bool OscilloscopeAcquisition::expandVerticalRange(IScopeMeasurement *scope, QAto
             throw std::runtime_error("Clipped waveform: invalid channel scale");
         expansions.insert(ch, {previous, previous * 2});
     }
+    const bool changed = !expansions.isEmpty() || !margins.isEmpty();
+    if (changed && adjustments >= 8)
+        throw std::runtime_error("Vertical scale adjustment limit reached");
+    QMap<int,double> actualScales;
     for (auto it = expansions.cbegin(); it != expansions.cend(); ++it)
-        setScale(it.key(), it.value().first, it.value().second);
-    if (!expansions.isEmpty()) ++adjustments;
-    return !expansions.isEmpty();
+        actualScales.insert(it.key(),setScale(it.key(), it.value().first, it.value().second));
+    for (auto it = margins.cbegin(); it != margins.cend(); ++it) {
+        checkPhase();
+        const auto &plan = it.value();
+        const double target = std::clamp(plan.position(actualScales.value(it.key(),plan.range.scale)),
+                                         plan.range.minimumPosition,plan.range.maximumPosition);
+        if (std::abs(target-plan.range.position) <= 1e-9) continue;
+        if (vertical->options.beforePositionChange)
+            vertical->options.beforePositionChange(it.key(),plan.range.position,target);
+        checkPhase();
+        const double actual = setPositionChecked(scope,stop,it.key(),target,phaseDeadline);
+        if (vertical->options.log)
+            vertical->options.log(QString("CH%1 Position readback: requested=%2 actual=%3 div")
+                .arg(it.key()).arg(target,0,'g',12).arg(actual,0,'g',12));
+    }
+    if (changed) ++adjustments;
+    return changed;
 }
 
 OscilloscopeAcquisition::AcquisitionResult OscilloscopeAcquisition::acquireAutoRecord(

@@ -1,4 +1,5 @@
 #include "steadysearch.h"
+#include "../measurement/triggerlevelgrid.h"
 
 #include <QElapsedTimer>
 #include <algorithm>
@@ -125,7 +126,7 @@ bool Search::searchDirection(bool maximum)
 
         // Read each round so clipping recovery also updates the step (V or A).
         const double scale = measurementOrNaN(scope->getChannelScale(triggerChannel));
-        const double step = scale * 0.04;
+        const double step = scale / 25.0;
         if (stopFlag.loadAcquire()) {
             result.errorMessage = "Stopped by user";
             return false;
@@ -137,10 +138,18 @@ bool Search::searchDirection(bool maximum)
         if (phase.elapsed() >= m_phaseTimeoutMs)
             break;
 
-        if (maximum && iteration == 0)
-            level = std::max(level, step);
-        if (log) log(QString("Normal %1: CH%2 Level=%3; trigger wait=%4 ms")
-            .arg(maximum ? "MAX" : "MIN").arg(triggerChannel).arg(level).arg(m_timeoutMs));
+        const double direction = maximum ? 1.0 : -1.0;
+        try {
+            const TriggerLevelGrid grid(step);
+            level = direction * (iteration == 0 ? grid.above(direction * level)
+                                                : grid.atOrAbove(direction * level));
+        } catch (const std::exception &ex) {
+            result.errorMessage = QString::fromUtf8(ex.what());
+            return false;
+        }
+        if (log) log(QString("Normal %1: CH%2 Level=%3; trigger wait=%4 ms; Scale=%5; Step=%6 (Scale/25)")
+            .arg(maximum ? "MAX" : "MIN").arg(triggerChannel).arg(level, 0, 'g', 16).arg(m_timeoutMs)
+            .arg(scale, 0, 'g', 16).arg(step, 0, 'g', 16));
 
         // 每輪重新啟動 Single；啟動失敗不能讀取上一筆波形當成新資料。
         if (!scope->setChannelTriggerLevel(triggerChannel, level, result.errorMessage))
@@ -220,8 +229,14 @@ bool Search::searchDirection(bool maximum)
 
         // 門檻必須持續向外推進；只有 NoTrigger 才算搜尋結束。
         haveCapture = true;
-        const double nextLevel =
-            maximum ? std::max(level + step, peak + step) : std::min(level - step, peak - step);
+        double nextLevel;
+        try {
+            const TriggerLevelGrid grid(step);
+            nextLevel = direction * std::max(grid.next(direction * level), grid.above(direction * peak));
+        } catch (const std::exception &ex) {
+            result.errorMessage = QString::fromUtf8(ex.what());
+            return false;
+        }
         if (!std::isfinite(nextLevel) || nextLevel == level) {
             result.errorMessage = "Search threshold cannot advance";
             return false;

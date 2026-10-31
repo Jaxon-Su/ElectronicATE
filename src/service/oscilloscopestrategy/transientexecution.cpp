@@ -216,10 +216,17 @@ AcquisitionResult Execution::waitForShortReady()
     return waitForReadiness(ReadinessPurpose::Short);
 }
 
+AcquisitionResult Execution::waitForPowerOffReady()
+{
+    return waitForReadiness(ReadinessPurpose::PowerOff);
+}
+
 AcquisitionResult Execution::waitForReadiness(ReadinessPurpose purpose)
 {
     const bool beforeShort = purpose == ReadinessPurpose::Short;
-    const QString recordName = beforeShort ? "Pre-short" : "Pre-input";
+    const bool beforePowerOff = purpose == ReadinessPurpose::PowerOff;
+    const bool poweredBaseline = beforeShort || beforePowerOff;
+    const QString recordName = beforePowerOff ? "Pre-power-off" : beforeShort ? "Pre-short" : "Pre-input";
     QString error;
     auto rejectedState = ScopeTriggerState::Invalid;
     try {
@@ -227,20 +234,22 @@ AcquisitionResult Execution::waitForReadiness(ReadinessPurpose purpose)
                 scope, stop,
                 qMin(ctx.timeoutMs, qMax(0, ctx.phaseTimeoutMs - int(phase.elapsed()))),
                 error, &rejectedState)) {
+            if (poweredBaseline && !scope->lastError().isEmpty())
+                throw std::runtime_error((recordName + " readiness query failed: " + scope->lastError()).toStdString());
             check();
-            if (!beforeShort) return AcquisitionResult::NoTrigger;
+            if (!poweredBaseline) return AcquisitionResult::NoTrigger;
             // A record can complete just after the READY reply. This final
             // query narrows the gap; it is not atomic with the physical relay.
             const auto state = scope->acquisitionState();
             if (stop.loadAcquire()) throw std::runtime_error("Stopped by user");
             if (state == ScopeAcquisitionState::Invalid || !scope->lastError().isEmpty())
-                throw std::runtime_error(("Pre-short acquisition query failed: " + scope->lastError()).toStdString());
+                throw std::runtime_error((recordName + " acquisition query failed: " + scope->lastError()).toStdString());
             if (state == ScopeAcquisitionState::Running) {
                 check();
                 return AcquisitionResult::NoTrigger;
             }
             rejectedState = ScopeTriggerState::Triggered;
-            error = "Acquisition completed before short";
+            error = beforePowerOff ? "Acquisition completed before power-off" : "Acquisition completed before short";
         }
     } catch (const std::exception &ex) { error = QString::fromUtf8(ex.what()); }
       catch (...) { error = "Unexpected trigger readiness error"; }
@@ -282,8 +291,11 @@ AcquisitionResult Execution::waitForReadiness(ReadinessPurpose purpose)
                         throw std::runtime_error((recordName + " record is not frozen: " + scope->lastError()).toStdString());
                     // Baseline processing owns its diagnostic and extrema. Do
                     // not save twice or discard a naturally completed late record.
-                    if (recover && beforeShort)
+                    if (recover && poweredBaseline) {
+                        log(error + "; acquisition=STOP; " +
+                            (beforePowerOff ? "pre-power-off" : "pre-short") + " record excluded from event results");
                         return late ? AcquisitionResult::CompletedAfterTimeout : AcquisitionResult::Completed;
+                    }
                     if (frozen == ScopeAcquisitionState::Completed && ctx.captureRecord) {
                         ScopeCaptureRecord record;
                         record.phase = "Before READY";
@@ -302,6 +314,8 @@ AcquisitionResult Execution::waitForReadiness(ReadinessPurpose purpose)
                     }
                 }
             }
+            if (beforePowerOff && state == ScopeAcquisitionState::Running)
+                error += "; acquisition=RUN; pre-power-off completion unconfirmed; not continuing";
         } catch (const std::exception &ex) { error += "; Diagnostic Capture: " + QString::fromUtf8(ex.what()); }
           catch (...) { error += "; Diagnostic Capture: unexpected error"; }
     }

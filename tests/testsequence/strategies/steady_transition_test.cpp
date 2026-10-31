@@ -125,6 +125,15 @@ static void verticalMarginLifecycle()
         public:
             double scale=4;
             int restores=0;
+            double position=-2;
+            int positionRestores=0;
+            bool readVerticalRange(int,ScopeVerticalRange &range,QString &) override {
+                range={scale,0,10,position,-8,8}; return true;
+            }
+            bool setVerticalPosition(int,double value,QString &) override {
+                if(value==-2) ++positionRestores;
+                position=value; return true;
+            }
             double getChannelScale(int) override { return scale; }
             bool setVerticalScale(int, double value, QString &) override {
                 if (value==4) ++restores;
@@ -142,6 +151,11 @@ static void verticalMarginLifecycle()
             const bool firstMember=!group || measurements%2==0;
             require(scope.scale==(firstMember?4:12),"Auto Period inherited wrong original scale");
             const double target=firstMember?8:12;
+            if (margin) {
+                require(bool(options.beforePositionChange),"Position snapshot missing from Auto Period");
+                require(scope.position==(firstMember?-2:2),"Auto Period inherited wrong Position");
+                options.beforePositionChange(1,scope.position,1); scope.position=1;
+            }
             options.beforeChange(1,scope.scale,target); scope.scale=target; return true;
         };
         deps.strategy=[&](const MeasurementStrategyRequest &request) {
@@ -152,6 +166,11 @@ static void verticalMarginLifecycle()
                 require(scope.scale==(firstMember?(autoPeriod?8:4):12),"new task inherited expanded scale, or Group shrank early");
                 options.beforeChange(1,scope.scale,12);
                 scope.scale=12; ++measurements;
+                if (margin) {
+                    require(bool(options.beforePositionChange),"Position snapshot missing from strategy");
+                    require(scope.position==(autoPeriod?1:firstMember?-2:2),"Group position restored early or task not restored");
+                    options.beforePositionChange(1,scope.position,2); scope.position=2;
+                }
                 MeasurementResult result; result.success=true; return result;
             });
         };
@@ -162,6 +181,8 @@ static void verticalMarginLifecycle()
         for (int run=0;run<2;++run) {
             runner.prepareRun(); runner.startTasks({configured,configured},c);
             require(scope.scale==4 && scope.restores==2*(run+1),"task/Run did not restore original scale");
+            require(scope.position==-2 && scope.positionRestores==(margin?2*(run+1):0),
+                    "task/Run did not restore original Position or unselected modified Position");
         }
         require(measurements==(group?8:4),"lifecycle test skipped measurements");
     }
@@ -169,12 +190,22 @@ static void verticalMarginLifecycle()
 
 static void verticalMarginFailures()
 {
-    for (const QString mode : {"failure","stop","restore","stop_restore","auto_period_failure"}) {
+    for (const QString mode : {"failure","stop","restore","stop_restore","auto_period_failure","position_only_failure","position_restore"}) {
         class ScalingScope : public Scope {
         public:
             QMap<int,double> scales{{1,4},{2,2}};
+            QMap<int,double> positions{{1,-2},{2,3}};
             QVector<int> restores;
-            bool reject=false;
+            QVector<int> positionRestores;
+            bool reject=false, rejectPosition=false;
+            bool readVerticalRange(int ch,ScopeVerticalRange &range,QString &) override {
+                range={scales[ch],0,10,positions[ch],-8,8}; return true;
+            }
+            bool setVerticalPosition(int ch,double value,QString &error) override {
+                positionRestores<<ch;
+                if(rejectPosition && ch==1) {error="injected Position restore failure";return false;}
+                positions[ch]=value;return true;
+            }
             double getChannelScale(int ch) override {return scales[ch];}
             bool setVerticalScale(int ch,double value,QString &error) override {
                 restores<<ch;
@@ -190,8 +221,13 @@ static void verticalMarginFailures()
         int calls=0,periodCalls=0;
         auto expand=[&](const VerticalScaleOptions &options) {
             require(scope.scales[1]==4 && scope.scales[2]==2,"retry inherited expansion");
-            options.beforeChange(1,4,8);scope.scales[1]=8;
-            options.beforeChange(2,2,4);scope.scales[2]=4;
+            require(scope.positions[1]==-2 && scope.positions[2]==3,"retry inherited automatic Position");
+            options.beforePositionChange(1,-2,1);scope.positions[1]=1;
+            options.beforePositionChange(2,3,-1);scope.positions[2]=-1;
+            if(mode!="position_only_failure") {
+                options.beforeChange(1,4,8);scope.scales[1]=8;
+                options.beforeChange(2,2,4);scope.scales[2]=4;
+            }
         };
         TestRunService *service=nullptr;
         deps.autoPeriod=[&](IScopeMeasurement *,QAtomicInt &,QString &error,const OscCaptureObserver &,const VerticalScaleOptions &options,const std::function<void(const QString&)>&) {
@@ -202,9 +238,12 @@ static void verticalMarginFailures()
             const auto options=std::get<ScopeMeasurementRequest>(request).context.verticalScale;
             return std::make_unique<Strategy>([&,options] {
                 ++calls;expand(options);
-                if (mode.contains("restore")) scope.reject=true;
+                if (mode.contains("restore")) {
+                    scope.reject=mode!="position_restore"; scope.rejectPosition=true;
+                }
                 if (mode.startsWith("stop")) service->stop();
-                if (mode=="failure" && calls==1) throw std::runtime_error("injected measurement failure after scale write");
+                if ((mode=="failure" || mode=="position_only_failure") && calls==1)
+                    throw std::runtime_error("injected failure after partial vertical write");
                 MeasurementResult result;result.success=true;return result;
             });
         };
@@ -216,14 +255,17 @@ static void verticalMarginFailures()
         runner.startTasks({configured,configured},c);
         if (mode.contains("restore")) {
             require(calls==1 && scope.restores==QVector<int>({1,2}) && scope.scales[2]==2 && records.size()==2 &&
+                    scope.positionRestores==QVector<int>({1,2}) && scope.positions[2]==3 &&
                     records[0].error.contains("restore failed") && records[1].status=="Skipped",
                     "restore failure skipped healthy channel or continued/retried");
         } else if (mode=="stop") {
             require(calls==1 && scope.scales[1]==4 && scope.scales[2]==2 && records[0].status=="Cancelled" &&
+                    scope.positions[1]==-2 && scope.positions[2]==3 && scope.positionRestores.size()==2 &&
                     records[1].status=="Skipped","Stop skipped scale cleanup or continued");
         } else {
             require(records.size()==3 && records[0].status=="Fail" && records[1].status=="Pass" && records[2].status=="Pass" &&
-                    scope.scales[1]==4 && scope.scales[2]==2 && scope.restores.size()==6,
+                    scope.scales[1]==4 && scope.scales[2]==2 && scope.restores.size()==(mode=="position_only_failure"?0:6) &&
+                    scope.positions[1]==-2 && scope.positions[2]==3 && scope.positionRestores.size()==6,
                     "failed attempt/Auto Period lost restore before retry");
         }
     }

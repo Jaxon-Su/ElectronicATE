@@ -52,9 +52,25 @@ inline QVector<QVariantList> rows(const TestSequenceResultRecord &record, bool s
         output.append(row);
     };
     const QString note = QStringList{record.error, record.summary}.join("\n").trimmed();
+    const bool descentLevels = TestSequenceTaskKind::isDescent(TestSequenceTaskKind::fromName(record.taskName));
     const auto appendMeasurements = [&](const QString &load, const QString &status, const QString &details,
                                         const QVector<TestSequenceChannelResult> &channels,
-                                        const QVector<MeasurementTrial> &trials) {
+                                        const QVector<MeasurementTrial> &trials,
+                                        const QVector<MeasurementTrialIssue> &issues) {
+        const auto firstRow = output.size();
+        const auto appendIssues = [&] {
+            for (const auto &issue : issues) {
+                append(load, issue.skipped ? "Skipped" : "Fail", issue.error + "\nTask status: " + status,
+                       nullptr, issue.direction, "NA");
+                auto &row = output.last();
+                row[Step] = issue.step; row[Trial] = issue.trial; row[Level] = number(issue.triggerLevel);
+            }
+            if (descentLevels && !summary)
+                std::stable_sort(output.begin() + firstRow, output.end(), [](const auto &a, const auto &b) {
+                    return a[Step].toInt() == b[Step].toInt() ? a[Trial].toInt() < b[Trial].toInt()
+                                                           : a[Step].toInt() < b[Step].toInt();
+                });
+        };
         if (!summary) {
             bool hasReference = false;
             for (const auto &channel : channels)
@@ -62,17 +78,28 @@ inline QVector<QVariantList> rows(const TestSequenceResultRecord &record, bool s
                     append(load, status, details, &channel, channel.direction);
                     hasReference = true;
                 }
-            for (const auto &trial : trials)
+            for (const auto &trial : trials) {
+                const QString trialStatus = descentLevels ? "Pass" : status;
+                const QString trialDetails = descentLevels ? "Task status: " + status + "\n" + details : details;
+                if (descentLevels && trial.channels.isEmpty()) {
+                    append(load, trialStatus, trialDetails + "\nTrigger-only record; no enabled measurement channels",
+                           nullptr, trial.direction, "NA");
+                    auto &row = output.last();
+                    row[Record] = trial.sequence; row[Step] = trial.step;
+                    row[Trial] = trial.trial; row[Level] = number(trial.triggerLevel);
+                }
                 for (const auto &value : trial.channels) {
                     TestSequenceChannelResult channel{value.channel, value.unit, value.maximum, value.minimum, value.rms, value.mean};
                     channel.sourceSequence = trial.sequence;
                     channel.step = trial.step;
                     channel.trial = trial.trial;
                     channel.triggerLevel = trial.triggerLevel;
-                    append(load, status, details, &channel, trial.direction);
+                    append(load, trialStatus, trialDetails, &channel, trial.direction);
                 }
-            if (trials.isEmpty() && !hasReference)
+            }
+            if (trials.isEmpty() && !hasReference && issues.isEmpty())
                 append(load, status, details + "\nNo valid event trials", nullptr, MeasurementDirection::None, "NA");
+            appendIssues();
             return;
         }
         for (const auto &channel : channels)
@@ -107,6 +134,7 @@ inline QVector<QVariantList> rows(const TestSequenceResultRecord &record, bool s
             append(load, status, details + (selected ? "\nNo valid event in this direction" : "\nDirection not selected"),
                    nullptr, direction, selected ? "NA" : "Not run");
         }
+        appendIssues();
     };
     const QString status = record.status.isEmpty() ? QStringLiteral("Running") : record.status;
     if (!TestSequenceTaskKind::isMeasurement(record.taskName)) {
@@ -115,9 +143,11 @@ inline QVector<QVariantList> rows(const TestSequenceResultRecord &record, bool s
         if (record.conditions.isEmpty()) append({}, status, note, nullptr, MeasurementDirection::None, "NA");
         for (const auto &condition : record.conditions)
             appendMeasurements(loadDescription(condition.condition),
-                               condition.status, note + "\n" + condition.error, condition.channels, condition.trials);
+                               condition.status, note + "\n" + condition.error, condition.channels, condition.trials,
+                               condition.trialIssues);
     } else {
-        appendMeasurements(loadDescription(record.loadCondition), status, note, record.channels, record.trials);
+        appendMeasurements(loadDescription(record.loadCondition), status, note, record.channels, record.trials,
+                           record.trialIssues);
     }
     // Capture files belong to the task attempt, not to a Trial ID. List them
     // once so a long acquisition history does not repeat the entire file list.

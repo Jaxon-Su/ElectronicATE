@@ -39,6 +39,8 @@ class IScopeChannels
     // Each read replaces lastError: legal NA clears it; transport/setup failure sets it.
     virtual double readMeasurement(int channel, ScopeMeasurement measurement) = 0;
     virtual bool setVerticalScale(int channel, double scale, QString &error) = 0;
+    virtual bool setVerticalPosition(int, double, QString &error)
+    { error = "Vertical display position is unsupported"; return false; }
     virtual bool readVerticalRange(int, ScopeVerticalRange &, QString &error)
     { error = "Vertical acquisition range is unsupported"; return false; }
 };

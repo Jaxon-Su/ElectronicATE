@@ -1,4 +1,5 @@
 #include "msoseries456.h"
+#include "oscilloscopesettingrules.h"
 #include <QRegularExpression>
 #include <cmath>
 
@@ -256,13 +257,28 @@ bool MSOSeries456::readVerticalRange(int channel, ScopeVerticalRange &range, QSt
     };
     ScopeVerticalRange actual;
     if (!read(QString("CH%1:SCAle?").arg(channel), actual.scale) || actual.scale <= 0 ||
-        !read(QString("CH%1:OFFSet?").arg(channel), actual.center)) {
+        !read(QString("CH%1:OFFSet?").arg(channel), actual.center) ||
+        !read(QString("CH%1:POSition?").arg(channel), actual.position)) {
         if (error.isEmpty()) error = "Invalid vertical scale";
         return false;
     }
     // 4/5/6 MSO Help: ten vertical acquisition divisions. Position is display-only.
     // Invert reverses both waveform samples and the reported Offset; do not negate twice.
     actual.divisions = 10;
+    actual.minimumPosition = OscilloscopeSettingRules::positionMinimum;
+    actual.maximumPosition = OscilloscopeSettingRules::positionMaximum;
+    if (actual.position < actual.minimumPosition || actual.position > actual.maximumPosition) {
+        error = "Invalid vertical position";
+        return false;
+    }
     range = actual;
     return true;
+}
+
+bool MSOSeries456::setVerticalPosition(int channel, double position, QString &error)
+{
+    if (channel < 1 || channel > getTotalChannel() || !std::isfinite(position) ||
+        position < OscilloscopeSettingRules::positionMinimum || position > OscilloscopeSettingRules::positionMaximum)
+        return unsupportedSetting("setVerticalPosition: invalid channel or position", error);
+    return writeConfigurationCommand(QString("CH%1:POSition %2").arg(channel).arg(position, 0, 'g', 16), error);
 }

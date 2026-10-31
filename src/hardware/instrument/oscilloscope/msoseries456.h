@@ -23,6 +23,7 @@ class MSOSeries456 : public Oscilloscope
     bool setTriggerMode(ScopeTriggerMode mode, QString &error) override;
     bool setChannelTriggerLevel(int channel, double level, QString &error) override;
     bool setVerticalScale(int channel, double scale, QString &error) override;
+    bool setVerticalPosition(int channel, double position, QString &error) override;
     bool readVerticalRange(int channel, ScopeVerticalRange &range, QString &error) override;
     bool beginSingleAcquisition() override;
     bool beginAutoReference(int &timeoutMs, QString &error) override;

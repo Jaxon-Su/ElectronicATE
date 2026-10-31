@@ -61,6 +61,9 @@ public:
         const auto prefix=model()=="MSOSeries456"?QString("TRIGger:A:LEVel:CH%1 ").arg(channel):QString("TRIGger:A:LEVel ");
         return writeConfigurationCommand(prefix+QString::number(value,'g',16),e);
     }
+    bool setVerticalPosition(int channel,double value,QString& e) override {
+        return writeConfigurationCommand(QString("CH%1:POSition %2").arg(channel).arg(value,0,'g',16),e);
+    }
     bool setVerticalScale(int channel,double value,QString& e) override {
         return writeConfigurationCommand(QString("CH%1:SCAle %2").arg(channel).arg(value,0,'g',16),e);
     }

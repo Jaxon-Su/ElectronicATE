@@ -540,12 +540,14 @@ bool TestRunService::executeTransient(const QString &name, const TaskSettings::T
         condition->error = result.error;
         condition->trials = result.trials;
         condition->channels = representativeChannels(result.trials, result.steadyReferences);
+        condition->trialIssues = result.trialIssues;
         if (!result.success || result.cleanupFailed)
             failTask(name + ": " + result.error);
     } else {
         m_attemptResult.error = result.error;
         m_attemptResult.trials = result.trials;
         m_attemptResult.channels = representativeChannels(result.trials, result.steadyReferences);
+        m_attemptResult.trialIssues = result.trialIssues;
         m_attemptResult.summary = m_actionResults.join("\n");
         emit measurementReady(m_currentTaskIndex, m_attemptResult, result.success && !result.cleanupFailed);
     }

@@ -24,7 +24,7 @@ QVariant TestSequenceResultsModel::headerData(int section, Qt::Orientation orien
 }
 void TestSequenceResultsModel::beginRun()
 {
-    m_records.clear(); m_filters.clear(); rebuild();
+    m_records.clear(); m_filters.clear(); m_taskModes.clear(); rebuild();
 }
 void TestSequenceResultsModel::updateRecord(const TestSequenceResultRecord &record)
 {
@@ -42,7 +42,20 @@ void TestSequenceResultsModel::selectTask(int uid)
 }
 void TestSequenceResultsModel::setSummary(bool summary)
 {
-    m_summary = summary; rebuild();
+    m_taskModes[m_uid] = summary;
+    const auto selected = std::find_if(m_records.cbegin(), m_records.cend(),
+                                      [&](const auto &r) { return r.dutUid == m_uid; });
+    if (selected == m_records.cend() || selected->taskName != "Turn off (descent)")
+        m_generalSummary = summary;
+    rebuild();
+}
+bool TestSequenceResultsModel::summary() const
+{
+    if (m_taskModes.contains(m_uid)) return m_taskModes.value(m_uid);
+    const auto selected = std::find_if(m_records.cbegin(), m_records.cend(),
+                                      [&](const auto &r) { return r.dutUid == m_uid; });
+    return selected != m_records.cend() && selected->taskName == "Turn off (descent)"
+        ? false : m_generalSummary;
 }
 void TestSequenceResultsModel::setFilter(int column, const QString &value)
 {
@@ -63,7 +76,7 @@ void TestSequenceResultsModel::rebuild()
     beginResetModel();
     m_allRows.clear(); m_rows.clear();
     for (const auto &record : m_records)
-        if (m_uid >= 0 && record.dutUid == m_uid) m_allRows += TestSequenceResultRows::rows(record, m_summary);
+        if (m_uid >= 0 && record.dutUid == m_uid) m_allRows += TestSequenceResultRows::rows(record, summary());
     for (auto it = m_filters.begin(); it != m_filters.end(); ++it)
         if (!options(it.key()).contains(it.value())) it.value().clear();
     for (const auto &row : m_allRows) {
@@ -73,4 +86,5 @@ void TestSequenceResultsModel::rebuild()
         if (keep) m_rows.append(row);
     }
     endResetModel();
+    emit summaryChanged(summary());
 }
