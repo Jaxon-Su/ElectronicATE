@@ -14,6 +14,11 @@ public:
     QString lastError() const override { return {}; }
     bool isConnected() const override { return true; }
     bool beginSingleAcquisition() override { return true; }
+    bool beginAutoReference(int &budget,QString &) override { budget=10000;return true; }
+    ScopeReferenceStatus pollAutoReference(QString &state,QString &) override {
+        state="fake AUTO frozen reference";
+        return running?ScopeReferenceStatus::Pending:ScopeReferenceStatus::Completed;
+    }
     ScopeTriggerState triggerState() override { return ScopeTriggerState::Ready; }
     ScopeAcquisitionState acquisitionState() override { return running?ScopeAcquisitionState::Running:ScopeAcquisitionState::Completed; }
     int triggerChannel() override { return 1; }

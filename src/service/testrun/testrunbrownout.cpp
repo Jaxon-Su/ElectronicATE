@@ -16,6 +16,7 @@ bool TestRunService::executeBrownOut(const BrownOut::Settings &settings)
     auto publish = qScopeGuard([&] { publishStrategyCapture(capture); });
     BrownOutMeasurementRequest request{settings, *m_context.scope,
                                        m_brownOutFactories.value(m_currentTaskIndex), {}};
+    request.log = [this](const QString &text) { emit logMessage("Brown Out: " + text); };
     if (capture) request.capture = [&, capture](const ScopeCaptureRecord &record) {
         capture->record(m_context.scope, record,
                         {settings.load, m_context.loads[settings.load].label, LoadConditionKind::Static});

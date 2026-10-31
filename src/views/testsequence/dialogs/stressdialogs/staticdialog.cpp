@@ -15,6 +15,7 @@
 #include <QSpinBox>
 #include <QPushButton>
 #include <QDebug>
+#include <QScrollArea>
 
 static const char* STATIC_DLG_STYLE = R"(
     QDialog { background: #f4f7fb; }
@@ -157,6 +158,8 @@ void StaticDialog::buildUI(const InputConditionOptions& inputOptions, const QStr
     form->addRow(m_selection == Selection::Group ? "Loads :" : "Load :", m_loadSelection);
 
     // Duration
+    m_triggerSource = new TriggerSourceSelector(m_cfg, this);
+    form->addRow("Trigger source:", m_triggerSource);
     m_targetCombo = new QComboBox;
     m_targetCombo->setObjectName("measureTarget");
     m_targetCombo->addItem("BOTH", "BOTH");
@@ -200,8 +203,11 @@ void StaticDialog::buildUI(const InputConditionOptions& inputOptions, const QStr
     hint->setObjectName("hintLbl");
     form->addRow("", hint);
 
-    root->addWidget(grp);
-    root->addStretch();
+    auto* scroll = new QScrollArea;
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidget(grp);
+    root->addWidget(scroll, 1);
 
     // 按鈕列
     auto* btnRow = new QHBoxLayout;
@@ -224,11 +230,8 @@ void StaticDialog::buildUI(const InputConditionOptions& inputOptions, const QStr
     btnRow->addWidget(closeBtn);
     root->addLayout(btnRow);
 
-    setMinimumSize(m_selection == Selection::Group ? 520 : 400, 340);
-    if (m_selection == Selection::Group) {
-        ensurePolished();
-        setMinimumHeight(sizeHint().height());
-    }
+    setMinimumSize(m_selection == Selection::Group ? 520 : 400,
+                   m_selection == Selection::Group ? 600 : 490);
 }
 
 //  restoreFromCfg
@@ -243,6 +246,7 @@ void StaticDialog::restoreFromCfg()
 //  saveConfig
 void StaticDialog::saveConfig()
 {
+    m_triggerSource->save(m_cfg);
     // Input
     m_inputs->save(m_cfg);
 

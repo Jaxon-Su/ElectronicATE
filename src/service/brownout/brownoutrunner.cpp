@@ -1,4 +1,5 @@
 #include "brownoutrunner.h"
+#include "../measurement/triggerlevelgrid.h"
 #include <QElapsedTimer>
 #include <QThread>
 #include <QSet>
@@ -40,7 +41,8 @@ QSet<int> validateRecord(const BrownOutRecord &record)
 }
 
 MeasurementResult runBrownOut(const BrownOut::Settings &cfg, IScopeBrownOut &scope,
-                          const BrownOutIoFactory &createIo, QAtomicInt &stop, const OscCaptureObserver &capture)
+                          const BrownOutIoFactory &createIo, QAtomicInt &stop, const OscCaptureObserver &capture,
+                          const std::function<void(const QString &)> &log)
 {
     MeasurementResult result;
     QString error;
@@ -203,12 +205,21 @@ MeasurementResult runBrownOut(const BrownOut::Settings &cfg, IScopeBrownOut &sco
         const int recordDurationMs = session->recordDurationMs();
         require(recordDurationMs > 0, "Invalid scope acquisition duration");
         const qint64 acquisitionTimeoutMs = qint64(recordDurationMs) + cfg.dataTimeoutMs;
+        const qint64 referenceLimit = qMin(acquisitionTimeoutMs,qint64(session->referenceTimeoutMs()));
+        require(referenceLimit > 0 && referenceLimit <= 60000, "Invalid AUTO reference timeout budget");
+        QElapsedTimer fresh;
+        qint64 lastRecordPollElapsed = 0;
         // Error records with a sequence/channel list are frozen diagnostics supplied
         // by the driver. Save them before propagating their original read failure.
         auto pollRecord = [&](BrownOutRecord &record, const QString &phase, quint64 previousSequence = 0) {
             record = {};
             QString readError;
             const auto status = session->poll(record, readError);
+            // Capture may be slow: classify acquisition completion before file transfer.
+            lastRecordPollElapsed = fresh.elapsed();
+            if (phase == "Auto reference" && status == BrownOutRecordStatus::Ready &&
+                lastRecordPollElapsed >= referenceLimit)
+                readError = "AUTO reference timeout; completed record is diagnostic only";
             if (status == BrownOutRecordStatus::Ready ||
                 (status == BrownOutRecordStatus::Error && record.sequence > 0 && !record.channels.isEmpty())) {
                 require(record.sequence > previousSequence, "Scope returned an old record; diagnostic capture rejected");
@@ -251,13 +262,23 @@ MeasurementResult runBrownOut(const BrownOut::Settings &cfg, IScopeBrownOut &sco
             }
         };
         BrownOutRecord baseline;
-        QElapsedTimer fresh; fresh.start();
+        if (log) log(QString("AUTO reference: fresh RUNSTOP record; wait limit=%1 ms").arg(referenceLimit));
+        fresh.start();
+        QString lastReferenceState;
         while (true) {
             check();
             const auto status = pollRecord(baseline, "Auto reference");
-            if (status == BrownOutRecordStatus::Ready) break;
-            require(fresh.elapsed() < acquisitionTimeoutMs,
-                    "No coherent steady reference; increase time/div or reduce record length");
+            const auto state = session->referenceState();
+            if (log && state != lastReferenceState) {
+                log(QString("AUTO reference: %1; elapsed=%2 ms").arg(state).arg(lastRecordPollElapsed));
+                lastReferenceState = state;
+            }
+            require(lastRecordPollElapsed < referenceLimit,
+                    "AUTO reference timeout; no timely coherent reference; " + state);
+            if (status == BrownOutRecordStatus::Ready) {
+                if (log) log("AUTO reference complete; preparing Normal ramp trigger");
+                break;
+            }
             QThread::msleep(100);
         }
         require(!baseline.clipped, "Brown Out reference is clipped");
@@ -268,13 +289,19 @@ MeasurementResult runBrownOut(const BrownOut::Settings &cfg, IScopeBrownOut &sco
         double level = cfg.triggerLevel;
         const double step = session->levelStep();
         require(std::isfinite(step) && step > 0, "Invalid trigger level step");
+        const TriggerLevelGrid grid(step);
+        const double direction = cfg.rising ? 1.0 : -1.0;
         if (cfg.mode == BrownOut::Mode::FixedFall) {
             require(trigger->unit.trimmed().compare("V", Qt::CaseInsensitive) == 0,
                     "Fixed Fall (Vout) requires a voltage trigger channel");
             require(trigger->minimum > level, "Fixed Fall level must be below the steady trigger-channel minimum");
-        } else
-            level = cfg.rising ? std::max(level, trigger->maximum + step)
-                               : std::min(level, trigger->minimum - step);
+        } else {
+            const double peak = cfg.rising ? trigger->maximum : trigger->minimum;
+            level = direction * std::max(grid.atOrAbove(direction * level), grid.above(direction * peak));
+            if (log) log(QString("Track %1: CH%2 Level=%3; Step=%4 (Scale/25)")
+                .arg(cfg.rising ? "Rise" : "Fall").arg(cfg.triggerChannel)
+                .arg(level, 0, 'g', 16).arg(step, 0, 'g', 16));
+        }
         require(session->advanceLevel(level, error), error);
         require(session->arm(error), error);
         waitUntilReady("Before ramp", baseline.sequence);
@@ -311,10 +338,13 @@ MeasurementResult runBrownOut(const BrownOut::Settings &cfg, IScopeBrownOut &sco
                     previousSequence = record.sequence;
                     ++records;
                     const double acquiredLevel = level;
+                    // Validate the complete record before retaining any channel.
                     for (const auto &v : record.channels) {
                         const auto reference = std::find_if(baseline.channels.cbegin(), baseline.channels.cend(),
                                                            [&](const auto &r) { return r.channel == v.channel; });
                         require(reference->unit == v.unit, "Channel unit changed during Brown Out");
+                    }
+                    for (const auto &v : record.channels) {
                         auto existing = std::find_if(result.channels.begin(), result.channels.end(),
                                                     [&](const auto &r) { return r.channel == v.channel; });
                         if (existing == result.channels.end()) result.channels.append(v);
@@ -324,9 +354,6 @@ MeasurementResult runBrownOut(const BrownOut::Settings &cfg, IScopeBrownOut &sco
                             existing->minimum = std::min(existing->minimum, v.minimum);
                             existing->mean = v.mean; existing->rms = v.rms;
                         }
-                        if (v.channel == cfg.triggerChannel && cfg.mode == BrownOut::Mode::Track)
-                            level = cfg.rising ? std::max(level + step, v.maximum + step)
-                                               : std::min(level - step, v.minimum - step);
                     }
                     result.trials.append({records,
                         cfg.mode == BrownOut::Mode::Track && cfg.rising
@@ -334,7 +361,15 @@ MeasurementResult runBrownOut(const BrownOut::Settings &cfg, IScopeBrownOut &sco
                         records, 1, acquiredLevel, record.channels});
                     if (cfg.mode == BrownOut::Mode::Track &&
                         !(cfg.captureEnabled && closedAt >= 0 && event.elapsed() - closedAt >= cfg.tailMs)) {
+                        // Preserve the completed Trial even if the next grid point is unrepresentable.
+                        const auto triggerRecord = std::find_if(record.channels.cbegin(), record.channels.cend(),
+                                                               [&](const auto &v) { return v.channel == cfg.triggerChannel; });
+                        level = direction * std::max(grid.next(direction * level),
+                            grid.above(direction * (cfg.rising ? triggerRecord->maximum : triggerRecord->minimum)));
                         require(std::isfinite(level), "Trigger level overflow");
+                        if (log) log(QString("Track %1: CH%2 Level=%3; Step=%4 (Scale/25)")
+                            .arg(cfg.rising ? "Rise" : "Fall").arg(cfg.triggerChannel)
+                            .arg(level, 0, 'g', 16).arg(step, 0, 'g', 16));
                         require(session->advanceLevel(level, error), error);
                         if (pauseForCapture) waitUntilReady("Before ramp resume", previousSequence);
                     }

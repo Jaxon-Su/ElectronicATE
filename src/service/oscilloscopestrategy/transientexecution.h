@@ -11,14 +11,23 @@ namespace TransientDetail {
 class Execution {
 public:
     Execution(const TransientContext &context, IScopeMeasurement *instrument,
-              QAtomicInt &stopFlag, bool shortProtection);
+              QAtomicInt &stopFlag, bool shortProtection, bool diagnostics = false);
     Execution(const Execution &) = delete;
     Execution &operator=(const Execution &) = delete;
 
     void log(const QString &message);
+    // Turn off diagnostics observe the existing phase clock; never restart it or query hardware.
+    bool diagnosticsEnabled() const { return diagnostics; }
+    void logProgress(const QString &message);
+    void diagnostic(const QString &message);
+    void diagnosticStage(const QString &name, const QString &details = {});
+    void diagnosticPhase(bool maximum);
+    void diagnosticSettings();
+    void diagnosticDelay(int ms, const QString &name);
     void check();
     void checked(bool ok, const QString &error);
     void configure(const std::function<bool(QString &)> &operation);
+    void stopScope(const QString &diagnosticName);
     void power(bool on);
     void relays(bool shorted, bool discharge);
     void requireShortExit();
@@ -36,6 +45,9 @@ public:
     // NoTrigger means READY and still acquiring; completed records belong to
     // the powered baseline, before short. The caller diagnoses them after exit.
     OscilloscopeAcquisition::AcquisitionResult waitForShortReady();
+    // Like the powered pre-short check, but never operates a relay. A natural
+    // pre-power-off record is returned separately from a valid off event.
+    OscilloscopeAcquisition::AcquisitionResult waitForPowerOffReady();
     OscMeasureResult finish();
 
     const TransientContext &ctx;
@@ -47,7 +59,10 @@ public:
     bool touched = false;
 
 private:
-    enum class ReadinessPurpose { Event, PowerOn, Short };
+    const bool diagnostics;
+    QString phaseName = "not-started";
+    QString diagnosticStageName = "Initialization";
+    enum class ReadinessPurpose { Event, PowerOn, Short, PowerOff };
     OscilloscopeAcquisition::AcquisitionResult waitForReadiness(ReadinessPurpose purpose);
     OscilloscopeAcquisition::AcquisitionResult waitForRecord(bool exitShortOnCompletion);
     bool exitShort();

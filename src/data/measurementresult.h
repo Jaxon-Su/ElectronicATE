@@ -11,4 +11,5 @@ struct MeasurementResult {
     bool outputCleanupFailed = false; // Output uncertainty is distinct from scope restoration.
     QVector<MeasurementTrial> trials;
     QVector<MeasurementReference> steadyReferences;
+    QVector<MeasurementTrialIssue> trialIssues;
 };

@@ -34,6 +34,6 @@ OscMeasureResult SteadyStateSearchStrategy::execute(IScopeMeasurement *scope, QA
         }
     });
     SteadyDetail::Search search(scope, stopFlag, m_target, m_timeoutMs, m_phaseTimeoutMs,
-                                m_maxIterations, m_captureObserver, m_verticalScale);
+                                m_maxIterations, m_captureObserver, m_verticalScale, m_logObserver);
     return search.execute();
 }

@@ -17,6 +17,16 @@ void require(bool ok, const char *message) { if (!ok) throw std::runtime_error(m
 // Deliberately has no model name, transport, command strings or Oscilloscope base.
 class SemanticScope : public IScopeMeasurement {
 public:
+    bool beginAutoReference(int &budget, QString &error) override {
+        budget=10000;
+        if (beginSingleAcquisition()) return true;
+        error="reference arm failed";return false;
+    }
+    ScopeReferenceStatus pollAutoReference(QString &state, QString &error) override {
+        const auto current=acquisitionState();state="mode=AUTO";
+        if(current==ScopeAcquisitionState::Invalid){error="reference state invalid";return ScopeReferenceStatus::Error;}
+        return current==ScopeAcquisitionState::Completed?ScopeReferenceStatus::Completed:ScopeReferenceStatus::Pending;
+    }
     QString lastError() const override { return lastFailure; }
     int triggerChannel() override { return 2; }
     int getTotalChannel() override { return 2; }
@@ -151,7 +161,7 @@ void phaseDeadlineContract()
     public:
         bool baseline=false;
         int stalledReads=0;
-        bool readVerticalRange(int,ScopeVerticalRange &range,QString &) override { range={scale,0,10}; return true; }
+        bool readVerticalRange(int,ScopeVerticalRange &range,QString &) override { range={scale,0,10,0,-8,8}; return true; }
         ScopeAcquisitionState acquisitionState() override {
             if (baseline && mode==ScopeTriggerMode::Normal) {
                 completedRecords.insert(records); return ScopeAcquisitionState::Completed;

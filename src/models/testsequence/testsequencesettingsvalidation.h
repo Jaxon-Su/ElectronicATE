@@ -134,6 +134,8 @@ inline bool config(const QString &group, const QJsonObject &cfg, QString &error)
                 valid = valid && label.isString();
         } else if (key == "vertical_margin" && (steady || (transient && !TestSequenceTaskKind::isDescent(kind)))) {
             valid = v.isBool();
+        } else if (key == TaskSettingRules::triggerChannel.key && (steady || (transient && !TestSequenceTaskKind::isDescent(kind)))) {
+            valid = v.isDouble() && TaskSettingRules::triggerChannel.accepts(v.toDouble());
         } else if (key == "capture_enabled" && (transient || steady || kind == Kind::BrownOut)) {
             valid = v.isBool();
         } else if (key == "capture_settings" && (transient || steady || kind == Kind::BrownOut)) {

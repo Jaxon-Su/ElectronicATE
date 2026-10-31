@@ -20,6 +20,7 @@ struct BrownOutMeasurementRequest {
     IScopeBrownOut &scope;
     BrownOutIoFactory createIo;
     OscCaptureObserver capture;
+    std::function<void(const QString &)> log;
 };
 
 using MeasurementStrategyRequest = std::variant<ScopeMeasurementRequest, BrownOutMeasurementRequest>;

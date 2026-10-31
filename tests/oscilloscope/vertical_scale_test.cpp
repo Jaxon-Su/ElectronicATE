@@ -1,5 +1,6 @@
 #include "../support/measurement_scope_fixture.h"
 #include "oscilloscopeacquisition.h"
+#include "verticalscalecontrol.h"
 #include "oscilloscope.h"
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -20,7 +21,7 @@ public:
     double getChannelScale(int) override { return scale; }
     bool readVerticalRange(int, ScopeVerticalRange &range, QString &error) override {
         if (badQuery) { error="invalid range"; return false; }
-        range={scale,offset,10}; return true;
+        range={scale,offset,10,position,-8,8}; return true;
     }
     double measureSignalPeak(int, const QString& type) override { ++reads; require(!clipped,"read clipped data"); return type=="MAXimum"?high:low; }
     bool queryConfiguration(const QString& cmd, QString& r, QString&) override {
@@ -148,10 +149,117 @@ void checkDeadlineDiagnostics(QAtomicInt &stop)
                 "phase expiry changed the existing time-limit error category");
     }
 }
+void positionCases(QAtomicInt &stop)
+{
+    VerticalScaleState state; state.options.margin=true;
+    // Independent coordinates: DC at the upper/lower edge; zero and AC at center.
+    for (double polarity : {-1.,1.}) {
+        Scope scope; scope.scale=4; scope.high=scope.low=20*polarity; int n=0;
+        require(expandVerticalRange(&scope,stop,n,&state) && scope.scale==4 &&
+                std::abs(scope.position+1.05*polarity)<1e-9 && scope.offset==0,"DC edge placement");
+        require(!expandVerticalRange(&scope,stop,n,&state) && n==1,"DC repeated adjustment/jitter");
+    }
+    Scope zero; zero.high=zero.low=0; zero.position=6; int n=0;
+    require(expandVerticalRange(&zero,stop,n,&state) && zero.position==0 && zero.scale==10,"zero line center");
+    Scope fit; fit.scale=4; fit.high=19; fit.low=-5; n=0;
+    require(expandVerticalRange(&fit,stop,n,&state) && fit.scale==4 && fit.position==-1.75,"fitting AC span center");
+    Scope wide; wide.scale=4; wide.high=19; wide.low=-19; n=0;
+    require(expandVerticalRange(&wide,stop,n,&state) && std::abs(wide.scale-4.810126582278481)<1e-9 &&
+            wide.position==0,"wide symmetric span expansion");
+    // Synthetic geometry reproducing the issue's requested 106.609375 scale, not a measured hardware Offset.
+    Scope issue; issue.scale=100; issue.offset=417.14062; issue.high=8.875; issue.low=-9.29688; n=0;
+    require(expandVerticalRange(&issue,stop,n,&state) && issue.scale==100 &&
+            std::abs(issue.position-4.1735156)<1e-9 && issue.offset==417.14062,"Issue9 Offset/Position conflation");
+    Scope inside; inside.position=1; inside.high=10; inside.low=-10; n=0;
+    require(!expandVerticalRange(&inside,stop,n,&state) && inside.position==1 && inside.writes==0,"within margin moved");
+    Scope bounded; bounded.scale=1; bounded.offset=100.8; bounded.high=bounded.low=96; n=0;
+    bounded.position=-1;
+    require(expandVerticalRange(&bounded,stop,n,&state) && bounded.position<=8 && bounded.position>=-8 &&
+            bounded.scale>1 && bounded.offset==100.8,"Position limit changed Offset or failed to expand Scale");
+    class Rounded : public Scope {
+    public:
+        bool setVerticalScale(int,double,QString &) override { scale=8;return true; }
+    } rounded;
+    rounded.scale=4; rounded.high=30; rounded.low=-20; n=0;
+    require(expandVerticalRange(&rounded,stop,n,&state) && rounded.scale==8 && rounded.position==-0.625,
+            "Position calculated from requested instead of actual Scale");
+    // A frozen diagnostic precedes position writes, even when the device ignores them.
+    Scope clamp; clamp.scale=4; clamp.high=19; clamp.low=-5; clamp.clamp=true; n=0;
+    int saved=0, snapshots=0; QStringList logs;
+    state.captureRecord=[&](const auto &) {require(clamp.writes==0,"diagnostic after write");++saved;};
+    state.options.beforePositionChange=[&](int,double old,double target) {
+        require(old==0 && target==-1.75,"Position snapshot wrong");++snapshots;
+    };
+    state.options.log=[&](const auto &line) {logs<<line;};
+    QString error; QElapsedTimer timer; timer.start();
+    try {expandVerticalRange(&clamp,stop,n,&state,"Test",false,QDeadlineTimer(80));}
+    catch(const std::exception &e) {error=QString::fromUtf8(e.what());}
+    require(error.contains("timeout") && error.contains("position") && error.contains("requested=-1.75 actual=0") &&
+            saved==1 && snapshots==1 && !logs.isEmpty() && timer.elapsed()<700,
+            "Position clamp exceeded phase, lost diagnostics or snapshot");
+    Scope scaleClamp;scaleClamp.scale=4;scaleClamp.high=19;scaleClamp.low=-19;scaleClamp.clamp=true;n=0;
+    VerticalScaleState scaleState;scaleState.options.margin=true;error.clear();timer.restart();
+    try {expandVerticalRange(&scaleClamp,stop,n,&scaleState,"Test",false,QDeadlineTimer(80));}
+    catch(const std::exception &e) {error=QString::fromUtf8(e.what());}
+    require(error.contains("timeout") && error.contains("scale") && error.contains("requested=") &&
+            error.contains("actual=4") && timer.elapsed()<700,"Scale timeout lost requested/actual diagnostic or exceeded Phase");
+    for(int bad=0;bad<4;++bad) {
+        class Bad : public Scope {
+        public:
+            int bad=0;
+            bool readVerticalRange(int ch,ScopeVerticalRange &r,QString &e) override {
+                Scope::readVerticalRange(ch,r,e);
+                if(bad==0)r.position=NAN;
+                if(bad==1)r.minimumPosition=NAN;
+                if(bad==2)r.maximumPosition=0;
+                if(bad==3)r.position=9;
+                return true;
+            }
+        } invalid;
+        invalid.bad=bad; invalid.scale=4;invalid.high=19;invalid.low=-5; n=0;
+        VerticalScaleState clean;clean.options.margin=true;bool failed=false;
+        try {expandVerticalRange(&invalid,stop,n,&clean);}catch(...){failed=true;}
+        require(failed && invalid.writes==0,"invalid Position geometry accepted");
+    }
+}
+
+void checkedReadbackDeadlineCases(QAtomicInt &stop)
+{
+    class LateValid : public Scope {
+    public:
+        int delayMs=0;
+        double getChannelScale(int ch) override {
+            QThread::msleep(delayMs); return Scope::getChannelScale(ch);
+        }
+        bool readVerticalRange(int ch,ScopeVerticalRange &range,QString &error) override {
+            QThread::msleep(delayMs); return Scope::readVerticalRange(ch,range,error);
+        }
+    } scope;
+    require(setScaleChecked(&scope,stop,1,12)==12 && setPositionChecked(&scope,stop,1,1)==1,
+            "prompt valid checked readback rejected");
+    scope.delayMs=2050;
+    QStringList errors;
+    try {setScaleChecked(&scope,stop,1,14);} catch(const std::exception &e) {errors<<e.what();}
+    try {setPositionChecked(&scope,stop,1,2);} catch(const std::exception &e) {errors<<e.what();}
+    require(errors.size()==2 && errors[0].contains("CH1 scale") && errors[0].contains("requested=14 actual=14") &&
+            errors[1].contains("CH1 position") && errors[1].contains("requested=2 actual=2"),
+            "late valid Scale/Position readback incorrectly accepted beyond 2 seconds");
+}
+
 int main(int argc,char**argv) {
     QCoreApplication app(argc,argv);
     try {
         QAtomicInt stop(0);
+        checkedReadbackDeadlineCases(stop);
+        positionCases(stop);
+        if (argc > 1 && QString::fromUtf8(argv[1]) == "position") {
+            Scope scope; scope.scale=4; scope.high=19; scope.low=-5;
+            VerticalScaleState state; state.options.margin=true; int adjustments=0;
+            require(expandVerticalRange(&scope,stop,adjustments,&state) && scope.scale==4 &&
+                    std::abs(scope.position+1.75)<1e-9 && scope.offset==0,
+                    "Issue9: fitting span must center by Position without enlarging Scale");
+            return 0;
+        }
         class CompletedScope : public Scope {
         public:
             QString getAcquisitionState() override {
@@ -219,24 +327,26 @@ int main(int argc,char**argv) {
         Scope margin; margin.scale=4; margin.high=19; margin.low=-5;
         VerticalScaleState marginState; marginState.options.margin=true;
         int marginCount=0;
-        require(expandVerticalRange(&margin,stop,marginCount,&marginState) && std::abs(margin.scale-4.75)<1e-10,
-                "10% margin did not expand 4 to 4.75 units/div");
+        require(expandVerticalRange(&margin,stop,marginCount,&marginState) && margin.scale==4 && margin.position==-1.75,
+                "10% margin did not center fitting waveform");
         margin.high=10;
-        require(!expandVerticalRange(&margin,stop,marginCount,&marginState) && margin.scale==4.75,
+        require(!expandVerticalRange(&margin,stop,marginCount,&marginState) && margin.scale==4,
                 "smaller waveform shrank scale");
-        margin.high=22;
-        require(expandVerticalRange(&margin,stop,marginCount,&marginState) && margin.scale==5.5,
-                "next larger waveform did not retain 10% margin");
+        margin.high=29;
+        require(expandVerticalRange(&margin,stop,marginCount,&marginState) && std::abs(margin.scale-4.30379746835443)<1e-9,
+                "next wider waveform did not retain 10% margin");
         // Independent numerical oracles: negative edge, offset, reported inverted offset.
         for (double polarity : {-1.0,1.0}) {
             Scope shifted; shifted.scale=4; shifted.offset=100*polarity;
             shifted.high=polarity>0?105:-81; shifted.low=polarity>0?81:-105;
             shifted.position=3; int n=0;
-            require(expandVerticalRange(&shifted,stop,n,&marginState) && shifted.scale==4.75 &&
-                    shifted.offset==100*polarity && shifted.position==3,"offset/inverted range moved or scaled incorrectly");
+            // Force a display violation for both reported Offset polarities.
+            shifted.position=6;
+            require(expandVerticalRange(&shifted,stop,n,&marginState) && shifted.scale==4 &&
+                    shifted.offset==100*polarity && shifted.position==1.75*polarity,"offset/inverted range centered incorrectly");
         }
         Scope negative; negative.scale=4; negative.high=5; negative.low=-19; int n=0;
-        require(expandVerticalRange(&negative,stop,n,&marginState) && negative.scale==4.75,"negative edge ignored");
+        require(expandVerticalRange(&negative,stop,n,&marginState) && negative.scale==4 && negative.position==1.75,"negative edge ignored");
         Scope clippedMargin; clippedMargin.scale=4; clippedMargin.clipped=true; n=0;
         require(expandVerticalRange(&clippedMargin,stop,n,&marginState) && clippedMargin.scale==8 &&
                 clippedMargin.reads==0,"clipping margin used truncated extrema instead of doubling");
@@ -246,7 +356,7 @@ int main(int argc,char**argv) {
             public:
                 int bad=0;
                 bool readVerticalRange(int,ScopeVerticalRange &r,QString &e) override {
-                    r={4,0,10};
+                    r={4,0,10,position,-8,8};
                     if (bad==0) {e="range IO failed";return false;}
                     if (bad==1) r.scale=0;
                     if (bad==2) r.center=std::numeric_limits<double>::quiet_NaN();
@@ -264,10 +374,12 @@ int main(int argc,char**argv) {
         class Channels : public Scope {
         public:
             QMap<int,double> scales{{1,4},{2,4},{3,4}};
+            QMap<int,double> positions{{1,0},{2,0},{3,0}};
             QVector<int> measured,changed;
             int getTotalChannel() override {return 3;}
             bool isChannelEnabled(int ch) override {return ch!=2;}
-            bool readVerticalRange(int ch,ScopeVerticalRange &r,QString &) override {r={scales[ch],0,10};return true;}
+            bool readVerticalRange(int ch,ScopeVerticalRange &r,QString &) override {r={scales[ch],0,10,positions[ch],-8,8};return true;}
+            bool setVerticalPosition(int ch,double v,QString &) override {changed<<ch;positions[ch]=v;return true;}
             double getChannelScale(int ch) override {return scales[ch];}
             double measureSignalPeak(int ch,const QString &type) override {
                 measured<<ch; return type=="MAXimum"?(ch==1?19:12):-5;
@@ -275,7 +387,7 @@ int main(int argc,char**argv) {
             bool setVerticalScale(int ch,double v,QString &) override {changed<<ch;scales[ch]=v;return true;}
         } channels;
         n=0; require(expandVerticalRange(&channels,stop,n,&marginState) && channels.changed==QVector<int>{1}
-                     && !channels.measured.contains(2) && channels.scales[1]==4.75 && channels.scales[3]==4,
+                     && !channels.measured.contains(2) && channels.scales[1]==4 && channels.positions[1]==-1.75 && channels.scales[3]==4,
                      "margin touched disabled/within-range channels");
         // Actual AUTO loop must re-acquire and use the second record after expansion.
         class Fresh : public ReferenceScope {
@@ -286,7 +398,7 @@ int main(int argc,char**argv) {
         QVector<double> captured;
         freshState.captureRecord=[&](const auto &record) {captured<<record.channels[0].maxVal;};
         const auto reference=captureAutoReference(&fresh,stop,2000,&freshState);
-        require(reference.success && fresh.captures==2 && fresh.scale==4.75 && captured==QVector<double>({19,10}) &&
+        require(reference.success && fresh.captures==2 && fresh.scale==4 && fresh.position==-1.75 && captured==QVector<double>({19,10}) &&
                 reference.channels[0].maxVal==10,"expanded AUTO accepted old record or lost diagnostics");
         // Legal NA must consume the shared phase budget, not 5 s for each metric.
         DeadlineScope deadlineScope;
@@ -305,7 +417,7 @@ int main(int argc,char**argv) {
         require(limited && limit.writes==0,"margin bypassed adjustment limit");
         Scope stoppedMargin; stoppedMargin.scale=4; stoppedMargin.high=19; stoppedMargin.low=-5;
         auto cancelledState=marginState;
-        cancelledState.options.beforeChange=[&](int,double,double) {stop.storeRelease(1);};
+        cancelledState.options.beforePositionChange=[&](int,double,double) {stop.storeRelease(1);};
         n=0; bool cancelledBeforeWrite=false;
         try {expandVerticalRange(&stoppedMargin,stop,n,&cancelledState);} catch (...) {cancelledBeforeWrite=true;}
         require(cancelledBeforeWrite && stoppedMargin.writes==0,"Stop before margin write ignored");

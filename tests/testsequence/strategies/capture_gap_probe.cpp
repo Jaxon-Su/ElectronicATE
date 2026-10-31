@@ -20,12 +20,17 @@ public:
 int main(int argc,char**argv){
  QCoreApplication app(argc,argv);QAtomicInt stop(0);
  for(auto kind:{TransientKind::TurnOn,TransientKind::ShortThenTurnOn}){
-  Scope small;small.single=true;small.peak=.2;small.missMin=true;
+  Scope small;small.single=true;small.scale=1;small.peak=.2;small.missMin=true;
   auto c=context(small);auto r=runTransientStrategy(kind,c,&small,stop);
   require(r.success && r.channels[0].maxVal==.2,"small positive excursion still missed");
   std::cout<<"small positive kind="<<int(kind)<<" success="<<r.success<<" first="<<small.levels.first()<<" levels=";
   for(double v:small.levels)std::cout<<v<<",";
   std::cout<<" error="<<r.errorMessage.toStdString()<<"\n";
+  Scope subStep;subStep.single=true;subStep.scale=10;subStep.peak=.2;subStep.missMin=true;
+  const auto sub=runTransientStrategy(kind,context(subStep),&subStep,stop);
+  require(!sub.success && sub.trials.isEmpty() && !subStep.levels.isEmpty() &&
+          sub.errorMessage.contains("No valid event trigger bracket"),"sub-Step excursion did not finish as NoEvent");
+  for(double level:subStep.levels)require(std::abs(level/.4-std::round(level/.4))<1e-8,"sub-Step search sent a fractional Level");
   BelowZeroScope negative;negative.single=true;negative.missMax=true;
   auto nc=context(negative);auto nr=runTransientStrategy(kind,nc,&negative,stop);
   bool below=false;for(double v:negative.levels)below|=v<0;

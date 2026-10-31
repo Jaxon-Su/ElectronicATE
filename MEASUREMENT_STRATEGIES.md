@@ -4,19 +4,29 @@
 
 一般量測與 Brown Out 共用 `IMeasurementStrategy` 執行介面，再依測試方式分工。原有五類策略（Static／Dynamic 合併為一類）提供 Search direction：BOTH／Rise／Fall。BOTH 分別搜尋兩個方向；每筆有效事件保存 Max／Min／RMS／Mean，未選方向顯示 Not run。另有兩項 descent 單組測試，使用指定通道的負緣與固定 Level 清單，原有追蹤策略維持不變。
 
-「單組測試」指測試一筆負載條件。示波器的 AUTO／NORMAL 是觸發模式，Single 是完成一次擷取後停止，以下以 **AUTO＋Single**、**NORMAL＋Single** 標示。
+「單組測試」指測試一筆負載條件。示波器 AUTO／NORMAL 是觸發模式，RUNSTOP／Single 是擷取停止方式。**AUTO 參考**採 STOP → AUTO → RUNSTOP → RUN，確認本次新記錄後 STOP 再讀值，因此平直 DC 波形不必跨越 Trigger level。**NORMAL＋Single** 用於正式事件，明確設定單次擷取並讀回確認，仍須有效觸發。
+
+AUTO 參考會回讀觸發模式、停止方式、擷取／觸發狀態與擷取計數，Log 區分參考與正式搜尋。每筆參考等待以 10 秒為基準，依時間範圍與平均次數調整，上限 60 秒並受剩餘 Phase 限制；Brown Out 另保留既有較嚴格期限。無新記錄即失敗，不沿用上一張畫面；過長時間範圍或 FastFrame 會明確報錯。
 
 ## 一般量測策略
 
+一般六種測項（含 Group）的 **Vertical margin (10% top/bottom)** 預設關閉。開啟時使用未截波新記錄的 Max／Min，檢查實際 Scale／Offset／Position 下的畫面餘量；已在上下 10% 內就不調整。超出時一般波形置中；窄帶直線（跨度不超過 0.1 div）全正靠上、全負靠下，零／跨零窄帶置中。邊界目標留 10.5% 供讀回誤差，Scale 只在跨度或 Position 範圍不足時擴大，Offset 保持。真正 ADC 截波仍先 Scale ×2，不以截斷極值推算位置；調整後重新擷取。每列 attempt 結束時還原原 Scale／Position，Group 成員共用本次調整；還原失敗中止後續測試。此選項不改 Rise／Fall 或固定 Level。
+
+六種一般測項及各 Group 的 **Trigger source** 在輸出操作、Auto Period 與策略啟動前先套用並讀回確認。新測項預設 CH1；舊設定未選來源時沿用示波器當前來源。選擇必須是可用且已啟用的通道，不改其他量測通道或 Rise／Fall 搜尋方式。
+
 ### 1. Static／Dynamic
 
-Load OFF → Input OFF → 關機等待 → 在 OFF 狀態設定條件 → Input ON → 開機等待 → 靜態／動態 Load ON → 負載穩定等待 → 示波器 Trigger AUTO。Capture 開啟時準備階段保持 STOP，由後續 AUTO＋Single／NORMAL＋Single 啟動各階段擷取；未開啟時允許準備階段連續 RUN。
+Load OFF → Input OFF → 關機等待 → 在 OFF 狀態設定條件 → Input ON → 開機等待 → 靜態／動態 Load ON → 負載穩定等待 → 示波器 Trigger AUTO。Capture 開啟時準備階段保持 STOP，由後續 AUTO 參考／NORMAL＋Single 啟動各階段擷取；未開啟時允許準備階段連續 RUN。
 
-接著執行 Auto Period（在各筆 Static／Dynamic 設定中勾選，預設關閉）：自動調整時間軸，目標顯示 **5 個週期**，重新擷取確認為 **3～8 個週期**即接受；未啟用則沿用目前時基。Write Oscilloscope 僅設定初始時基，不控制此開關。
+接著執行 Auto Period（在各筆 Static／Dynamic 設定中勾選，預設關閉）：連續 3 筆新波形的 PERIOD 穩定、實際畫面包含 **3～8 個週期**即接受，初始已符合時保留時間刻度。範圍外才以 **5 個週期**作調整目標；儀器採用不同刻度但已落在接受範圍時，仍須重新擷取 3 筆穩定波形驗證。最多 24 輪週期量測、6 次水平調整及 15 分鐘；Log 列出目標／實際刻度、Horizontal Mode／Manual Inputs、取樣率、記錄長度與嘗試計數。未啟用則沿用目前時基；Write Oscilloscope 僅設定初始時基，不控制此開關。
+
+新波形完成後，PERIOD 結果可能仍在更新。程式輪詢等待，預算為 **10 秒＋當前畫面時間，最高 60 秒**，並受剩餘總時限限制；有效數值穩定後立即繼續。Log 分開列出擷取與 PERIOD 等待的預算、耗時及結果。期限內仍無週期時有界擴大時間範圍；量化後刻度只要比原值增加超過 1%，即可重新擷取驗證，並不直接判 Pass。沒有前進、查詢錯誤或逾時才到達的有效值都不當成成功；Stop 與清理流程保持。
 
 量測完成後 Scope STOP → Load OFF → Input OFF，清理成功才回報成功。Group 每筆也相同；三段等待的設定見 [Static／Dynamic 流程](TEST_SEQUENCE_FLOW.md#3-staticdynamic-量測)。
 
-搜尋時以 AUTO＋Single 擷取新的穩態參考 → 切換 NORMAL＋Single → 分別進行 Rise／Fall 搜尋；每輪重新擷取一次並調整 Level，無觸發時 STOP，結束該方向搜尋。
+自動搜尋共用 `Step＝Trigger CH 實際 Scale÷25`，Level 對齊以零點為基準的整數 Step。參考 Max 向上、Min 向下取嚴格超過極值的下一格；例如 Scale＝4、Max＝21.555，Step＝0.16，起始 Level＝21.6。四種暫態保留擴步與二分搜尋，候選只取整格；相鄰 HIT／MISS 格點即收斂，排除界線外沒有可測格點時回報無有效事件。Step 保留精度（9.999÷25＝0.39996），不量化量測四值；兩種 descent、Brown Out Fixed 與手動指定 Level 不套用此規則。Brown Out Track 使用相同格點。
+
+搜尋時以 AUTO 參考 擷取新的穩態參考 → 切換 NORMAL＋Single → 分別進行 Rise／Fall 搜尋；每輪重新擷取一次並調整 Level，無觸發時 STOP，結束該方向搜尋。
 
 ### 2. Turn on
 
@@ -24,19 +34,21 @@ Load OFF → Input OFF → 關機等待 → 在 OFF 狀態設定條件 → Input
 
 每次試驗重做完整開機流程，以不同 Level 搜尋事件邊界。每次成功 Single（包含提前觸發後 rearm）都等待 3000 ms；等待可 Stop 並計入原 Phase time limit，不保證等待後必定 READY。
 
-若 Single 在開機前已觸發，先確認自然擷取完成，保持 Input OFF，Rise 將 Level 加上 Scale×0.04，Fall 減去相同步距，再重新 Single；確認 READY 才開機。這段避讓不改 Scale，也不重做已完成的放電。提前記錄只供診斷，不作有效事件或量測四值；後續搜尋不返回已知的提前觸發界線。每次 rearm 仍計入原次數及 Phase 時限，通訊錯誤、其他狀態或逾時仍中止。
+若 Single 在開機前已觸發，先確認自然擷取完成，保持 Input OFF，Rise／Fall 依上述格點規則移至界線外下一格，再重新 Single；確認 READY 才開機。這段避讓不改 Scale，也不重做已完成的放電。提前記錄只供診斷，不作有效事件或量測四值；後續搜尋不返回已知的提前觸發界線。每次 rearm 仍計入原次數及 Phase 時限，通訊錯誤、其他狀態或逾時仍中止。
 
 ### 3. Turn off
 
-開始先確認 Scope STOP → NORMAL → Input OFF／Load ON → 開機穩定 → AUTO＋Single 穩態參考 → 調整 Level 排除穩態觸發 → NORMAL＋Single 保持待命 → 關機等觸發。
+開始先確認 Scope STOP → NORMAL → Input OFF／Load ON → 開機穩定 → AUTO 參考 穩態參考 → 調整 Level 排除穩態觸發 → NORMAL＋Single 保持待命 → 關機等觸發。
 
 每次 attempt／Group 成員都先統一示波器起始狀態；STOP 或 NORMAL 設定失敗就中止並清理。Turn off 沒有實際 Relay／放電操作。
+
+Turn off 的診斷 Log 列出實際方向、Trigger／Phase 時限、關機等待、Settle、Trial／擷取上限及 Capture／餘量設定，並印 Trigger CH 與啟用通道。Input ON、初始 Settle、AUTO 參考、事件等待及清理區分 begin／complete；每個診斷附 Rise／Fall 的 Phase 已用／剩餘時間。AUTO 參考另標記讀值與 Capture 前後，失敗時保留當前步驟；最後只有 begin 表示操作尚未回報完成。計時沿用原階段預算，同步通訊仍受原 transport timeout，不新增等待或重試。
 
 依結果更新 Level，重新開機穩定後重試。
 
 ### 4. Turn on then short
 
-開機穩定 → AUTO＋Single 穩態參考 → 調整 Level 排除穩態觸發 → NORMAL＋Single → 等待 3000 ms → Baseline／READY 確認 → 短路等觸發。
+開機穩定 → AUTO 參考 穩態參考 → 調整 Level 排除穩態觸發 → NORMAL＋Single → 等待 3000 ms → Baseline／READY 確認 → 短路等觸發。
 
 事件擷取完成（示波器 STOP）→ 確認 Input OFF → 關機等待 → 保持短路並放電 → 解除放電 → 解除短路 → 讀取量測／保存 Capture。下一輪重新開機穩定、NORMAL＋Single 待命後再施加短路。
 
@@ -60,30 +72,50 @@ Turn off (descent) 在 Trigger CH 旁提供 **Enable**（預設勾選）：勾�
 
 關閉的 Trigger CH 不提供 WFM／CSV Capture；單通道匯出請另選已啟用 CH，使用預設 Trigger 選取時會明確回報通道不可用。AllWFM／AllCSV 只保存已啟用通道，沒有啟用通道時回報不可用；PNG 可照常保存完成畫面。
 
-Trigger levels 清單以 Add level 新增、Delete 刪除，直接編輯每列數值，沒有上下移動按鈕；依列順序執行，保留重複值、0 與負值，輸入最多四位小數。Trials per level 預設 1。每個 Level 的每次 Trial 都重新上電、等待 Settle、啟動 NORMAL＋Single 並確認 READY，才執行關機或短路；每次完成後才進入下一次。沿用目前時基與垂直刻度，不擷取 AUTO 參考、不搜尋或自動改寫 Level。
+Trigger levels 清單以 Add level 新增、Delete 刪除，直接編輯每列數值，沒有上下移動按鈕；依列順序執行，保留重複值、0 與負值，輸入最多四位小數。Trials per level 預設 1。每個 Level 的每次 Trial 都重新上電、等待 Settle、啟動 NORMAL＋Single 並確認 READY，才執行關機或短路；成功或依下述失敗政策完成清理後才進入下一次，不搜尋或自動改寫 Level。
 
-兩種 descent 每次成功啟動 Single 後，先等待 **3000 ms** 給示波器處理，再查 READY；確認 READY 才 Input OFF 或 Short ON。這段等待可由 Stop 中斷，並計入 Phase time limit；等待後仍是 SAVE 等非 READY 狀態時沿用失敗與診斷流程。等待期間不施加短路；Single 失敗不進入等待。
+兩種 descent 在上電穩定、Short OFF 後先用 AUTO 完成記錄檢查啟用通道；截波通道的 V/div ×2，重新擷取至不截波才開始正式事件。關機／短路事件仍截波時，保存診斷後擴大量程，重新上電重做同一組 Level／Trial。預檢與重試共用調整上限及 Phase time limit，測試期間只擴大、結束後還原自動改過的刻度；Turn off 的 Trigger CH 顯示 OFF 仍維持原來源，全部 CH 關閉時略過量程預檢。Turn on then short (descent) 的事件記錄先完成短路退出，再診斷、擴量程與重試；上電中的 AUTO 預檢尚未施加短路。
+
+兩種 descent 每次成功啟動正式事件 Single 後，先等待 **3000 ms** 給示波器處理，再查 READY；確認 READY 才 Input OFF 或 Short ON。這段等待可由 Stop 中斷，並計入 Phase time limit。Turn off (descent) 關機前若確認提前觸發且記錄自然完成，該 Trial 標 Fail，確認 Input OFF／Scope STOP 與診斷保存成功後，跳過同 Level 剩餘 Trials，繼續下一列 Level，整體仍為 Fail。SAVE 但仍在擷取、通訊錯誤、逾時或清理失敗仍中止。等待期間不施加短路；Single 失敗不進入等待，AUTO 預檢不增加此固定等待。Turn on then short (descent) 的短路前自然完成記錄或事件等待 MISS，該 Trial 標 Fail；完整短路退出、Scope STOP 與必要診斷保存成功後，繼續全部剩餘 Trial／Level，整體仍 Fail。MISS 沒有完成記錄，不保存舊波形或四值。擷取未完成逾時、Stop、通訊、Scale／Capture 或清理錯誤仍中止。
 
 ```mermaid
 flowchart TD
     A["Input OFF／必要的短路退出<br/>Scope STOP、指定 Channel／Falling／NORMAL、Load ON"] --> B["依序取 Level／Trial<br/>確認 Input OFF，等待 300 ms<br/>Short 類另完成放電與解除短路"]
-    B --> C["設定 Trigger level<br/>Input ON → Settle → Single"]
-    C --> D{"測試項目"}
-    D -->|"Turn off (descent)"| E["等待 3000 ms → 確認 READY<br/>Input OFF → 等待負緣觸發"]
-    D -->|"Turn on then short (descent)"| F["等待 3000 ms → 確認 READY → Short ON → 等待負緣觸發<br/>完成或逾時後先執行短路退出"]
-    E --> G{"取得有效完成記錄？"}
-    F --> G
+    B --> D{"測試項目"}
+    D -->|"Turn off (descent)"| P["Input ON → Settle → AUTO 啟用通道預檢<br/>截波則 V/div ×2 並重新擷取"]
+    P --> Q["設定固定 Level／NORMAL → Single<br/>等待 3000 ms → 檢查 READY 與擷取狀態"]
+    Q -->|"READY 且仍在擷取"| E["Input OFF → 等待負緣觸發"]
+    Q -->|"確認提前觸發、自然完成"| N["該 Trial Fail，Input OFF／Scope STOP<br/>依設定保存診斷，不當事件"]
+    N -->|"清理／保存成功"| O["略過同 Level 剩餘 Trials<br/>取下一列 Level，整體保持 Fail"]
+    O --> I
+    Q -->|"其他錯誤／逾時"| K
+    N -->|"清理／保存失敗"| K
+    D -->|"Turn on then short (descent)"| F["Input ON → Settle → AUTO 啟用通道預檢<br/>截波則 ×2 並重新擷取 → 固定 Level → Single<br/>等待 3000 ms → READY／擷取狀態"]
+    F -->|"READY 且仍在擷取"| T["Short ON → 等待負緣觸發<br/>完整短路退出"]
+    F -->|"短路前確認自然完成"| U["該 Trial Fail／NA<br/>短路退出、Scope STOP；提前記錄僅保存診斷"]
+    F -->|"其他錯誤／逾時"| K
+    T -->|"MISS，沒有完成記錄"| U
+    U -->|"清理與必要保存成功"| I
+    U -->|"清理／保存失敗或到期"| K
+    E --> R{"已完成事件且截波？"}
+    R -->|"是，仍在調整／時間上限內"| S["保存診斷 → 擴大截波通道量程<br/>保留同一 Level／Trial"]
+    S --> B
+    R -->|"否"| G
+    R -->|"超出調整／時間上限"| K
+    G{"取得有效完成記錄？"}
+    T -->|"事件完成"| R
+    T -->|"其他錯誤／擷取未完成逾時"| K
     G -->|"是"| H["讀取已啟用通道四值<br/>保存勾選的 Capture、保留 Trial"]
     H --> I{"還有 Level／Trial？"}
     I -->|"是"| B
-    I -->|"否"| J["清理輸出與 Scope STOP"]
+    I -->|"否"| J["清理輸出與 Scope STOP<br/>還原自動改過的刻度"]
     G -->|"否"| K["本次失敗、保留先前 Trial<br/>完成記錄視情況保存診斷"]
     K --> J
 ```
 
-Advanced 的 Trigger timeout 控制每次等待；Phase time limit 是整組 Level 總時限，涵蓋各 Level／Trial 的等待、量測與 Capture。提前觸發、未觸發、通訊失敗、超時或截幅均停止本次清單；截幅須調整示波器刻度後重跑。Stop 與清理失敗依既有規則阻擋後續任務與重試。Short 仍採 Input OFF → 等待／放電 → 解除短路，再讀值或傳檔；OFF／放電失敗時保留短路並交接 UNKNOWN。
+Advanced 的 Trigger timeout 控制每次等待；Phase time limit 是整組 Level 總時限，涵蓋預檢、重試、各 Level／Trial 的等待、量測與 Capture。兩種 descent 的預檢與事件共用最多 8 回合量程調整，固定 Level 與總預算不重設。Turn off 提前觸發依上述政策跳到下一 Level，MISS 仍中止；short descent 提前自然完成或 MISS 則依序繼續下一 Trial，曾有 Fail 就維持整體 Fail。超出上限仍截波、通訊、擷取未完成逾時、Phase 到期或清理失敗均停止清單。Stop 與清理失敗依既有規則阻擋後續任務與重試。Short 仍採 Input OFF → 等待／放電 → 解除短路，再讀值或傳檔；OFF／放電失敗時保留短路並交接 UNKNOWN。
 
-結果方向為 Fall，Rise 顯示 Not run；Step 對應清單列號，Trial 對應該列次數，Trigger Level 保存當次設定。每筆有效事件保存 Max／Min／RMS／Mean，明細與 Excel 沿用既有逐次結果格式。
+結果方向為 Fall；Step 對應清單列號，Trial 對應該列次數，Trigger Level 保存當次設定。Turn off (descent) 的 Detail 預設 Trials，short descent 保留預設 Summary；兩者可切 Trials 列出每筆有效事件的完整四值，Summary 查看最低 Min 那筆，Rise 顯示 Not run。提前觸發／MISS 的 Fail，以及 Turn off 略過的 Skipped 列有原因與 Level／Trial，四值為 NA，不占有效 Record 序號、不參與代表值；後續有效列可為 Pass，Note 明示整體測項仍 Fail。Excel Trials 依 Step／Trial 保留全部，Results 保留代表值及失敗／略過列。Turn off 全通道隱藏時仍列觸發記錄與 Level，四值為 NA。
 
 ### 原有追蹤策略的量測方式
 
@@ -111,9 +143,9 @@ Turn on／Short then turn on（均含 Group）在 Input ON 前觀察到 TRIGGER�
 | Rise | Max 最高的有效 Trial | 該筆 Max／Min／RMS／Mean 整組複製 |
 | Fall | Min 最低的有效 Trial | 該筆 Max／Min／RMS／Mean 整組複製 |
 
-平手保留較早的 Trial；NA 不從其他記錄補值。未選方向為 Not run。原 **Turn off／Turn on then short（均含 Group）** 在選取方向正常搜尋完成但沒有有效事件時，使用該方向同一筆 AUTO 穩態參考的 Max／Min／RMS／Mean；有有效事件則優先使用事件四值，最後一次未觸發不覆蓋先前結果。其他策略沒有有效事件時仍顯示 NA。AUTO 參考、Baseline、截幅、未觸發與未完成查詢的事件不冒充有效 Trial。
+平手保留較早的 Trial；NA 不從其他記錄補值。未選方向為 Not run。原 **Turn off（含 Group）** 在選取方向正常搜尋完成但沒有有效事件時，從同方向的初始 AUTO 與後續有效 Baseline，逐通道選 Rise 最高 Max／Fall 最低 Min 那筆的完整四值；同值保留較早記錄。**Turn on then short（含 Group）** 維持使用初始 AUTO 四值。有有效事件時，兩者都優先從事件選值，最後一次未觸發不覆蓋先前結果，也不以參考補事件 NA。其他策略沒有有效事件時仍顯示 NA。AUTO 參考、Baseline、截幅、未觸發與未完成查詢的事件不冒充有效 Trial。
 
-Turn off／Turn on then short 的穩態回退在 Detail Summary／Trials 與 Excel Results／Trials 均標示 `Steady reference (no transient trigger)`；Record／Step／Trial／Trigger Level 留空，不增加事件 Trial 次數。參考讀取失敗、Stop 或逾時不改判成功；合法 NA 保留原值，不跨記錄補齊。
+Turn off／Turn on then short 的穩態回退在 Detail Summary／Trials 與 Excel Results／Trials 均標示 `Steady reference (no transient trigger)`；Record／Step／Trial／Trigger Level 留空，不增加事件 Trial 次數。Turn off 的 Log 會列出勝出的 Baseline 參考四值；Capture 筆數包含診斷與參考，不等於事件數。參考讀取失敗、Stop 或逾時不改判成功；合法 NA 保留原值，不跨記錄補齊。
 
 Static／Dynamic 每筆有效搜尋擷取各留一筆；暫態按每個 Step 的 Trial 保存；Brown Out Fixed 為 Fall，Track 沿設定方向。單組記錄實際負載條件，Group 依 TestConditions 行號與名稱逐負載保存，重試以 Attempt 分開。失敗／取消保留已取得資料，未執行條件為 Skipped。
 
@@ -147,7 +179,7 @@ flowchart TD
     B --> C["設定 Level／方向<br/>NORMAL＋Single → 等待 3000 ms → 檢查 READY"]
     C -->|"READY"| D["Input ON<br/>等待事件觸發"]
     C -->|"上電前觸發且自然完成"| J["共用退出：Input OFF／放電／解除短路<br/>按設定保存診斷，不讀事件數值"]
-    J --> K["Level 向外移動 Scale×0.04<br/>確認剩餘 Phase／次數／Stop"]
+    J --> K["Level 向外移至下一整數 Step 格點<br/>確認剩餘 Phase／次數／Stop"]
     K --> A
     C -->|"其他錯誤／逾時"| L["中止並執行安全清理"]
     D --> E["擷取完成：示波器 STOP"]
@@ -169,7 +201,7 @@ flowchart TD
 ```mermaid
 flowchart TD
     A["Input OFF、Short OFF、Load ON"] --> B["Input ON → 等待 Settle time<br/>預設 5 秒"]
-    B --> C["本方向的 AUTO＋Single 穩態參考<br/>讀取／保存"]
+    B --> C["本方向的 AUTO 參考 穩態參考<br/>讀取／保存"]
     C --> D["設定 Level／方向 → NORMAL＋Single → 等待 3000 ms<br/>排除 baseline → READY／擷取狀態確認"]
     D -->|"短路前已自然完成"| E["關機／放電／安全釋放 → 診斷 baseline<br/>Level 向外避讓，重建搜尋區間"]
     E --> F["Input ON → 等待 Settle time"]
@@ -183,11 +215,11 @@ flowchart TD
     J -->|"完成"| K["Scope STOP → Load OFF<br/>回報結果"]
 ```
 
-**開機 → 穩定 → AUTO＋Single 穩態參考 → NORMAL＋Single → 等待 3000 ms → 排除 baseline → READY → 短路 → 擷取完成 → 關機／放電／解除短路 → 保存。** 每個方向只在開始時取得參考；後續 Trial 重新開機、等待穩定後繼續。AUTO 參考不增加這段處理等待。
+**開機 → 穩定 → AUTO 參考 穩態參考 → NORMAL＋Single → 等待 3000 ms → 排除 baseline → READY → 短路 → 擷取完成 → 關機／放電／解除短路 → 保存。** 每個方向只在開始時取得參考；後續 Trial 重新開機、等待穩定後繼續。AUTO 參考不增加這段處理等待。
 
-施加短路前，先在 Input ON、Short OFF 下排除 baseline，預設等待 10 秒；觀察結束後還會檢查 READY 與擷取狀態。若此時已自然完成，這輪不施加短路：先安全退出，再診斷 Baseline；以該記錄極值及目前 Level 為界，Rise 往上、Fall 往下至少 Scale×0.04，重新上電／穩定／Single。新 Baseline 會重建搜尋區間，但保留已完成真事件；不向內重訪排除界線。baseline 不計入事件極值。事件未觸發也退出；正常搜尋完成才使用既有穩態回退。
+施加短路前，先在 Input ON、Short OFF 下排除 baseline，預設等待 10 秒；觀察結束後還會檢查 READY 與擷取狀態。若此時已自然完成，這輪不施加短路：先安全退出，再診斷 Baseline；以該記錄極值及目前 Level 為界，Rise 往上、Fall 往下取界線外下一整數 Step 格點，重新上電／穩定／Single。新 Baseline 會重建搜尋區間，但保留已完成真事件；不向內重訪排除界線。baseline 不計入事件極值。事件未觸發也退出；正常搜尋完成才使用既有穩態回退。
 
-若該 Baseline 同時需要擴大量程，排除界線仍保留：觸發通道未截波時使用改刻度前的極值；觸發通道已截波時只保留已知 Level／先前界線。下一輪依調整後讀回的 Trigger CH Scale×0.04 向外避讓，次數及 Phase 時限不重新起算。
+若該 Baseline 同時需要擴大量程，排除界線仍保留：觸發通道未截波時使用改刻度前的極值；觸發通道已截波時只保留已知 Level／先前界線。下一輪依調整後讀回的 Trigger CH Scale÷25 格點向外避讓，次數及 Phase 時限不重新起算。
 
 最後一次狀態查詢與 Relay 實際動作並非原子操作，兩者之間的觸發仍需硬體同步或時間戳才能完整辨識；本流程不宣稱能排除所有物理時序競態。Stop、通訊／讀值／保存錯誤、原 Phase／次數上限及安全退出失敗仍會中止，不無限重試。
 

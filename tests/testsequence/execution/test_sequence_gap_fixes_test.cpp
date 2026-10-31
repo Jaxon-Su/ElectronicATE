@@ -335,9 +335,11 @@ static void pretriggerCase(const QString &mode, bool shortTest = false)
     require(result.success == success, "wrong pre-input result status");
     if (!success) {
         if (mode == "floor_rounding") {
-            require(result.trials.size() == 1 && scope.levels.size() == 3 &&
-                    result.errorMessage.contains("threshold cannot advance"),
-                    "inward rounding returned to an excluded pre-input floor");
+            // The grid now rejects this unsafe index before a second ARM can
+            // revisit a rounded floor; the first valid event must survive.
+            require(result.trials.size() == 1 && scope.levels.size() == 1 && scope.arms == 1 &&
+                    result.errorMessage.contains("grid cannot advance safely"),
+                    "unsafe grid rearmed or discarded the completed event");
             return;
         }
         require(result.trials.isEmpty(), "failed pre-input run fabricated event data");
@@ -530,6 +532,7 @@ static void measurements(bool legalNa)
             for (const QString metric : {"MAXimum", "MINimum"}) {
                 CheckedTransient scope; scope.metric = metric; scope.capture = capture; scope.forbidRmsMean = true;
                 scope.allowReferenceQuartet = kind == TransientKind::TurnOff || kind == TransientKind::TurnOnThenShort;
+                scope.allowBaselineQuartet = kind == TransientKind::TurnOff;
                 scope.single = kind == TransientKind::TurnOn || kind == TransientKind::ShortThenTurnOn;
                 auto ctx = context(scope);
                 if (capture) ctx.captureRecord = [&](const auto &) { scope.archived = true; };
@@ -665,7 +668,7 @@ static void onShortPretriggerCase(const QString &mode, bool capture)
         if (mode != "after_event") require(mode == "fall" ? trial.triggerLevel < -2 : trial.triggerLevel > 2,
                                            "search revisited excluded baseline");
     }
-    if (mode == "after_event") require(result.trials.first().triggerLevel == 1.4, "previous real event lost");
+    if (mode == "after_event") require(std::abs(result.trials.first().triggerLevel - 1.2)<1e-10, "previous real event lost");
 }
 
 static void onShortPretrigger()
@@ -713,7 +716,7 @@ public:
     }
     bool readVerticalRange(int ch, ScopeVerticalRange &range, QString&) override {
         // Normal event values fit; only the selected pre-short record requests margin.
-        range = {scales[ch], 0, early ? 10.0 : 1000.0}; return true;
+        range = {scales[ch], 0, early ? 10.0 : 1000.0, 0, -800, 800}; return true;
     }
     double measureSignalPeak(int ch, const QString &metric) override {
         if (!early) return Scope::measureSignalPeak(ch, metric);
@@ -790,8 +793,11 @@ static void onShortRescaleCase(bool falling, bool capture, int adjustedChannel, 
     const int firstRetry = priorEvent ? 3 : 2; // AUTO, optional real event, pre-short, retry.
     require(scope.levels.size() > firstRetry, "rescale did not acquire again");
     require(sign * scope.levels[firstRetry] > floor, "rescale revisited excluded pre-short level/extremum");
-    const double expectedStep = adjustedChannel == 1 ? (margin ? .048 : .08) * (fault == "roundup" ? 1.25 : 1) : .04;
-    require(std::abs(sign * scope.levels[firstRetry] - floor - expectedStep) < 1e-9,
+    const double expectedStep = adjustedChannel == 1 ? (margin ? .0486075949367089 : .08) * (fault == "roundup" ? 1.25 : 1) : .04;
+    const double retryLevel=sign * scope.levels[firstRetry];
+    // The next grid point can be less than one Step from a non-grid floor.
+    require(retryLevel-floor <= expectedStep+1e-9 &&
+            std::abs(retryLevel/expectedStep-std::round(retryLevel/expectedStep))<1e-9,
             "rescale did not use updated trigger scale step");
     for (int i = firstRetry; i < scope.levels.size(); ++i)
         require(sign * scope.levels[i] > floor, "bracket searched inward across excluded floor");

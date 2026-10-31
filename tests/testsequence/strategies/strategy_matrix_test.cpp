@@ -3,10 +3,33 @@
 #include "steadystatesearchstrategy.h"
 #include <QThread>
 
+void transientGridContract(TransientKind kind)
+{
+    for (double scale : {4.0, 9.999}) {
+        Scope scope;scope.totalChannels=1;scope.scale=scale;
+        scope.single=kind==TransientKind::TurnOn || kind==TransientKind::ShortThenTurnOn;
+        scope.steady=17.7563;scope.peak=21.555;scope.negativePeak=-21.555;
+        auto cfg=context(scope);cfg.trialsPerLevel=1;
+        QAtomicInt stop(0);
+        const auto result=runTransientStrategy(kind,cfg,&scope,stop);
+        require(result.success,"quantized transient execution failed");
+        const double step=scale==4 ? .16 : .39996;
+        for (double level : scope.levels) {
+            if (std::abs(level/step-std::round(level/step))>1e-8)
+                std::cerr<<"Transient kind="<<int(kind)<<" Level="<<level<<" Step="<<step<<'\n';
+            require(std::abs(level/step-std::round(level/step))<1e-8,
+                    "transient sent a fractional trigger grid point");
+        }
+        require(!result.trials.isEmpty() && result.channels[0].maxVal==21.555 &&
+                result.channels[0].minVal==-21.555,"grid changed measured transient extrema");
+    }
+}
 void transientCase(const QString& scenario, TransientKind kind) {
+    if (scenario=="bipolar") transientGridContract(kind);
     Scope s;
     s.forbidRmsMean = true;
     s.allowReferenceQuartet = kind == TransientKind::TurnOff || kind == TransientKind::TurnOnThenShort;
+    s.allowBaselineQuartet = kind == TransientKind::TurnOff;
     s.single=kind==TransientKind::TurnOn || kind==TransientKind::ShortThenTurnOn;
     auto c=context(s);
     c.trialsPerLevel=1;
@@ -18,7 +41,7 @@ void transientCase(const QString& scenario, TransientKind kind) {
     if(scenario.startsWith("scale_")) {
         s.totalChannels=1;s.clipped=true;s.clipEventOnly=true;s.scale=1;
         expectSuccess=scenario=="scale_recover";
-        if(scenario=="scale_limit")s.requiredScale=1e9;
+        if(scenario=="scale_limit"){s.requiredScale=1e9;s.peak=1e12;s.negativePeak=-1e12;}
         if(scenario=="scale_clamp")s.clampScale=true;
         if(scenario=="scale_reject")s.rejectScale=true;
         if(!expectSuccess)expectedError=scenario=="scale_reject"?"scale rejected":"scale";
@@ -184,7 +207,7 @@ public:
         if(onState)onState();
         if(commError)return "invalid";
         if(autoMode)return "0";
-        return !miss && (always || (negative?level>=-2:level<=2))?"0":"1";
+        return !miss && (always || (negative?level>=-2.4:level<=2.4))?"0":"1";
     }
     double measureSignalPeak(int ch,const QString& type)override {
         ++reads;if(onRead)onRead();
@@ -205,7 +228,7 @@ void normalCase(const QString& scenario) {
     else if(scenario=="bad_source") {s.source="MATH1";error="Trigger source";}
     else if(scenario=="disabled_source") {s.enabled=false;error="Trigger source";}
     else if(scenario=="write_edge") {s.failWrite="TRIGger:A:TYPe EDGE";error="rejected";}
-    else if(scenario=="write_level") {s.failWrite="TRIGger:A:LEVel:CH1 2";error="rejected";}
+    else if(scenario=="write_level") {s.failWrite="TRIGger:A:LEVel:CH1 2.4";error="rejected";}
     else if(scenario=="arm_normal") {s.onArm=[&]{if(!s.autoMode)s.failArm=true;};error="Failed to start";}
     else if(scenario=="comm_normal") {s.onState=[&]{if(!s.autoMode)s.commError=true;};error="communication";}
     else if(scenario=="nan_normal") {s.nanNormal=true;error="measurement";}
@@ -231,7 +254,7 @@ void normalCase(const QString& scenario) {
         require(OscilloscopeStrategyFactory::create("unsupported",&c)==nullptr,"unsupported factory");
     }
     if(scenario=="scale_recover") {
-        require(s.scale==4 && s.levels.contains(2.16) && s.levels.contains(-2.16),
+        require(s.scale==4 && s.levels.contains(2.08) && s.levels.contains(-2.08),
                 "normal search did not refresh step after scale expansion");
     }
 }

@@ -39,6 +39,7 @@ struct TestSequenceConditionResult {
     QString error;
     QVector<TestSequenceChannelResult> channels;
     QVector<MeasurementTrial> trials;
+    QVector<MeasurementTrialIssue> trialIssues;
 };
 
 struct TestSequenceResultRecord {
@@ -60,6 +61,7 @@ struct TestSequenceResultRecord {
     QVector<TestSequenceConditionResult> conditions; // Independent per-load results, including partial/Skipped members.
     QVector<MeasurementTrial> trials;
     TestSequenceConditionSource loadCondition; // Single-task source copied from the execution snapshot.
+    QVector<MeasurementTrialIssue> trialIssues;
 };
 Q_DECLARE_METATYPE(TestSequenceResultRecord)
 Q_DECLARE_METATYPE(QVector<TestSequenceResultRecord>)

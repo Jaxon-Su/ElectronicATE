@@ -1,7 +1,9 @@
 #include "../support/measurement_scope_fixture.h"
 #include "steadystatesearchstrategy.h"
+#include "oscilloscopeacquisition.h"
 #include "oscilloscope.h"
 #include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QThread>
 #include <stdexcept>
 #include <iostream>
@@ -70,10 +72,120 @@ public:
         return Scope::measureSignalPeak(channel, type);
     }
 };
+void referenceFailureContract()
+{
+    using namespace OscilloscopeAcquisition;
+    class Reference : public Scope {
+    public:
+        bool beginAutoReference(int &budget,QString &error) override {
+            ++starts;budget=25;
+            if(mode=="begin-error"){error="begin failure";return false;}
+            return true;
+        }
+        ScopeReferenceStatus pollAutoReference(QString &state,QString &error) override {
+            state="mode=AUTO count=0";
+            if(mode=="error"){error="query failure";return ScopeReferenceStatus::Error;}
+            if(mode=="throw")throw std::runtime_error("query threw");
+            if(mode=="cancel")cancel->storeRelease(1);
+            if(mode=="late"){QThread::msleep(35);return ScopeReferenceStatus::Completed;}
+            return ScopeReferenceStatus::Pending;
+        }
+        QString mode;
+    };
+    for(const QString mode:{"begin-error","error","throw","cancel","timeout","phase","late"}) {
+        Reference scope;scope.mode=mode;QAtomicInt stop{0};scope.cancel=&stop;
+        QString error;QElapsedTimer clock;clock.start();
+        const auto result=acquireAutoRecord(&scope,stop,mode=="phase"?5:100,error);
+        const auto expected=mode=="late"?AcquisitionResult::CompletedAfterTimeout:
+            mode=="cancel"?AcquisitionResult::Cancelled:
+            mode=="timeout"||mode=="phase"?AcquisitionResult::CaptureTimeout:AcquisitionResult::CommError;
+        require(result==expected && scope.starts==1 && scope.reads==0,"reference failure classification or stale read");
+        require(mode=="late"||scope.stops>0,"failed reference left acquisition running");
+        require(clock.elapsed()<100,"reference ignored the record/phase budget");
+        if(mode=="error")require(error.contains("query failure")&&error.contains("count=0"),"reference error lost cause/state");
+    }
+    Reference stopped;QAtomicInt stop{1};QString error;
+    require(acquireAutoRecord(&stopped,stop,100,error)==AcquisitionResult::Cancelled && stopped.starts==0,
+            "pre-cancelled reference started acquisition");
+}
+void triggerGridContract()
+{
+    class GridScope : public Scope {
+    public:
+        bool setChannelTriggerLevel(int, double value, QString &) override {
+            level=value;
+            return true;
+        }
+        bool beginSingleAcquisition() override {
+            if (!autoMode) levels.append(level);
+            return Scope::beginSingleAcquisition();
+        }
+        QString getAcquisitionState() override { return autoMode ? "0" : "1"; }
+        double measureSignalPeak(int, const QString &type) override {
+            return type=="MAXimum" ? high : type=="MINimum" ? low : 19.64;
+        }
+        double high=21.555, low=17.7563;
+        QVector<double> levels;
+    } scope;
+    scope.scale=4;
+    QAtomicInt stop(0);
+    const auto result=SteadyStateSearchStrategy(2,1000,5,"BOTH").execute(&scope,stop);
+    require(result.success && scope.levels.size()==2,"grid reference execution failed");
+    if (std::abs(scope.levels[0]-21.6)>1e-10)
+        std::cerr<<"Issue #10: Max=21.555, Scale=4, expected Level=21.6; actual="<<scope.levels[0]<<'\n';
+    require(std::abs(scope.levels[0]-21.6)<1e-10,"Rise initial Level is not the next 0.16 V grid point");
+    require(std::abs(scope.levels[1]-17.6)<1e-10,"Fall initial Level is not the next 0.16 V grid point");
+    require(result.channels[0].maxVal==21.555 && result.channels[0].minVal==17.7563,
+            "trigger quantization changed measurement data");
+    struct Case { double scale, high, low, rise, fall; };
+    for (const auto &row : {
+             Case{4,21.6,17.6,21.76,17.44}, Case{4,-17.7563,-21.555,-17.6,-21.6},
+             Case{4,0,0,.16,-.16}, Case{9.999,21.555,17.7563,21.59784,17.59824},
+             Case{.001,.00011,-.00011,.00012,-.00012}}) {
+        GridScope test;test.scale=row.scale;test.high=row.high;test.low=row.low;
+        const auto measured=SteadyStateSearchStrategy(2,1000,5,"BOTH").execute(&test,stop);
+        require(measured.success && test.levels.size()==2,"signed/fine grid run failed");
+        require(std::abs(test.levels[0]-row.rise)<1e-12 && std::abs(test.levels[1]-row.fall)<1e-12,
+                "signed/exact/five-decimal grid alignment failed");
+    }
+}
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     try {
+        triggerGridContract();
+        referenceFailureContract();
         QAtomicInt stop(0);
+        // Flat DC has no crossing at 2.4 V. Only a fresh AUTO RUNSTOP reference
+        // may seed the Normal search; a Single-only implementation fails here.
+        class FlatReference : public Scope {
+        public:
+            bool beginSingleAcquisition() override {
+                require(!autoMode,"AUTO DC reference incorrectly started Single");
+                ++starts;normalLevel=level;return true;
+            }
+            bool beginAutoReference(int &budget,QString &) override { budget=30;referenceStarted=true;return true; }
+            ScopeReferenceStatus pollAutoReference(QString &state,QString &) override {
+                state="mode=AUTO stop-after=RUNSTOP acquisition=RUN count=0";
+                return stall?ScopeReferenceStatus::Pending:ScopeReferenceStatus::Completed;
+            }
+            QString getAcquisitionState() override {return "1";}
+            double measureSignalPeak(int,const QString &) override {++reads;require(referenceStarted,"stale reference read");return 20;}
+            bool stall=false,referenceStarted=false;double normalLevel=0;
+        } flat;
+        flat.scale=60;QStringList log;
+        SteadyStateSearchStrategy dc(2,300,5,"MAX");
+        dc.setLogObserver([&](const QString &text){log<<text;});
+        const auto dcResult=dc.execute(&flat,stop);
+        require(dcResult.success&&std::abs(flat.normalLevel-21.6)<1e-10&&dcResult.channels[0].maxVal==20,
+                "flat DC did not seed Normal at the next Scale/25 grid point above AUTO maximum");
+        require(log.join(' ').contains("wait limit=30")&&log.join(' ').contains("entering Normal")&&
+                log.join(' ').contains("MISS"),"reference/search log boundaries missing");
+        FlatReference stalled;stalled.stall=true;
+        QElapsedTimer boundedReference;boundedReference.start();
+        const auto stalledResult=dc.execute(&stalled,stop);
+        require(!stalledResult.success&&stalled.reads==0&&stalled.starts==0&&
+                boundedReference.elapsed()<200&&stalledResult.errorMessage.contains("count=0"),
+                "missing AUTO record waited for the whole phase or read stale data");
         SteadyStateSearchStrategy strategy(2, 1000, 5);
         for (const QString target : {QString("MAX"), QString("MIN")}) {
             Scope single;
@@ -123,14 +235,15 @@ int main(int argc, char** argv) {
         }
         Scope ok;
         auto result = strategy.execute(&ok, stop);
-        require(result.success && ok.starts == 9 && ok.stops > 0, "no-progress termination failed");
-        require(ok.minLevels.size() == 4 && std::abs(ok.minLevels[1] + 2.4) < 1e-9, "Min must start at AUTO reference minimum");
+        require(result.success && ok.starts == 7 && ok.stops > 0, "no-progress termination failed");
+        require(ok.minLevels.size() == 3 && std::abs(ok.minLevels[0] + 2.4) < 1e-9 &&
+                std::abs(ok.minLevels[1] + 2.8) < 1e-9, "Min must start below AUTO minimum and advance one grid point");
         Scope scaled; scaled.scale=20;
-        require(strategy.execute(&scaled,stop).success && scaled.minLevels.size()==3 && std::abs(scaled.minLevels[1]+2.8)<1e-9,
+        require(strategy.execute(&scaled,stop).success && scaled.minLevels.size()==2 && std::abs(scaled.minLevels[1]+3.2)<1e-9,
                 "20 units/div must advance by 0.8 units");
         Scope fine; fine.scale=2;
         require(SteadyStateSearchStrategy(2,1000,20).execute(&fine,stop).success
-                && fine.minLevels.size()>2 && std::abs(fine.minLevels[1]+2.08)<1e-9,
+                && fine.minLevels.size()>2 && std::abs(fine.minLevels[0]+2.08)<1e-9 && std::abs(fine.minLevels[1]+2.16)<1e-9,
                 "2 units/div must advance by 0.08 units");
         for(double bad : {0.0,-1.0,std::numeric_limits<double>::quiet_NaN()}) {
             Scope invalidScale; invalidScale.scale=bad;

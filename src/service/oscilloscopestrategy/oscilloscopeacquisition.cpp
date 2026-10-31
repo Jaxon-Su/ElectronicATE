@@ -9,6 +9,14 @@
 
 namespace
 {
+struct MarginAdjustment {
+    ScopeVerticalRange range;
+    double scale = 0;
+    double anchor = 0;
+    double value = 0;
+    double position(double actualScale) const { return anchor - (value-range.center)/actualScale; }
+};
+
 QString triggerStateName(ScopeTriggerState state)
 {
     switch (state) {
@@ -230,7 +238,11 @@ bool OscilloscopeAcquisition::expandVerticalRange(IScopeMeasurement *scope, QAto
         if (vertical && vertical->options.beforeChange)
             vertical->options.beforeChange(channel, previous, target);
         checkPhase();
-        setScaleChecked(scope, stop, channel, target, true);
+        const double actual = setScaleChecked(scope, stop, channel, target, true, phaseDeadline);
+        if (vertical && vertical->options.log)
+            vertical->options.log(QString("CH%1 Scale readback: requested=%2 actual=%3 units/div")
+                .arg(channel).arg(target,0,'g',12).arg(actual,0,'g',12));
+        return actual;
     };
     ScopeCaptureRecord record;
     record.phase = phase;
@@ -250,6 +262,7 @@ bool OscilloscopeAcquisition::expandVerticalRange(IScopeMeasurement *scope, QAto
         extremum->value = std::numeric_limits<double>::quiet_NaN();
     }
     QMap<int, QPair<double, double>> expansions;
+    QMap<int, MarginAdjustment> margins;
     const bool margin = vertical && vertical->options.margin;
     std::exception_ptr queryFailure;
     try {
@@ -260,7 +273,7 @@ bool OscilloscopeAcquisition::expandVerticalRange(IScopeMeasurement *scope, QAto
             if (scope->isClipping(value.channel)) clipped.append(value.channel);
         }
         record.clipped = !clipped.isEmpty();
-        const bool capture = vertical && vertical->captureRecord;
+        const bool capture = vertical && vertical->captureRecord && vertical->readCaptureMeasurements;
         if ((capture || margin) && !completionTimedOut) {
             for (auto &value : record.channels) {
                 const bool adjustMargin = margin && !clipped.contains(value.channel);
@@ -282,16 +295,39 @@ bool OscilloscopeAcquisition::expandVerticalRange(IScopeMeasurement *scope, QAto
                         throw std::runtime_error(QString("CH%1 vertical range: %2").arg(value.channel).arg(error).toStdString());
                     checkPhase();
                     if (!valid(range.scale) || range.scale <= 0 || !valid(range.center) ||
-                        !valid(range.divisions) || range.divisions <= 0 ||
+                        !valid(range.divisions) || range.divisions <= 0 || !valid(range.position) ||
+                        !valid(range.minimumPosition) || !valid(range.maximumPosition) ||
+                        range.minimumPosition >= -range.divisions*0.4 ||
+                        range.maximumPosition <= range.divisions*0.4 ||
+                        range.position < range.minimumPosition || range.position > range.maximumPosition ||
                         !valid(value.maxVal) || !valid(value.minVal) || value.maxVal < value.minVal)
                         throw std::runtime_error(QString("CH%1 invalid vertical range or extrema for 10% margin").arg(value.channel).toStdString());
-                    const double peak = std::max(std::abs(value.maxVal - range.center),
-                                                 std::abs(value.minVal - range.center));
-                    const double required = peak / (range.divisions * 0.4);
-                    if (!valid(required)) throw std::runtime_error("Invalid calculated margin scale");
-                    // Relative tolerance only absorbs floating-point/readback rounding.
-                    if (required > range.scale * (1 + 1e-9))
-                        expansions.insert(value.channel, {range.scale, required});
+                    const double top = (value.maxVal-range.center)/range.scale + range.position;
+                    const double bottom = (value.minVal-range.center)/range.scale + range.position;
+                    if (top <= range.divisions*0.4 + 1e-9 && bottom >= -range.divisions*0.4 - 1e-9)
+                        continue;
+                    // Position affects display only. ADC clipping above still uses x2.
+                    const double span = value.maxVal-value.minVal;
+                    const double edge = range.divisions*0.395;
+                    const bool flat = span <= range.scale*0.1;
+                    MarginAdjustment plan{range, std::max(range.scale,span/(2*edge)),
+                                          0, value.minVal+span/2};
+                    if (flat && value.minVal > 0) { plan.anchor=edge; plan.value=value.maxVal; }
+                    else if (flat && value.maxVal < 0) { plan.anchor=-edge; plan.value=value.minVal; }
+                    const double delta = plan.value-range.center;
+                    // Leave the ADC Offset unchanged; expand only when span or Position limits require it.
+                    plan.scale = std::max(plan.scale, delta >= 0 ? delta/(plan.anchor-range.minimumPosition)
+                                                               : -delta/(range.maximumPosition-plan.anchor));
+                    if (!valid(plan.scale) || plan.scale <= 0)
+                        throw std::runtime_error("Invalid calculated margin scale");
+                    margins.insert(value.channel,plan);
+                    if (plan.scale > range.scale*(1+1e-9))
+                        expansions.insert(value.channel,{range.scale,plan.scale});
+                    if (vertical->options.log)
+                        vertical->options.log(QString("CH%1 10% display margin: %2; Max=%3 Min=%4 Offset=%5 Position=%6 div; requested Scale=%7")
+                            .arg(value.channel).arg(flat ? "flat edge/zero center" : "waveform center")
+                            .arg(value.maxVal,0,'g',12).arg(value.minVal,0,'g',12).arg(range.center,0,'g',12)
+                            .arg(range.position,0,'g',12).arg(plan.scale,0,'g',12));
                 }
             }
         }
@@ -330,17 +366,103 @@ bool OscilloscopeAcquisition::expandVerticalRange(IScopeMeasurement *scope, QAto
             throw std::runtime_error("Clipped waveform: invalid channel scale");
         expansions.insert(ch, {previous, previous * 2});
     }
+    const bool changed = !expansions.isEmpty() || !margins.isEmpty();
+    if (changed && adjustments >= 8)
+        throw std::runtime_error("Vertical scale adjustment limit reached");
+    QMap<int,double> actualScales;
     for (auto it = expansions.cbegin(); it != expansions.cend(); ++it)
-        setScale(it.key(), it.value().first, it.value().second);
-    if (!expansions.isEmpty()) ++adjustments;
-    return !expansions.isEmpty();
+        actualScales.insert(it.key(),setScale(it.key(), it.value().first, it.value().second));
+    for (auto it = margins.cbegin(); it != margins.cend(); ++it) {
+        checkPhase();
+        const auto &plan = it.value();
+        const double target = std::clamp(plan.position(actualScales.value(it.key(),plan.range.scale)),
+                                         plan.range.minimumPosition,plan.range.maximumPosition);
+        if (std::abs(target-plan.range.position) <= 1e-9) continue;
+        if (vertical->options.beforePositionChange)
+            vertical->options.beforePositionChange(it.key(),plan.range.position,target);
+        checkPhase();
+        const double actual = setPositionChecked(scope,stop,it.key(),target,phaseDeadline);
+        if (vertical->options.log)
+            vertical->options.log(QString("CH%1 Position readback: requested=%2 actual=%3 div")
+                .arg(it.key()).arg(target,0,'g',12).arg(actual,0,'g',12));
+    }
+    if (changed) ++adjustments;
+    return changed;
+}
+
+OscilloscopeAcquisition::AcquisitionResult OscilloscopeAcquisition::acquireAutoRecord(
+    IScopeMeasurement *scope, QAtomicInt &stop, int phaseRemainingMs, QString &error, const ReferenceLog &log)
+{
+    error.clear();
+    auto report = [&](const QString &message) { if (log) log(message); };
+    if (stop.loadAcquire()) { error = "Stopped by user"; return AcquisitionResult::Cancelled; }
+    if (!scope || phaseRemainingMs <= 0) {
+        error = "AUTO reference phase timeout: NA"; return AcquisitionResult::CaptureTimeout;
+    }
+    QElapsedTimer timer; timer.start();
+    QString state;
+    auto abort = [&](AcquisitionResult result) {
+        QString cleanup;
+        try {
+            if (!scope->stopAcquisition(cleanup)) error += "; AUTO STOP: " + cleanup;
+        } catch (...) { error += "; AUTO STOP exception"; }
+        report("AUTO reference: " + error);
+        return result;
+    };
+    try {
+        int recordBudget = 0;
+        report("AUTO reference: starting fresh RUNSTOP acquisition");
+        if (!scope->beginAutoReference(recordBudget,error)) return abort(AcquisitionResult::CommError);
+        if (recordBudget <= 0 || recordBudget > 60000) {
+            error = "Invalid AUTO reference timeout budget"; return abort(AcquisitionResult::CommError);
+        }
+        const int budget = qMin(phaseRemainingMs,recordBudget);
+        report(QString("AUTO reference: wait limit=%1 ms (remaining phase=%2 ms)").arg(budget).arg(phaseRemainingMs));
+        QString previous;
+        qint64 lastLog = -1000;
+        for (;;) {
+            if (stop.loadAcquire()) { error = "Stopped by user"; return abort(AcquisitionResult::Cancelled); }
+            const auto status = scope->pollAutoReference(state,error);
+            if (stop.loadAcquire()) { error = "Stopped by user"; return abort(AcquisitionResult::Cancelled); }
+            if (state != previous || timer.elapsed()-lastLog >= 1000) {
+                report(QString("AUTO reference: %1; elapsed=%2 ms").arg(state).arg(timer.elapsed()));
+                previous = state; lastLog = timer.elapsed();
+            }
+            if (status == ScopeReferenceStatus::Error) {
+                error = "AUTO reference communication/state error: " + error + "; " + state;
+                return abort(AcquisitionResult::CommError);
+            }
+            if (status == ScopeReferenceStatus::Completed) {
+                const bool late = timer.elapsed() >= budget;
+                report(late ? "AUTO reference: record frozen after timeout (diagnostic only)"
+                            : "AUTO reference: fresh record frozen");
+                return late ? AcquisitionResult::CompletedAfterTimeout : AcquisitionResult::Completed;
+            }
+            if (timer.elapsed() >= budget) {
+                error = QString("AUTO reference timeout: NA after %1 ms; %2").arg(timer.elapsed()).arg(state);
+                return abort(AcquisitionResult::CaptureTimeout);
+            }
+            QThread::msleep(static_cast<unsigned long>(std::clamp<qint64>(budget-timer.elapsed(),0,20)));
+        }
+    } catch (const std::exception &ex) { error = QString("AUTO reference error: ") + ex.what(); }
+      catch (...) { error = "Unexpected AUTO reference error"; }
+    return abort(AcquisitionResult::CommError);
 }
 
 OscMeasureResult OscilloscopeAcquisition::captureAutoReference(IScopeMeasurement *scope, QAtomicInt &stop,
                                                                int timeoutMs, VerticalScaleState *vertical,
-                                                               ReferenceMetrics metrics)
+                                                               ReferenceMetrics metrics, const ReferenceLog &log,
+                                                               bool detailedLog)
 {
     OscMeasureResult result;
+    QString step;
+    auto detail = [&](const QString &message) {
+        if (detailedLog && log) log("AUTO reference: " + message);
+    };
+    auto begin = [&](const QString &name) {
+        step = name;
+        detail(step + " begin");
+    };
     if (!scope || timeoutMs <= 0) {
         result.errorMessage = "Invalid AUTO reference acquisition";
         return result;
@@ -354,6 +476,7 @@ OscMeasureResult OscilloscopeAcquisition::captureAutoReference(IScopeMeasurement
             throw std::runtime_error("AUTO reference phase timeout: NA");
     };
     try {
+        begin("channel validation");
         check();
         QString error;
         const int channel = scope->triggerChannel();
@@ -362,16 +485,19 @@ OscMeasureResult OscilloscopeAcquisition::captureAutoReference(IScopeMeasurement
         const double level = scope->getChannelScale(channel) * 0.04;
         if (!std::isfinite(level) || level <= 0 || level >= 1e19)
             throw std::runtime_error("Invalid channel scale for AUTO reference trigger level");
+        detail(step + " complete");
         auto configure = [&](auto operation) {
             check();
             if (!operation(error))
                 throw std::runtime_error(error.toStdString());
         };
+        begin("trigger configuration");
         configure([&](QString &e) { return scope->selectEdgeTrigger(e); });
         configure([&](QString &e) { return scope->setEdgeSlope(ScopeTriggerSlope::Rise, e); });
         configure([&](QString &e) { return scope->setChannelTriggerLevel(channel, level, e); });
         configure([&](QString &e) { return scope->setTriggerMode(ScopeTriggerMode::Auto, e); });
         check();
+        detail(step + " complete");
         VerticalScaleState localVertical;
         if (!vertical)
             vertical = &localVertical;
@@ -379,33 +505,37 @@ OscMeasureResult OscilloscopeAcquisition::captureAutoReference(IScopeMeasurement
         for (;;) {
             if (referenceTimer.elapsed() >= timeoutMs)
                 throw std::runtime_error("AUTO reference timeout: NA");
-            // Single explicitly transitions STOP -> sequence -> RUN before waiting.
-            if (!scope->beginSingleAcquisition())
-                throw std::runtime_error(
-                    ("AUTO reference acquisition failed to start: " + scope->lastError()).toStdString());
-            const auto state =
-                waitForCapture(scope, stop, qMax(0, timeoutMs - int(referenceTimer.elapsed())));
+            begin("acquisition");
+            const auto state = acquireAutoRecord(scope, stop,
+                qMax(0, timeoutMs - int(referenceTimer.elapsed())), error, log);
             if (!hasCompletedRecord(state))
-                throw std::runtime_error(state == AcquisitionResult::CommError
-                                             ? "AUTO reference communication error"
-                                             : "AUTO reference timeout: NA");
+                throw std::runtime_error(error.toStdString());
+            detail(step + " complete");
             // Reading or archiving a completed record can cross the phase deadline.
             // Archive the frozen record before enforcing that deadline.
+            begin("record checks / Capture");
             if (expandVerticalRange(scope, stop, adjustments, vertical, "Auto reference",
                                       state == AcquisitionResult::CompletedAfterTimeout,
                                       QDeadlineTimer(qMax(0, timeoutMs - int(referenceTimer.elapsed()))))) {
+                detail(step + " complete; new acquisition required");
                 continue;
             }
+            detail(step + " complete");
             check();
             break;
         }
         for (int ch = 1; ch <= scope->getTotalChannel(); ++ch) {
+            begin(QString("CH%1 display/clipping check").arg(ch));
             check();
-            if (!channelEnabledChecked(scope, ch))
+            if (!channelEnabledChecked(scope, ch)) {
+                detail(step + " complete; disabled");
                 continue;
+            }
             if (scope->isClipping(ch))
                 throw std::runtime_error("AUTO reference clipped; adjust channel scale");
-            auto read = [&](ScopeMeasurement type) {
+            detail(step + " complete");
+            auto read = [&](ScopeMeasurement type, const char *name) {
+                begin(QString("CH%1 %2 read").arg(ch).arg(QString::fromLatin1(name)));
                 check();
                 const double value =
                     (type == ScopeMeasurement::Maximum || type == ScopeMeasurement::Minimum)
@@ -413,18 +543,19 @@ OscMeasureResult OscilloscopeAcquisition::captureAutoReference(IScopeMeasurement
                                                qMin(5000, qMax(0, timeoutMs - int(referenceTimer.elapsed()))))
                         : readMeasurementChecked(scope, ch, type);
                 check();
+                detail(step + " complete");
                 return std::isfinite(value) && std::abs(value) < 1e30
                            ? value
                            : std::numeric_limits<double>::quiet_NaN();
             };
             OscChannelMeasure value;
             value.channel = ch;
-            value.maxVal = read(ScopeMeasurement::Maximum);
-            value.minVal = read(ScopeMeasurement::Minimum);
+            value.maxVal = read(ScopeMeasurement::Maximum, "Maximum");
+            value.minVal = read(ScopeMeasurement::Minimum, "Minimum");
             // Reference results can request a quartet independently of Capture's contract.
             if (vertical->includeRmsMean || metrics == ReferenceMetrics::Quartet) {
-                value.rms = read(ScopeMeasurement::Rms);
-                value.mean = read(ScopeMeasurement::Mean);
+                value.rms = read(ScopeMeasurement::Rms, "RMS");
+                value.mean = read(ScopeMeasurement::Mean, "Mean");
             }
             if (!std::isfinite(value.maxVal) || !std::isfinite(value.minVal) || value.maxVal < value.minVal)
                 throw std::runtime_error("AUTO reference Max/Min: NA");
@@ -438,19 +569,27 @@ OscMeasureResult OscilloscopeAcquisition::captureAutoReference(IScopeMeasurement
     } catch (...) {
         result.errorMessage = "Unexpected AUTO reference error";
     }
-    auto cleanup = [&](auto operation) {
+    if (!result.success) detail("failed during " + step + ": " + result.errorMessage);
+    auto cleanup = [&](const QString &name, auto operation) {
+        begin(name);
         QString error;
         try {
-            if (operation(error))
+            if (operation(error)) {
+                detail(step + " complete");
                 return;
+            }
         } catch (...) {
             error = "cleanup exception";
         }
         result.success = false;
+        result.cleanupFailed = true;
         result.errorMessage += "; AUTO cleanup: " + error;
+        detail(step + " failed: " + error);
     };
-    cleanup([&](QString &e) { return scope->stopAcquisition(e); });
-    cleanup([&](QString &e) { return scope->setTriggerMode(ScopeTriggerMode::Normal, e); });
+    cleanup("cleanup STOP", [&](QString &e) { return scope->stopAcquisition(e); });
+    cleanup("cleanup NORMAL", [&](QString &e) { return scope->setTriggerMode(ScopeTriggerMode::Normal, e); });
+    if (log) log(result.success ? "AUTO reference complete; returned to STOP/NORMAL"
+                               : "AUTO reference failed: " + result.errorMessage);
     if (stop.loadAcquire()) {
         result.success = false;
         result.errorMessage = "Stopped by user";

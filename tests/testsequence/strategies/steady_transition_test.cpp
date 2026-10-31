@@ -3,6 +3,121 @@
 #undef main
 #include "transientrelayconditions.h"
 
+static void taskTriggerSource()
+{
+    for (const auto& descriptor : TestSequenceTaskKind::descriptors) {
+        const auto kind = descriptor.kind;
+        if (!TestSequenceTaskKind::isSteady(kind) &&
+            !(TestSequenceTaskKind::isTransient(kind) && !TestSequenceTaskKind::isDescent(kind))) continue;
+        for (const QVariant value : {QVariant(0),QVariant(9),QVariant(1.5),QVariant(true),QVariant("1"),QVariant{}}) {
+            auto invalid=task(descriptor.name); invalid.settings["trigger_channel"]=value;
+            bool rejected=false;
+            try { TaskSettings::decode(descriptor.name,invalid.settings); }
+            catch (const std::invalid_argument&) { rejected=true; }
+            require(rejected,"runtime accepted invalid Trigger source");
+        }
+        for (const QString mode : {"explicit","legacy","retry","prior-enable","stop","stop-read","stop-enabled","write-error",
+                                   "stop-error","edge-error","echo","read-error","disabled","enabled-error","unavailable"}) {
+            class SourceScope : public Scope {
+            public:
+                int source = 4, writes = 0;
+                bool enabled = true;
+                QString mode, error;
+                QStringList calls;
+                std::function<void()> cancel;
+                bool applySettings(const OscilloscopeSettings& settings, QAtomicInt&, QString&,
+                                   OscilloscopeConfigurationResult*) override {
+                    calls << "WRITE";
+                    for (const auto& channel : settings.channels) if (channel.index==1) enabled=channel.enabled;
+                    return true;
+                }
+                QString lastError() const override { return error; }
+                bool stopAcquisition(QString& out) override {
+                    calls << "STOP"; if (mode=="stop-error") { out="stop failed"; return false; } return true;
+                }
+                bool selectEdgeTrigger(QString& out) override {
+                    calls << "EDGE"; if (mode=="edge-error") { out="edge failed"; return false; } return true;
+                }
+                bool setEdgeTriggerChannel(int ch, QString& out) override {
+                    calls << "SET"; ++writes;
+                    if (mode=="stop") cancel();
+                    if (mode=="write-error") { out="source write failed"; return false; }
+                    if (mode!="echo") source=ch;
+                    return true;
+                }
+                int triggerChannel() override {
+                    calls << "READ"; error=mode=="read-error" ? "source read failed" : "";
+                    if (mode=="stop-read") cancel();
+                    return source;
+                }
+                bool isChannelEnabled(int ch) override {
+                    calls << "ENABLED"; error=mode=="enabled-error" ? "channel state failed" : "";
+                    if (mode=="stop-enabled") cancel();
+                    return ch==1 && enabled && mode!="disabled";
+                }
+            } scope;
+            scope.mode=mode;
+            scope.enabled=mode!="prior-enable";
+            auto c=context(); c.scope=&scope;
+            auto p=task(descriptor.name); p.settings["trigger_channel"]=mode=="unavailable"?8:1;
+            if (mode=="legacy") p.settings.remove("trigger_channel");
+            if (mode=="retry") p.retry=1;
+            const bool steady=TestSequenceTaskKind::isSteady(kind);
+            if (steady) p.settings["auto_period"]=true;
+            const bool pass=mode=="explicit" || mode=="legacy" || mode=="retry" || mode=="prior-enable";
+            int on=0, executed=0, created=0, periods=0, relayIO=0;
+            auto checkSource=[&] { require(scope.source==(mode=="legacy"?4:1),"test used stale trigger source"); };
+            TestRunDependencies deps; deps.validateMeasurement=validateMeasurementConditions;
+            deps.prepareConfiguration=[](const auto&,int,const QVariantMap& values,OscilloscopeSettings& out,QString&) {
+                OscilloscopeSettings::Channel channel; channel.index=1; channel.enabled=values.value("ch1_enabled").toBool();
+                out.channels.append(channel); return true;
+            };
+            deps.instruments.input=[&](const auto&,const auto&,InputAction action) { if(action==InputAction::PowerOn){++on;checkSource();} return InstrumentOperationResult{}; };
+            deps.instruments.dcGroup=[&](const auto&,const auto&,InputAction action) { if(action==InputAction::PowerOn){++on;checkSource();} return InstrumentOperationResult{}; };
+            deps.instruments.load=[&](const auto&,const auto&,int,const auto&,LoadAction action,bool) { if(action==LoadAction::LoadOn){++on;checkSource();} return InstrumentOperationResult{}; };
+            deps.instruments.dynamic=[&](const auto&,const auto&,int,const auto&,DynamicLoadAction action,bool,bool) { if(action==DynamicLoadAction::LoadOn){++on;checkSource();} return InstrumentOperationResult{}; };
+            deps.instruments.relay=[&](const auto&,const auto&,int,RelayAction) { ++relayIO; return InstrumentOperationResult{}; };
+            deps.autoPeriod=[&](IScopeMeasurement*,QAtomicInt&,QString&,const OscCaptureObserver&,const VerticalScaleOptions&,const std::function<void(const QString&)>&) {++periods;checkSource();return true;};
+            deps.strategy=[&](const MeasurementStrategyRequest& request) {
+                ++created; checkSource();
+                const auto ctx=std::get<ScopeMeasurementRequest>(request).context;
+                return std::make_unique<Strategy>([&,ctx] {
+                    ++executed; checkSource();
+                    if (ctx.power) {
+                        QString error; require(ctx.power(true,error),error); require(ctx.power(false,error),error);
+                        require(ctx.relays(false,false,error),error); require(ctx.load(false,error),error);
+                    }
+                    MeasurementResult result; result.success=mode!="retry" || executed>1;
+                    if(!result.success) result.error="injected retry";
+                    scope.source=4; // The next Group member/retry must apply its own saved source again.
+                    return result;
+                });
+            };
+            TestRunService runner(deps); scope.cancel=[&] {runner.stop();};
+            QVector<TestSequenceResultRecord> records;
+            QObject::connect(&runner,&TestRunService::resultRecordsReady,[&](auto r){records=r;});
+            TaskPayload first; first.task.name="Relay"; first.settings["relay_index"]=0;
+            if(mode=="prior-enable") { first.task.name="Write Oscilloscope";first.settings={{"ch1_enabled",true}}; }
+            runner.startTasks(mode=="unavailable"||mode=="prior-enable"?QVector<TaskPayload>{first,p}:QVector<TaskPayload>{p},c);
+            require(!records.isEmpty(),"trigger source result missing");
+            const auto label=QString(descriptor.name)+" / "+mode+": "+records.last().error;
+            if(pass) {
+                const int expected=(TestSequenceTaskKind::isGroup(kind)?2:1)+(mode=="retry"?1:0);
+                require(records.last().status=="Pass" && executed==expected,label);
+                require(scope.writes==(mode=="legacy"?0:expected),"source was not reapplied per member/attempt");
+                require(periods==(steady?expected:0),"Auto Period did not execute after source preparation");
+                if(mode!="legacy") require(scope.calls.mid(mode=="prior-enable"?1:0,5)==QStringList({"STOP","EDGE","SET","READ","ENABLED"}),"source preparation order");
+                if(mode=="prior-enable") require(records.first().status=="Pass" && scope.enabled,"prior Write Scope did not enable source");
+            } else {
+                require(on==0 && executed==0 && created==0 && periods==0,"source failure/Stop entered output or strategy");
+                require(records.last().status==(mode=="stop"||mode=="stop-read"||mode=="stop-enabled"?"Cancelled":"Fail"),label);
+                if(mode=="unavailable") require(scope.calls.isEmpty() && records.last().attempt==0 &&
+                    relayIO==0 && records.size()==2 && records.first().status=="Skipped","bad later channel touched IO");
+            }
+        }
+    }
+}
+
 static void verticalMarginLifecycle()
 {
     for (bool margin : {false, true}) for (bool group : {false, true}) for (bool autoPeriod : {false,true}) {
@@ -10,6 +125,15 @@ static void verticalMarginLifecycle()
         public:
             double scale=4;
             int restores=0;
+            double position=-2;
+            int positionRestores=0;
+            bool readVerticalRange(int,ScopeVerticalRange &range,QString &) override {
+                range={scale,0,10,position,-8,8}; return true;
+            }
+            bool setVerticalPosition(int,double value,QString &) override {
+                if(value==-2) ++positionRestores;
+                position=value; return true;
+            }
             double getChannelScale(int) override { return scale; }
             bool setVerticalScale(int, double value, QString &) override {
                 if (value==4) ++restores;
@@ -22,11 +146,16 @@ static void verticalMarginLifecycle()
         deps.instruments.dcGroup=[](const auto &,const auto &,auto) { return InstrumentOperationResult{}; };
         deps.instruments.load=[](const auto &,const auto &,int,const auto &,auto,bool) { return InstrumentOperationResult{}; };
         int measurements=0;
-        deps.autoPeriod=[&](IScopeMeasurement *,QAtomicInt &,QString &,const OscCaptureObserver &,const VerticalScaleOptions &options) {
+        deps.autoPeriod=[&](IScopeMeasurement *,QAtomicInt &,QString &,const OscCaptureObserver &,const VerticalScaleOptions &options,const std::function<void(const QString&)>&) {
             require(options.margin==margin && bool(options.beforeChange),"Auto Period option missing");
             const bool firstMember=!group || measurements%2==0;
             require(scope.scale==(firstMember?4:12),"Auto Period inherited wrong original scale");
             const double target=firstMember?8:12;
+            if (margin) {
+                require(bool(options.beforePositionChange),"Position snapshot missing from Auto Period");
+                require(scope.position==(firstMember?-2:2),"Auto Period inherited wrong Position");
+                options.beforePositionChange(1,scope.position,1); scope.position=1;
+            }
             options.beforeChange(1,scope.scale,target); scope.scale=target; return true;
         };
         deps.strategy=[&](const MeasurementStrategyRequest &request) {
@@ -37,6 +166,11 @@ static void verticalMarginLifecycle()
                 require(scope.scale==(firstMember?(autoPeriod?8:4):12),"new task inherited expanded scale, or Group shrank early");
                 options.beforeChange(1,scope.scale,12);
                 scope.scale=12; ++measurements;
+                if (margin) {
+                    require(bool(options.beforePositionChange),"Position snapshot missing from strategy");
+                    require(scope.position==(autoPeriod?1:firstMember?-2:2),"Group position restored early or task not restored");
+                    options.beforePositionChange(1,scope.position,2); scope.position=2;
+                }
                 MeasurementResult result; result.success=true; return result;
             });
         };
@@ -47,6 +181,8 @@ static void verticalMarginLifecycle()
         for (int run=0;run<2;++run) {
             runner.prepareRun(); runner.startTasks({configured,configured},c);
             require(scope.scale==4 && scope.restores==2*(run+1),"task/Run did not restore original scale");
+            require(scope.position==-2 && scope.positionRestores==(margin?2*(run+1):0),
+                    "task/Run did not restore original Position or unselected modified Position");
         }
         require(measurements==(group?8:4),"lifecycle test skipped measurements");
     }
@@ -54,12 +190,22 @@ static void verticalMarginLifecycle()
 
 static void verticalMarginFailures()
 {
-    for (const QString mode : {"failure","stop","restore","stop_restore","auto_period_failure"}) {
+    for (const QString mode : {"failure","stop","restore","stop_restore","auto_period_failure","position_only_failure","position_restore"}) {
         class ScalingScope : public Scope {
         public:
             QMap<int,double> scales{{1,4},{2,2}};
+            QMap<int,double> positions{{1,-2},{2,3}};
             QVector<int> restores;
-            bool reject=false;
+            QVector<int> positionRestores;
+            bool reject=false, rejectPosition=false;
+            bool readVerticalRange(int ch,ScopeVerticalRange &range,QString &) override {
+                range={scales[ch],0,10,positions[ch],-8,8}; return true;
+            }
+            bool setVerticalPosition(int ch,double value,QString &error) override {
+                positionRestores<<ch;
+                if(rejectPosition && ch==1) {error="injected Position restore failure";return false;}
+                positions[ch]=value;return true;
+            }
             double getChannelScale(int ch) override {return scales[ch];}
             bool setVerticalScale(int ch,double value,QString &error) override {
                 restores<<ch;
@@ -75,11 +221,16 @@ static void verticalMarginFailures()
         int calls=0,periodCalls=0;
         auto expand=[&](const VerticalScaleOptions &options) {
             require(scope.scales[1]==4 && scope.scales[2]==2,"retry inherited expansion");
-            options.beforeChange(1,4,8);scope.scales[1]=8;
-            options.beforeChange(2,2,4);scope.scales[2]=4;
+            require(scope.positions[1]==-2 && scope.positions[2]==3,"retry inherited automatic Position");
+            options.beforePositionChange(1,-2,1);scope.positions[1]=1;
+            options.beforePositionChange(2,3,-1);scope.positions[2]=-1;
+            if(mode!="position_only_failure") {
+                options.beforeChange(1,4,8);scope.scales[1]=8;
+                options.beforeChange(2,2,4);scope.scales[2]=4;
+            }
         };
         TestRunService *service=nullptr;
-        deps.autoPeriod=[&](IScopeMeasurement *,QAtomicInt &,QString &error,const OscCaptureObserver &,const VerticalScaleOptions &options) {
+        deps.autoPeriod=[&](IScopeMeasurement *,QAtomicInt &,QString &error,const OscCaptureObserver &,const VerticalScaleOptions &options,const std::function<void(const QString&)>&) {
             if (++periodCalls==1) {expand(options);error="injected Auto Period failure";return false;}
             return true;
         };
@@ -87,9 +238,12 @@ static void verticalMarginFailures()
             const auto options=std::get<ScopeMeasurementRequest>(request).context.verticalScale;
             return std::make_unique<Strategy>([&,options] {
                 ++calls;expand(options);
-                if (mode.contains("restore")) scope.reject=true;
+                if (mode.contains("restore")) {
+                    scope.reject=mode!="position_restore"; scope.rejectPosition=true;
+                }
                 if (mode.startsWith("stop")) service->stop();
-                if (mode=="failure" && calls==1) throw std::runtime_error("injected measurement failure after scale write");
+                if ((mode=="failure" || mode=="position_only_failure") && calls==1)
+                    throw std::runtime_error("injected failure after partial vertical write");
                 MeasurementResult result;result.success=true;return result;
             });
         };
@@ -101,14 +255,17 @@ static void verticalMarginFailures()
         runner.startTasks({configured,configured},c);
         if (mode.contains("restore")) {
             require(calls==1 && scope.restores==QVector<int>({1,2}) && scope.scales[2]==2 && records.size()==2 &&
+                    scope.positionRestores==QVector<int>({1,2}) && scope.positions[2]==3 &&
                     records[0].error.contains("restore failed") && records[1].status=="Skipped",
                     "restore failure skipped healthy channel or continued/retried");
         } else if (mode=="stop") {
             require(calls==1 && scope.scales[1]==4 && scope.scales[2]==2 && records[0].status=="Cancelled" &&
+                    scope.positions[1]==-2 && scope.positions[2]==3 && scope.positionRestores.size()==2 &&
                     records[1].status=="Skipped","Stop skipped scale cleanup or continued");
         } else {
             require(records.size()==3 && records[0].status=="Fail" && records[1].status=="Pass" && records[2].status=="Pass" &&
-                    scope.scales[1]==4 && scope.scales[2]==2 && scope.restores.size()==6,
+                    scope.scales[1]==4 && scope.scales[2]==2 && scope.restores.size()==(mode=="position_only_failure"?0:6) &&
+                    scope.positions[1]==-2 && scope.positions[2]==3 && scope.positionRestores.size()==6,
                     "failed attempt/Auto Period lost restore before retry");
         }
     }
@@ -239,6 +396,7 @@ int main(int argc,char **argv)
     try {
         const QString mode=app.arguments().value(1);
         if (mode=="settings") {
+            taskTriggerSource();
             verticalMarginLifecycle();
             verticalMarginFailures();
             require(!TaskSettings::Steady({}).verticalMargin && !TaskSettings::Transient({}).verticalMargin,

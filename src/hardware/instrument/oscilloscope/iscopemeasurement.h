@@ -12,6 +12,12 @@ class IScopeAcquisition
     virtual ~IScopeAcquisition() = default;
     // Start a fresh single record; Completed must not refer to an earlier record.
     virtual bool beginSingleAcquisition() = 0;
+    // Reference-only: free-running AUTO, then freeze a confirmed fresh record.
+    // The returned budget accounts for the record window, independently of event timeout.
+    virtual bool beginAutoReference(int &, QString &error)
+    { error = "Automatic reference acquisition is unsupported"; return false; }
+    virtual ScopeReferenceStatus pollAutoReference(QString &, QString &error)
+    { error = "Automatic reference acquisition is unsupported"; return ScopeReferenceStatus::Error; }
     virtual ScopeAcquisitionState acquisitionState() = 0;
     virtual ScopeTriggerState triggerState() = 0;
     virtual bool stopAcquisition(QString &error) = 0;
@@ -33,6 +39,8 @@ class IScopeChannels
     // Each read replaces lastError: legal NA clears it; transport/setup failure sets it.
     virtual double readMeasurement(int channel, ScopeMeasurement measurement) = 0;
     virtual bool setVerticalScale(int channel, double scale, QString &error) = 0;
+    virtual bool setVerticalPosition(int, double, QString &error)
+    { error = "Vertical display position is unsupported"; return false; }
     virtual bool readVerticalRange(int, ScopeVerticalRange &, QString &error)
     { error = "Vertical acquisition range is unsupported"; return false; }
 };

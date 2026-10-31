@@ -146,12 +146,18 @@ void manualDriverContract() {
     perform([&]{control.setSlope("RISING");});perform([&]{control.setSlope("FALLING");});perform([&]{control.setSlope("BOTH");});
     perform([&]{control.setLevel(1.25);});perform([&]{control.automatic();});perform([&]{control.normal();});
     perform([&]{control.toggleRun();});transport.values["ACQuire:STATE?"]="1";perform([&]{control.toggleRun();});
+    transport.values["ACQuire:STOPAfter?"]="SEQUENCE";
+    transport.values["ACQuire:SEQuence:MODe?"]="NUMACQS";
+    transport.values["ACQuire:SEQuence:NUMSEQuence?"]="1";
     perform([&]{control.single();});
     QStringList expected{"TRIGger:A:TYPe EDGE","TRIGger:A:EDGE:SOUrce CH2","TRIGger:A:EDGE:SLOpe RISe",
         "TRIGger:A:EDGE:SLOpe FALL","TRIGger:A:EDGE:SLOpe EITher","TRIGger:A:LEVel:CH2 1.25",
         "TRIGger:A:MODe AUTO","TRIGger:A:MODe NORMal","ACQuire:STATE?","ACQuire:STOPAfter?",
         "ACQuire:STOPAfter RUNSTop","ACQuire:STATE RUN","ACQuire:STATE?","ACQuire:STATE STOP"};
-    expected+=checked({"ACQuire:STATE STOP","ACQuire:STOPAfter SEQuence","ACQuire:STATE RUN"});
+    expected+=checked({"ACQuire:STATE STOP","ACQuire:SEQuence:MODe NUMACQS",
+                       "ACQuire:SEQuence:NUMSEQuence 1","ACQuire:STOPAfter SEQuence"});
+    expected<<"ACQuire:SEQuence:MODe?"<<"ACQuire:SEQuence:NUMSEQuence?"<<"ACQuire:STOPAfter?";
+    expected+=checked({"ACQuire:STATE RUN"});
     require(errors.isEmpty()&&transport.writes==expected,"manual control SCPI sequence changed");
     transport.writes.clear();bool measured=false;
     perform([&]{control.measure(2,[&](const ManualScopeControl::Result&r){measured=r.measurements==QVector<double>{3.5,3.5,3.5,3.5};});});

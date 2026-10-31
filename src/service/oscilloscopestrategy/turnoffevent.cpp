@@ -9,18 +9,22 @@ public:
         : Event(ShortProtection::NotRequired, reference) {}
     void prepareRun(Execution &run) override
     {
+        run.diagnosticStage("Scope STOP");
         run.log("Scope preparation: STOP");
         run.configure([&](QString &error) {
             if (run.scope->stopAcquisition(error)) return true;
             error.prepend("Scope preparation STOP: ");
             return false;
         });
+        run.diagnostic("complete");
+        run.diagnosticStage("Scope NORMAL");
         run.log("Scope preparation: NORMAL");
         run.configure([&](QString &error) {
             if (run.scope->setTriggerMode(ScopeTriggerMode::Normal, error)) return true;
             error.prepend("Scope preparation NORMAL: ");
             return false;
         });
+        run.diagnostic("complete");
         run.power(false);
     }
 
@@ -28,7 +32,7 @@ public:
     {
         prepareInputOff(run);
         run.power(true);
-        run.delay(run.ctx.settleMs);
+        run.diagnosticDelay(run.ctx.settleMs, "Initial Settle");
     }
 
     TrialRecord acquireTrial(Execution &run, const std::function<void()> &arm,
@@ -39,7 +43,7 @@ public:
             prepareInputOff(run);
             run.power(true);
             run.log(QString("Settle %1 ms").arg(run.ctx.settleMs));
-            run.delay(run.ctx.settleMs);
+            run.diagnosticDelay(run.ctx.settleMs, "Trial Settle");
         }
         arm();
         const auto baseline = run.waitForBaseline();
@@ -56,7 +60,7 @@ private:
     static void prepareInputOff(Execution &run)
     {
         run.power(false);
-        run.delay(run.ctx.powerOffMs);
+        run.diagnosticDelay(run.ctx.powerOffMs, "Power-off wait");
         run.relays(false, false);
     }
 };

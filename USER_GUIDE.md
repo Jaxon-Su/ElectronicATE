@@ -53,10 +53,14 @@ Peak Detect 預設只畫每組 Min–Max 垂直範圍線；勾選 **上下界連
 
 ### 自動測試項目
 
+Static／Dynamic／Turn on／Turn off／Short then turn on／Turn on then short（含 Group）可在 Dialog 選 **Trigger source**，按 Apply 保存。每次測試、Group 成員及重試開始前先設定並確認所選來源，再上電／量測；該通道須事先啟用，量測仍涵蓋已啟用通道。新測項預設 CH1；舊設定缺少此欄位時顯示 **Keep current source**，保留示波器原來源，選擇 CH 後才改變。
+
 - **Single／Group Test（單組／群組測試）**：Static、Dynamic、Turn on、Turn off、Short then turn on、Turn on then short；Group 依序測試多個負載條件，逐負載列出結果。每筆有效 Trial 均保存 Max／Min／RMS／Mean，並分 Rise／Fall 選出完整四值代表結果。
 - Turn on／Short then turn on／Turn on then short（含 Group）每次事件 Single 成功後等待 **3000 ms**，再走原 READY／Baseline 檢查；提前觸發後重新 Single 也等待。Stop 可中斷，時間計入 Phase time limit；原 Level 避讓、短路退出及 Rise／Fall 保留，AUTO 參考不加等待。
 - **Descent 單組測試**：Turn off (descent)、Turn on then short (descent)。Trigger CH 選負緣觸發 Channel，量測沿用已啟用的示波器通道。Turn off (descent) 另有 **Enable**（預設勾選），只控制觸發 CH 的顯示／量測，未勾選仍使用該 CH 觸發；其他 CH 不變。若關閉觸發 CH，WFM／CSV Capture 須另選已啟用 CH，PNG 不受此限制。Trigger levels 可新增、刪除與編輯，依列順序執行；每次重新上電後觸發，依序保存四值與 Level。原有 Rise／Fall 追蹤保持不變，詳細流程見 [量測策略](MEASUREMENT_STRATEGIES.md)。
-- 兩種 descent 每個 Level／Trial 的 Single 後固定等待 **3000 ms**，再確認 READY 才關電或短路；Stop 可中斷，等待計入 Phase time limit。等待不保證 READY，若仍為 SAVE 等錯誤狀態則回報失敗並清理。
+- Turn off (descent) 上電穩定後自動檢查啟用通道，截波則將該通道 V/div ×2 並重新擷取；正式事件仍截波時重做同一組 Level／Trial，結束後還原自動調整的刻度。原固定 Trigger source／Level 保留，重試受次數與 Phase time limit 限制。
+- 兩種 descent 每個 Level／Trial 的正式事件 Single 後固定等待 **3000 ms**，再確認 READY 才關電或短路；Stop 可中斷，等待計入 Phase time limit。AUTO 預檢不加此等待。Turn off (descent) 若確認在關機前已觸發且自然完成，該筆 Fail，清理與診斷保存成功後跳過同 Level 剩餘 Trials，接著測下一列 Level；整體仍 Fail。未確認完成、通訊、逾時、Stop 或清理失敗均中止，short descent 保持原流程。
+- Turn off (descent) 的 Detail 預設 **Trials**，逐筆列出 Level／Trial 與完整四值；可切回 Summary。Fail／Skipped 列保留原因，沒有有效事件的四值為 NA；Excel Trials 同樣保留每筆，Results 保留代表值及失敗／略過記錄。
 - Brown Out 初次事件 Single／RUN 後等待 **3000 ms** 再確認 READY；Track＋Capture 每次重新 Single 也等待後才恢復降壓。等待可 Stop，Vout 監測持續；未開 Capture 的連續 RUN 後續 Level 更新不增加等待。
 - **Dell/HP Test**：Brown Out 降壓測試，流程見 [TestSequence：量測策略](MEASUREMENT_STRATEGIES.md)。
 - **輔助任務**：Relay、Write Oscilloscope、Delay。
@@ -66,6 +70,10 @@ Peak Detect 預設只畫每組 Min–Max 垂直範圍線；勾選 **上下界連
 Tasks 顯示摘要；選取一項 Task 後，在下方 **Detail** 切換 Summary／Trials，並篩選 Attempt、Load、Direction、CH。Single 顯示實際負載條件，Group 依 TestConditions 行號及名稱分列。Rise 選 Max 最高那筆，Fall 選 Min 最低那筆，四值整組保留；Excel 的 **Results／Trials** 分別保存代表值與逐次資料。未選方向為 Not run，沒有有效值為 NA，重試各自保存。舊版單表報表請另用新檔名。
 
 原 **Turn off／Turn on then short（均含 Group）** 若某方向正常搜尋完成卻沒有暫態觸發，Detail 與 Excel 兩表改顯示該方向的穩態參考四值，Note／提示標示 `Steady reference (no transient trigger)`。有暫態事件時仍優先使用事件結果；穩態參考不計入 Trial 次數。
+
+### 垂直餘量選項
+
+Static／Dynamic／Turn on／Turn off／Short then turn on／Turn on then short（含 Group）可勾選 **Vertical margin (10% top/bottom)**，預設關閉。開啟後若波形超出畫面中央 80%，一般波形會置中；直線正值靠近上方 10% 邊界、負值靠近下方，零附近置中。Scale 只擴大，Offset 保留；波形已符合餘量就不移動。真正截波仍以 Scale ×2 重試。測項結束後還原自動改過的 Scale／Position，還原失敗會停止後續測試。
 
 ### Write Oscilloscope 設定
 

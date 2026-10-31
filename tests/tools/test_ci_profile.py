@@ -26,6 +26,7 @@ class Fixture(unittest.TestCase):
         self.folder = Path(self.temp.name)
         self.manifest = self.folder/'manifest.json'
         self.raw = json.loads((TESTS/'ctest-manifest.json').read_text('utf-8'))
+        self.total = sum(len(cases) for cases in self.raw['suites'].values())
 
     def save_manifest(self):
         self.manifest.write_text(json.dumps(self.raw), encoding='utf-8')
@@ -38,7 +39,7 @@ class ProfileTests(Fixture):
         ci = load_manifest(path, profile='ci-offline')
         def names(data):
             return {(suite,c['name']) for suite,cases in data['suites'].items() for c in cases}
-        self.assertEqual(len(names(full)), 839)
+        self.assertEqual(names(full), names(self.raw))
         self.assertEqual(names(ci), names(full))
         self.assertIn(('main','review_fix_visa_partial'), names(ci))
         for suite,cases in ci['suites'].items():
@@ -82,7 +83,7 @@ class EvidenceTests(Fixture):
         shutil.copyfile(self.manifest, self.folder/'ctest-manifest.json')
         data = load_manifest(self.manifest, 'ci-offline')
         self.summary = {'status':'PASS', 'profile':'ci-offline', 'head':'tested-sha',
-                        'expected':839, 'reported':839, 'excluded':[],
+                        'expected':self.total, 'reported':self.total, 'excluded':[],
                         'local_supplement':{'required':False,'status':'INCLUDED','cases':[]},
                         'suites':{}, 'qt_results':{}}
         lock = read_lock()
@@ -118,10 +119,10 @@ class EvidenceTests(Fixture):
         return verify_run(self.folder, self.manifest, 'tested-sha')
 
     def test_complete_ci_evidence_accepted(self):
-        self.assertEqual(self.verify()['reported'], 839)
+        self.assertEqual(self.verify()['reported'], self.total)
 
     def test_wrong_profile_sha_status_or_total_rejected(self):
-        for field,value in [('profile','local-full'),('head','stale-sha'),('status','FAIL'),('reported',832)]:
+        for field,value in [('profile','local-full'),('head','stale-sha'),('status','FAIL'),('reported',self.total-1)]:
             with self.subTest(field=field):
                 old = self.summary[field]
                 self.summary[field] = value

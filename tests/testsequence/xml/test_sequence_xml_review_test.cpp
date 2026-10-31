@@ -187,6 +187,22 @@ int main(int argc,char** argv){
     }
  }
  checkLoad("Turn on",R"({"turnOn":{"power_off_ms":5000}})",false);
+ for (const auto &descriptor : TestSequenceTaskKind::descriptors) {
+  const auto kind = descriptor.kind;
+  if (!TestSequenceTaskKind::isSteady(kind) &&
+      !(TestSequenceTaskKind::isTransient(kind) && !TestSequenceTaskKind::isDescent(kind))) continue;
+  const QString group = descriptor.group;
+  for (const QString value : {"1","2","8"}) {
+   checkLoad(descriptor.name,QString("{\"%1\":{\"trigger_channel\":%2}}").arg(group,value),true);
+   require(loaded.tasks()[0].settings.value(group).toMap().value("trigger_channel").toInt()==value.toInt(),
+           "XML changed explicit trigger channel");
+  }
+  for (const QString value : {"0","9","1.5","true","\"2\"","null"})
+   checkLoad(descriptor.name,QString("{\"%1\":{\"trigger_channel\":%2}}").arg(group,value),false);
+  checkLoad(descriptor.name,QString("{\"%1\":{\"trigger_channel\":1,\"trigger_channel\":2}}").arg(group),false);
+  checkLoad(descriptor.name,QString("{\"%1\":{}}").arg(group),true);
+  require(!loaded.tasks()[0].settings.value(group).toMap().contains("trigger_channel"),"legacy XML invented a source");
+ }
  // New per-task options: exhaustive boolean/direction round trips, no cross-task carryover.
  for(int task=0;task<6;++task) {
   for(int flags=0;flags<(task<2?8:4);++flags) {

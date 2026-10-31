@@ -122,11 +122,19 @@ void measurementDriverContract()
     IScopeMeasurement &scope = *concrete;
     QString error;
     // Start from STOP and verify that the real driver resumes Single, with checked writes.
-    const QStringList singleCommands{"ACQuire:STATE STOP", "ACQuire:STOPAfter SEQuence", "ACQuire:STATE RUN"};
+    const QStringList singleCommands{"ACQuire:STATE STOP", "ACQuire:SEQuence:MODe NUMACQS",
+        "ACQuire:SEQuence:NUMSEQuence 1", "ACQuire:STOPAfter SEQuence", "ACQuire:STATE RUN"};
+    transport.responses["ACQuire:SEQuence:NUMSEQuence?"] = "1";
+    transport.responses["ACQuire:SEQuence:MODe?"] = "NUMACQS";
+    transport.responses["ACQuire:STOPAfter?"] = "SEQUENCE";
     transport.writes.clear();
     require(scope.beginSingleAcquisition(), "Single did not start from STOP");
     QStringList singleTrace;
-    for (const auto& command : singleCommands) singleTrace << "*ESR?" << command << "*ESR?";
+    for (const auto& command : singleCommands) {
+        if (command == "ACQuire:STATE RUN")
+            singleTrace << "ACQuire:SEQuence:MODe?" << "ACQuire:SEQuence:NUMSEQuence?" << "ACQuire:STOPAfter?";
+        singleTrace << "*ESR?" << command << "*ESR?";
+    }
     require(transport.writes == singleTrace, "Single did not send checked STOP -> Sequence -> RUN");
     for (const auto& command : singleCommands) {
         transport.writes.clear(); transport.failWrite = command;
@@ -140,8 +148,18 @@ void measurementDriverContract()
         esr << "0" << "32";
         transport.queued["*ESR?"] = esr; transport.writes.clear();
         require(!scope.beginSingleAcquisition(), "Single hid device rejection");
-        if (rejected < 2) require(!transport.writes.contains("ACQuire:STATE RUN"), "RUN sent after rejected setup");
+        if (rejected < singleCommands.size()-1) require(!transport.writes.contains("ACQuire:STATE RUN"), "RUN sent after rejected setup");
     }
+    transport.responses["ACQuire:SEQuence:NUMSEQuence?"] = "3";
+    transport.writes.clear();
+    require(!scope.beginSingleAcquisition() && !transport.writes.contains("ACQuire:STATE RUN"),
+            "mismatched Single sequence count armed the instrument");
+    transport.responses["ACQuire:SEQuence:NUMSEQuence?"] = "1";
+    transport.responses["ACQuire:SEQuence:MODe?"] = "TIME";
+    transport.writes.clear();
+    require(!scope.beginSingleAcquisition() && !transport.writes.contains("ACQuire:STATE RUN"),
+            "time-based sequence armed despite the requested one record");
+    transport.responses["ACQuire:SEQuence:MODe?"] = "NUMACQS";
     transport.writes.clear();
     require(scope.selectEdgeTrigger(error) && scope.setEdgeSlope(ScopeTriggerSlope::Rise,error)
         && scope.setEdgeSlope(ScopeTriggerSlope::Fall,error)
@@ -210,11 +228,90 @@ void measurementDriverContract()
     }
 }
 
+void referenceDriverContract()
+{
+    ScriptedTransport transport;
+    std::unique_ptr<Oscilloscope> scope(OscilloscopeFactory::createOscilloscope("MSO44B", &transport));
+    scope->connect();
+    transport.responses["HORizontal:SCAle?"] = ".01";
+    transport.responses["HORizontal:DIVisions?"] = "10";
+    transport.responses["HORizontal:FASTframe:STATE?"] = "0";
+    transport.responses["ACQuire:MODe?"] = "SAMPLE";
+    transport.responses["TRIGger:A:MODe?"] = "AUTO";
+    transport.responses["ACQuire:STOPAfter?"] = "RUNSTOP";
+    transport.responses["ACQuire:STATE?"] = "1";
+    transport.responses["TRIGger:STATE?"] = "AUTO";
+    transport.responses["ACQuire:NUMACq?"] = "0";
+    QString error, state; int budget = 0;
+    require(scope->beginAutoReference(budget,error), qPrintable(error));
+    require(budget == 10000 && transport.writes.contains("ACQuire:STOPAfter RUNSTop") &&
+            !transport.writes.contains("ACQuire:STOPAfter SEQuence"), "DC reference still depends on Single");
+    transport.writes.clear();
+    require(scope->pollAutoReference(state,error) == ScopeReferenceStatus::Pending &&
+            !transport.writes.contains("ACQuire:STATE STOP"), "empty acquisition became a reference");
+    transport.responses["ACQuire:NUMACq?"] = "1";
+    transport.queued["ACQuire:STATE?"] = {"1","0"};
+    require(scope->pollAutoReference(state,error) == ScopeReferenceStatus::Completed &&
+            transport.writes.contains("ACQuire:STATE STOP"), "fresh AUTO record was not frozen");
+    require(state.contains("count=1") && state.contains("AUTO"), "reference diagnostics lost actual state");
+    transport.responses["TRIGger:A:MODe?"] = "NORMAL";
+    require(!scope->beginAutoReference(budget,error) && error.contains("AUTO"), "wrong actual trigger mode accepted");
+    transport.responses["TRIGger:A:MODe?"] = "AUTO";
+    transport.responses["HORizontal:SCAle?"] = "3";
+    transport.writes.clear();
+    require(!scope->beginAutoReference(budget,error) && !transport.writes.contains("ACQuire:STATE RUN"),
+            "excessive reference window started without a bounded budget");
+
+    auto start = [&] {
+        transport.queued.clear(); transport.failWrite.clear(); transport.writes.clear();
+        transport.responses["HORizontal:SCAle?"] = ".01";
+        transport.responses["ACQuire:MODe?"] = "SAMPLE";
+        transport.responses["TRIGger:A:MODe?"] = "AUTO";
+        transport.responses["ACQuire:STOPAfter?"] = "RUNSTOP";
+        transport.responses["ACQuire:STATE?"] = "1";
+        transport.responses["TRIGger:STATE?"] = "AUTO";
+        transport.responses["ACQuire:NUMACq?"] = "0";
+        require(scope->beginAutoReference(budget,error), "reference restart failed");
+    };
+    for (const QByteArray bad : {QByteArray("-1"),QByteArray("1.5"),QByteArray("bad")}) {
+        start(); transport.responses["ACQuire:NUMACq?"] = bad;
+        require(scope->pollAutoReference(state,error)==ScopeReferenceStatus::Error && error.contains("count"),
+                "invalid acquisition count accepted");
+    }
+    start(); transport.responses["ACQuire:STATE?"] = "0";
+    require(scope->pollAutoReference(state,error)==ScopeReferenceStatus::Error && error.contains("without a new"),
+            "manual STOP with zero records became a reference");
+    for (const QString key : {QString("TRIGger:A:MODe?"),QString("ACQuire:STOPAfter?")}) {
+        start(); transport.responses[key] = key.contains("STOPAfter") ? "SEQUENCE" : "NORMAL";
+        require(scope->pollAutoReference(state,error)==ScopeReferenceStatus::Error && error.contains("mismatch"),
+                "changed front-panel mode accepted while waiting");
+    }
+    start(); transport.failWrite = "ACQuire:NUMACq?";
+    require(scope->pollAutoReference(state,error)==ScopeReferenceStatus::Error && !error.isEmpty(),
+            "counter transport error was hidden");
+    start(); transport.responses["ACQuire:NUMACq?"] = "1"; transport.failWrite = "ACQuire:STATE STOP";
+    require(scope->pollAutoReference(state,error)==ScopeReferenceStatus::Error && !error.isEmpty(),
+            "failed freeze exposed a running record");
+    start(); transport.queued["ACQuire:NUMACq?"] = {"2","1"};
+    transport.queued["ACQuire:STATE?"] = {"1","0"};
+    require(scope->pollAutoReference(state,error)==ScopeReferenceStatus::Error && error.contains("counter reset"),
+            "counter rollback during STOP accepted");
+    start(); transport.responses["ACQuire:MODe?"] = "AVERAGE";
+    transport.responses["ACQuire:NUMAVg?"] = "4";
+    require(scope->beginAutoReference(budget,error), "averaged reference setup failed");
+    transport.responses["ACQuire:NUMACq?"] = "3"; transport.writes.clear();
+    require(scope->pollAutoReference(state,error)==ScopeReferenceStatus::Pending &&
+            !transport.writes.contains("ACQuire:STATE STOP"), "incomplete averaging was frozen");
+    transport.responses["ACQuire:NUMACq?"] = "4"; transport.queued["ACQuire:STATE?"] = {"1","0"};
+    require(scope->pollAutoReference(state,error)==ScopeReferenceStatus::Completed,
+            "complete averaging was not frozen");
+}
+
 void periodDriverContract()
 {
     ScriptedTransport transport;
     transport.responses = {{"HORizontal:DIVisions?", "10"}, {"ACQuire:STATE?", "1"},
-        {"ACQuire:STOPAfter?", "RUNSTOP"}, {"MEASUrement:LIST?", ":MEASUREMENT:LIST MEAS1,MEAS3"},
+        {"ACQuire:STOPAfter?", "RUNSTOP"}, {"TRIGger:A:MODe?", "NORMAL"}, {"MEASUrement:LIST?", ":MEASUREMENT:LIST MEAS1,MEAS3"},
         {"HORizontal:SCAle?", "0.02"}, {"MEASUrement:MEAS2:RESUlts:CURRentacq:MEAN?", "0.02"}};
     std::unique_ptr<Oscilloscope> scope(OscilloscopeFactory::createOscilloscope("MSO44B", &transport));
     scope->connect();
@@ -227,14 +324,33 @@ void periodDriverContract()
             "PERIOD record commands failed");
     require(session->setTimeScale(.01,error) && session->restore(true,error), "PERIOD restore failed");
     QStringList expected{"TRIGger:A:EDGE:SOUrce?", "DISplay:GLObal:CH2:STATE?", "HORizontal:DIVisions?",
-        "ACQuire:STATE?", "ACQuire:STOPAfter?", "MEASUrement:LIST?", "HORizontal:SCAle?"};
+        "ACQuire:STATE?", "ACQuire:STOPAfter?", "TRIGger:A:MODe?", "MEASUrement:LIST?", "HORizontal:SCAle?"};
     auto checked=[&](const QString &command){ expected << "*ESR?" << command << "*ESR?"; };
     checked("ACQuire:STATE STOP"); checked("MEASUrement:ADDNew \"MEAS2\"");
     checked("MEASUrement:MEAS2:TYPe PERIOD"); checked("MEASUrement:MEAS2:SOUrce1 CH2");
     expected << "MEASUrement:MEAS2:RESUlts:CURRentacq:MEAN?";
     checked("HORizontal:SCAle 0.01"); checked("ACQuire:STATE STOP");
-    checked("MEASUrement:DELete \"MEAS2\""); checked("ACQuire:STOPAfter RUNSTOP"); checked("ACQuire:STATE RUN");
+    checked("MEASUrement:DELete \"MEAS2\""); checked("ACQuire:STOPAfter RUNSTOP"); checked("TRIGger:A:MODe NORMAL"); checked("ACQuire:STATE RUN");
     require(transport.writes==expected, "real PERIOD SCPI sequence changed");
+    transport.responses["HORizontal:MODe?"]="MANUAL";
+    transport.responses["HORizontal:MODe:MANual:CONFigure?"]="RECORDLENGTH";
+    transport.responses["HORizontal:MODe:SAMPLERate?"]="12500000";
+    transport.responses["HORizontal:MODe:RECOrdlength?"]="1000";
+    IScopePeriodSession::HorizontalContext context;
+    require(session->readHorizontalContext(context,error) && context.mode=="MANUAL" &&
+            context.manualInputs=="RECORDLENGTH" && context.sampleRate==12500000 && context.recordLength==1000,
+            "horizontal context readback failed");
+    transport.responses["HORizontal:MODe:MANual:CONFigure?"]="invalid";
+    require(!session->readHorizontalContext(context,error) && error.contains("Manual Inputs") &&
+            context.manualInputs=="RECORDLENGTH", "invalid context published partial result");
+    transport.responses["HORizontal:MODe?"]="AUTO";
+    require(session->readHorizontalContext(context,error) && context.manualInputs.isEmpty(),
+            "AUTO queried inapplicable Manual Inputs");
+    transport.responses["HORizontal:MODe:RECOrdlength?"]="1000.5";
+    require(!session->readHorizontalContext(context,error),"fractional record length accepted");
+    transport.responses["HORizontal:MODe:RECOrdlength?"]="1000";
+    transport.responses["HORizontal:MODe:SAMPLERate?"]="NA";
+    require(!session->readHorizontalContext(context,error),"malformed sample rate accepted");
     session.reset();
     for(int failure=0;failure<3;++failure) {
         transport.writes.clear(); transport.failWrite.clear(); stop.storeRelease(0);
@@ -374,7 +490,7 @@ int main(int argc, char **argv)
     try {
         const QString scenario = argc > 1 ? argv[1] : "";
         if (scenario == "driver") driverContract();
-        else if (scenario == "measurement") measurementDriverContract();
+        else if (scenario == "measurement") { measurementDriverContract(); referenceDriverContract(); }
         else if (scenario == "period") periodDriverContract();
         else if (scenario == "manual") manualContract();
         else if (scenario == "lease") leaseContract();

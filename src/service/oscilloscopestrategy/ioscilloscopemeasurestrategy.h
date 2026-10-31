@@ -1,5 +1,6 @@
 #pragma once
 #include <QAtomicInt>
+#include <functional>
 #include <utility>
 #include "oscmeasurementresult.h"
 #include "osccaptureobserver.h"
@@ -12,6 +13,7 @@ class IOscilloscopeMeasureStrategy
 {
   public:
     void setCaptureObserver(OscCaptureObserver observer) { m_captureObserver = std::move(observer); }
+    void setLogObserver(std::function<void(const QString &)> observer) { m_logObserver = std::move(observer); }
     virtual ~IOscilloscopeMeasureStrategy() = default;
 
     // 在 worker thread 執行觸發 + 量測；stopFlag 供中途中斷
@@ -22,4 +24,5 @@ class IOscilloscopeMeasureStrategy
 
   protected:
     OscCaptureObserver m_captureObserver;
+    std::function<void(const QString &)> m_logObserver;
 };

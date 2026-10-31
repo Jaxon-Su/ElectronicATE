@@ -7,6 +7,19 @@
 class MeasurementScopeFixture : public Oscilloscope {
 public:
     using Oscilloscope::Oscilloscope;
+    // Reuse fixture record hooks, not production Single commands. Real RUNSTOP /
+    // counter / STOP behavior is verified separately against the actual driver.
+    bool beginAutoReference(int &budget, QString &error) override {
+        budget=10000;
+        if (beginSingleAcquisition()) return true;
+        error="AUTO reference failed to start"; return false;
+    }
+    ScopeReferenceStatus pollAutoReference(QString &state, QString &error) override {
+        const auto current=acquisitionState();
+        state=current==ScopeAcquisitionState::Completed?"mode=AUTO acquisition=STOP count=1":"mode=AUTO acquisition=RUN count=0";
+        if(current==ScopeAcquisitionState::Invalid){error="invalid acquisition state";return ScopeReferenceStatus::Error;}
+        return current==ScopeAcquisitionState::Completed?ScopeReferenceStatus::Completed:ScopeReferenceStatus::Pending;
+    }
     ScopeAcquisitionState acquisitionState() override {
         const auto value=getAcquisitionState().simplified().toUpper().section(' ', -1);
         if(value=="0" || value=="STOP" || value=="OFF") return ScopeAcquisitionState::Completed;
@@ -47,6 +60,9 @@ public:
     bool setChannelTriggerLevel(int channel,double value,QString& e) override {
         const auto prefix=model()=="MSOSeries456"?QString("TRIGger:A:LEVel:CH%1 ").arg(channel):QString("TRIGger:A:LEVel ");
         return writeConfigurationCommand(prefix+QString::number(value,'g',16),e);
+    }
+    bool setVerticalPosition(int channel,double value,QString& e) override {
+        return writeConfigurationCommand(QString("CH%1:POSition %2").arg(channel).arg(value,0,'g',16),e);
     }
     bool setVerticalScale(int channel,double value,QString& e) override {
         return writeConfigurationCommand(QString("CH%1:SCAle %2").arg(channel).arg(value,0,'g',16),e);

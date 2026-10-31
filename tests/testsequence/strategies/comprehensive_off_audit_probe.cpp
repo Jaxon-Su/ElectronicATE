@@ -37,21 +37,29 @@ ICommunication *CommunicationFactory::create(const QString &id) { return new Aud
 class BrownOutComm : public AuditComm {
 public:
     BrownOutComm() : AuditComm("brownout") {}
-    QString last; bool failCleanup = false;
+    QString last; bool failCleanup = false, consumed = false;
     QMap<QString, QByteArray> values{{"*ESR?","0"}, {"DISplay:GLObal:CH1:STATE?","ON"},
         {"DISplay:GLObal:CH2:STATE?","OFF"},{"DISplay:GLObal:CH3:STATE?","OFF"},{"DISplay:GLObal:CH4:STATE?","OFF"},
         {"HORizontal:FASTframe:STATE?","0"},{"HORizontal:RECOrdlength?","4"},{"CH1:SCAle?","1"},
         {"TRIGger:A:TYPe?","EDGE"},{"TRIGger:A:EDGE:SOUrce?","CH2"},{"TRIGger:A:EDGE:SLOpe?","RISE"},
-        {"TRIGger:A:MODe?","AUTO"},{"TRIGger:A:LEVel:CH1?","3"},{"HORizontal:SCAle?",".01"},
+        {"TRIGger:A:MODe?","AUTO"},{"TRIGger:A:LEVel:CH1?","3"},{"HORizontal:SCAle?",".01"},{"HORizontal:DIVisions?","10"},
         {"ACQuire:MODe?","HIRES"},{"ACQuire:STOPAfter?","RUNSTOP"},{"ACQuire:SEQuence:MODe?","NUMACQS"},
         {"ACQuire:SEQuence:NUMSEQuence?","3"},{"DATa:SOUrce?","CH2"},{"DATa:ENCdg?","ASCII"},
         {"DATa:WIDth?","1"},{"DATa:STARt?","2"},{"DATa:STOP?","3"}};
     int write(const QByteArray &b) override {
         last = QString::fromUtf8(b).trimmed();
+        consumed = false;
         if (failCleanup && last == "ACQuire:STATE STOP") { trace << "brownout:STOP throws"; throw 42; }
+        if (!last.endsWith('?')) {
+            const int space=last.indexOf(' ');
+            if(space>0)values[last.left(space)+'?']=last.mid(space+1).toLatin1();
+        }
         return AuditComm::write(b);
     }
-    int read(QByteArray &b, int) override { b = values.value(last); return b.isEmpty() ? -1 : b.size(); }
+    int read(QByteArray &b, int) override {
+        if(consumed){b.clear();return 0;}
+        consumed=true;b=values.value(last);return b.isEmpty()?-1:b.size();
+    }
 };
 static void check(bool ok, const char *text) { if (!ok) throw std::runtime_error(text); }
 static InstrumentConfig instrument(QString name, QString type, QString model, int address) {
@@ -147,7 +155,7 @@ int main(int argc, char **argv) {
         failCommand.clear(); BrownOutComm brownComm; MSOSeries456 brownScope(&brownComm); brownScope.connect();
         auto settings = BrownOut::defaults(); settings["trigger_channel"] = 1;
         QAtomicInt stop{0}; QString error; auto session = brownScope.beginBrownOut(BrownOut::Settings(settings), stop, error);
-        check(bool(session), "Brown Out fixture initialization failed"); trace.clear(); brownComm.failCleanup = true;
+        check(bool(session), qPrintable("Brown Out fixture initialization failed: " + error)); trace.clear(); brownComm.failCleanup = true;
         bool escaped = false, finished = true; try { finished = session->finish(error); } catch (...) { escaped = true; }
         check(!escaped && !finished && !error.isEmpty() && trace.contains("brownout:ACQuire:MODe HIRES") && trace.contains("brownout:DATa:STOP 3"), "Brown Out cleanup must continue");
         const auto firstError = error; const auto firstTrace = trace;

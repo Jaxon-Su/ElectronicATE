@@ -8,8 +8,13 @@ class IScopePeriodSession
 {
   public:
     using Continue = std::function<bool()>;
+    struct HorizontalContext {
+        QString mode, manualInputs;
+        double sampleRate = 0, recordLength = 0;
+    };
     virtual ~IScopePeriodSession() = default;
     virtual double horizontalDivisions() const = 0;
+    virtual bool readHorizontalContext(HorizontalContext &context, QString &error) = 0;
     virtual bool readTimeScale(double &secondsPerDivision, QString &error) = 0;
     virtual bool setTimeScale(double secondsPerDivision, QString &error) = 0;
     virtual bool prepareRecord(QString &error) = 0;

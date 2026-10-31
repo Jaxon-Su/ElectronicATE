@@ -1,6 +1,6 @@
 # Software tests CI
 
-[Workflow](../../.github/workflows/offline-tests.yml) 顯示為 **Software tests**，在 push 到 main、以 main 為目標的 PR 或手動觸發時執行。它執行 839 個不連實機的 CTest 案例，其中 WFM 套件再核對 101 個 QtTest 結果；不自動合併或發布 Release。測試來源按 [功能](../README.md) 分類。
+[Workflow](../../.github/workflows/offline-tests.yml) 顯示為 **Software tests**，在 push 到 main、以 main 為目標的 PR 或手動觸發時執行。它執行固定 manifest 的完整離線 CTest 清單，WFM 套件另核對 QtTest 結果；當前數量與功能分類見 [測試總覽](../README.md)。不自動合併或發布 Release。
 
 | 工作 | 用途 |
 | --- | --- |

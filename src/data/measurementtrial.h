@@ -4,7 +4,8 @@
 
 enum class MeasurementDirection { None, Rise, Fall };
 
-// A completed steady acquisition used only when its direction has no event.
+// Completed steady references used only when their direction has no event.
+// Turn off may select a different AUTO/Baseline quartet for each channel.
 // It has no event sequence, threshold step or trial identity.
 struct MeasurementReference {
     MeasurementDirection direction = MeasurementDirection::None;
@@ -21,6 +22,17 @@ struct MeasurementTrial {
     int trial = 0;
     double triggerLevel = std::numeric_limits<double>::quiet_NaN();
     QVector<ChannelMeasurement> channels;
+};
+
+// A failed or skipped scheduled trial, not an accepted event acquisition.
+// Keep it outside trials so it cannot affect event counts or representatives.
+struct MeasurementTrialIssue {
+    MeasurementDirection direction = MeasurementDirection::None;
+    int step = 0;
+    int trial = 0;
+    double triggerLevel = std::numeric_limits<double>::quiet_NaN();
+    bool skipped = false;
+    QString error;
 };
 
 inline QString measurementDirectionName(MeasurementDirection direction)

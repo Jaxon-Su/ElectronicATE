@@ -59,9 +59,8 @@ class MsoBrownOutSession final : public IScopeBrownOutSession
             write("DATa:STARt 1");
             write(QString("DATa:STOP %1").arg(m_points));
             // One automatic reference record after source/load settling. It is not an event result.
-            write("TRIGger:A:MODe AUTO");
-            write("ACQuire:STOPAfter SEQUENCE");
-            write("ACQuire:STATE RUN");
+            QString referenceError;
+            if (!m_scope.beginAutoReference(m_referenceTimeout,referenceError)) fail(referenceError);
             return true;
         } catch (const std::exception &e) { error = QString::fromUtf8(e.what()); return false; }
     }
@@ -94,6 +93,12 @@ class MsoBrownOutSession final : public IScopeBrownOutSession
         error.clear();
         record = {};
         try {
+            if (!m_armed && !m_referenceFrozen) {
+                const auto status = m_scope.pollAutoReference(m_referenceState,error);
+                if (status == ScopeReferenceStatus::Error) fail(error);
+                if (status == ScopeReferenceStatus::Pending) return BrownOutRecordStatus::Pending;
+                m_referenceFrozen = true;
+            }
             const bool frozen = !m_armed || m_cfg.mode == BrownOut::Mode::FixedFall || m_cfg.captureEnabled;
             if (frozen) {
                 const auto state = read("ACQuire:STATE?").toUpper();
@@ -184,6 +189,8 @@ class MsoBrownOutSession final : public IScopeBrownOutSession
     }
     double levelStep() const override { return m_step; }
     int recordDurationMs() const override { return m_recordDurationMs; }
+    int referenceTimeoutMs() const override { return m_referenceTimeout; }
+    QString referenceState() const override { return m_referenceState; }
     bool finish(QString &error) override
     {
         if (!m_restore) { error = m_finishError; return error.isEmpty(); }
@@ -256,6 +263,9 @@ class MsoBrownOutSession final : public IScopeBrownOutSession
     QString m_finishError;
     bool m_restore = false, m_armed = false, m_finishing = false;
     int m_points = 0, m_recordDurationMs = 0;
+    int m_referenceTimeout = 0;
+    QString m_referenceState;
+    bool m_referenceFrozen = false;
     quint64 m_last = 0, m_sequence = 0;
     double m_step = 0;
 };

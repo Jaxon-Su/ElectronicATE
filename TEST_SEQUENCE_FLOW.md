@@ -122,7 +122,7 @@ executeSteadyTest()
   → prepareSteadyScope()
       → prepareSteadyAcquisition() → Auto Period（有啟用時）
   → SteadyStateSearchStrategy::execute() → SteadyDetail::Search::execute()
-      → initializeChannels() → captureReference()：AUTO＋Single 穩態參考
+      → initializeChannels() → captureReference()：AUTO／RUNSTOP 新參考 → STOP 凍結後讀值
       → searchDirection()：依所選方向搜尋，逐筆 accumulateRecord()
       → finish()：確認 Scope STOP、保留部分結果、遮蔽未選極值
   → 保存 Capture／量測結果

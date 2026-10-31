@@ -73,19 +73,35 @@ int main(int argc, char** argv) {
             EventSearchBracket search(peak*factor,step);
             auto status=EventSearchBracket::Progress::Continue;
             int iterations=0;
-            while(status==EventSearchBracket::Progress::Continue && ++iterations<100)
+            while(status==EventSearchBracket::Progress::Continue && ++iterations<100) {
+                require(std::abs(search.candidate()/step-std::round(search.candidate()/step))<1e-8,"fractional candidate");
                 status=search.observe(search.candidate()<=peak,peak,0);
+            }
+            if(peak<step){require(status==EventSearchBracket::Progress::NoEvent,"sub-Step event invented");continue;}
             require(status==EventSearchBracket::Progress::Converged,"search did not converge");
-            require(search.hit()<=peak && search.miss()>peak && search.miss()-search.hit()<=step,"wrong bracket");
+            require(search.hit()<=peak && search.miss()>peak && search.miss()-search.hit()<=step+1e-10,"wrong bracket");
         }
         EventSearchBracket missing(1,0.04);
-        for(int i=1;i<=8;++i)
-            require(missing.observe(false,0,0)==(i==8?EventSearchBracket::Progress::NoEvent:EventSearchBracket::Progress::Continue),"unbounded MISS");
+        const double misses[]={1,.48,.24,.12,.04};
+        for(int i=0;i<5;++i) {
+            require(std::abs(missing.candidate()-misses[i])<1e-10,"integer bisection changed");
+            require(missing.observe(false,0,0)==(i==4?EventSearchBracket::Progress::NoEvent:EventSearchBracket::Progress::Continue),"unbounded MISS");
+        }
         EventSearchBracket changed(1,.04);changed.observe(true,1,0);
         bool failed=false;try{changed.baseline(2);}catch(...){failed=true;}
         require(failed,"changed baseline reported success");
         changed.reset(.4);require(!changed.bounded(),"rescale retained bracket");
-        require(changed.baseline(2)==EventSearchBracket::Progress::Continue && changed.candidate()==2.4,"new baseline");
+        require(changed.baseline(2)==EventSearchBracket::Progress::Continue && std::abs(changed.candidate()-2.4)<1e-10,"new baseline");
+        for(double bad:{0.,-1.,std::numeric_limits<double>::infinity(),std::numeric_limits<double>::quiet_NaN()}) {
+            bool rejected=false;try{TriggerLevelGrid grid(bad);}catch(const std::invalid_argument&){rejected=true;}
+            require(rejected,"invalid grid step accepted");
+        }
+        TriggerLevelGrid fine(.39996);
+        require(std::abs(fine.above(21.555)-21.59784)<1e-10,"fine grid truncated");
+        for(double bad:{1e29,std::numeric_limits<double>::infinity(),std::numeric_limits<double>::quiet_NaN()}) {
+            bool rejected=false;try{fine.above(bad);}catch(const std::runtime_error&){rejected=true;}
+            require(rejected,"unsafe grid value accepted");
+        }
     } else {
         int on=0,off=0,finished=0;QVector<TestSequenceResultRecord> records;
         TestRunDependencies dependencies; dependencies.validateMeasurement = [](const auto &, auto, int, bool) {};

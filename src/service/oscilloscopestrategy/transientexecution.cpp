@@ -8,8 +8,8 @@ namespace TransientDetail {
 using OscilloscopeAcquisition::AcquisitionResult;
 
 Execution::Execution(const TransientContext &context, IScopeMeasurement *instrument,
-                     QAtomicInt &stopFlag, bool shortProtection)
-    : ctx(context), scope(instrument), stop(stopFlag), shortTest(shortProtection),
+                     QAtomicInt &stopFlag, bool shortProtection, bool diagnostics)
+    : ctx(context), scope(instrument), stop(stopFlag), diagnostics(diagnostics), shortTest(shortProtection),
       shortMayBeOn(shortProtection) // A preceding Relay task may have left short ON.
 {
 }
@@ -18,6 +18,56 @@ void Execution::log(const QString &message)
 {
     if (ctx.log)
         ctx.log(message);
+}
+
+void Execution::logProgress(const QString &message)
+{
+    if (!diagnostics) { log(message); return; }
+    // Additional diagnostics must never replace an operation error or prevent cleanup.
+    try {
+        const qint64 elapsed = phase.isValid() ? phase.elapsed() : 0;
+        log(message + QString("; Phase=%1; elapsed=%2 ms; remaining=%3 ms; limit=%4 ms")
+            .arg(phaseName).arg(elapsed).arg(qMax<qint64>(0, ctx.phaseTimeoutMs - elapsed))
+            .arg(ctx.phaseTimeoutMs));
+    } catch (...) {}
+}
+
+void Execution::diagnostic(const QString &message)
+{
+    if (diagnostics)
+        logProgress(QString("Diagnostic: stage=%1; %2").arg(diagnosticStageName, message));
+}
+
+void Execution::diagnosticStage(const QString &name, const QString &details)
+{
+    if (!diagnostics) return;
+    diagnosticStageName = name;
+    diagnostic(details.isEmpty() ? "begin" : "begin; " + details);
+}
+
+void Execution::diagnosticPhase(bool maximum)
+{
+    if (!diagnostics) return;
+    phaseName = maximum ? "Rise" : "Fall";
+    diagnosticStage("Phase initialization");
+}
+
+void Execution::diagnosticSettings()
+{
+    if (!diagnostics) return;
+    logProgress(QString("Diagnostic: Settings: direction=%1; trigger timeout=%2 ms; phase limit=%3 ms; "
+                        "power-off wait=%4 ms; settle=%5 ms; trials per level=%6; acquisition limit=%7; "
+                        "vertical margin=%8; Capture=%9")
+        .arg(ctx.target).arg(ctx.timeoutMs).arg(ctx.phaseTimeoutMs).arg(ctx.powerOffMs)
+        .arg(ctx.settleMs).arg(ctx.trialsPerLevel).arg(ctx.maxIterations)
+        .arg(ctx.verticalScale.margin ? "ON" : "OFF", ctx.captureRecord ? "ON" : "OFF"));
+}
+
+void Execution::diagnosticDelay(int ms, const QString &name)
+{
+    diagnosticStage(name, QString("requested=%1 ms").arg(ms));
+    delay(ms);
+    diagnostic("complete");
 }
 
 void Execution::check()
@@ -44,15 +94,25 @@ void Execution::configure(const std::function<bool(QString &)> &operation)
 
 void Execution::power(bool on)
 {
+    diagnosticStage(on ? "Input ON" : "Input OFF");
     check();
     if (on) shortExitNeeded = true; // An ON exception may still have energized the DUT.
     log(on ? "Input ON" : "Input OFF");
     QString error;
     checked(ctx.power(on, error), error);
+    diagnostic("complete");
+}
+
+void Execution::stopScope(const QString &diagnosticName)
+{
+    diagnosticStage(diagnosticName);
+    configure([&](QString &error) { return scope->stopAcquisition(error); });
+    diagnostic("complete");
 }
 
 void Execution::relays(bool shorted, bool discharge)
 {
+    diagnosticStage("Relay callback");
     check();
     if (shorted) {
         shortMayBeOn = true; // Set before IO: a multi-relay write can partially succeed.
@@ -62,6 +122,7 @@ void Execution::relays(bool shorted, bool discharge)
     QString error;
     checked(ctx.relays(shorted, discharge, error), error);
     shortMayBeOn = shorted;
+    diagnostic("complete");
 }
 
 bool Execution::exitShort()
@@ -106,12 +167,18 @@ void Execution::waitAfterSingle()
 
 AcquisitionResult Execution::waitForBaseline()
 {
-    return waitForRecord(false);
+    diagnosticStage("Baseline wait");
+    const auto result = waitForRecord(false);
+    diagnostic("complete");
+    return result;
 }
 
 AcquisitionResult Execution::waitForEvent()
 {
-    return waitForRecord(shortTest);
+    diagnosticStage("Event wait");
+    const auto result = waitForRecord(shortTest);
+    diagnostic("complete");
+    return result;
 }
 
 AcquisitionResult Execution::waitForRecord(bool exitShortOnCompletion)
@@ -134,7 +201,9 @@ AcquisitionResult Execution::waitForRecord(bool exitShortOnCompletion)
 
 void Execution::requireReady()
 {
+    diagnosticStage("READY check");
     waitForReadiness(ReadinessPurpose::Event);
+    diagnostic("complete");
 }
 
 bool Execution::waitForPowerOnReady()
@@ -147,10 +216,17 @@ AcquisitionResult Execution::waitForShortReady()
     return waitForReadiness(ReadinessPurpose::Short);
 }
 
+AcquisitionResult Execution::waitForPowerOffReady()
+{
+    return waitForReadiness(ReadinessPurpose::PowerOff);
+}
+
 AcquisitionResult Execution::waitForReadiness(ReadinessPurpose purpose)
 {
     const bool beforeShort = purpose == ReadinessPurpose::Short;
-    const QString recordName = beforeShort ? "Pre-short" : "Pre-input";
+    const bool beforePowerOff = purpose == ReadinessPurpose::PowerOff;
+    const bool poweredBaseline = beforeShort || beforePowerOff;
+    const QString recordName = beforePowerOff ? "Pre-power-off" : beforeShort ? "Pre-short" : "Pre-input";
     QString error;
     auto rejectedState = ScopeTriggerState::Invalid;
     try {
@@ -158,20 +234,22 @@ AcquisitionResult Execution::waitForReadiness(ReadinessPurpose purpose)
                 scope, stop,
                 qMin(ctx.timeoutMs, qMax(0, ctx.phaseTimeoutMs - int(phase.elapsed()))),
                 error, &rejectedState)) {
+            if (poweredBaseline && !scope->lastError().isEmpty())
+                throw std::runtime_error((recordName + " readiness query failed: " + scope->lastError()).toStdString());
             check();
-            if (!beforeShort) return AcquisitionResult::NoTrigger;
+            if (!poweredBaseline) return AcquisitionResult::NoTrigger;
             // A record can complete just after the READY reply. This final
             // query narrows the gap; it is not atomic with the physical relay.
             const auto state = scope->acquisitionState();
             if (stop.loadAcquire()) throw std::runtime_error("Stopped by user");
             if (state == ScopeAcquisitionState::Invalid || !scope->lastError().isEmpty())
-                throw std::runtime_error(("Pre-short acquisition query failed: " + scope->lastError()).toStdString());
+                throw std::runtime_error((recordName + " acquisition query failed: " + scope->lastError()).toStdString());
             if (state == ScopeAcquisitionState::Running) {
                 check();
                 return AcquisitionResult::NoTrigger;
             }
             rejectedState = ScopeTriggerState::Triggered;
-            error = "Acquisition completed before short";
+            error = beforePowerOff ? "Acquisition completed before power-off" : "Acquisition completed before short";
         }
     } catch (const std::exception &ex) { error = QString::fromUtf8(ex.what()); }
       catch (...) { error = "Unexpected trigger readiness error"; }
@@ -213,8 +291,11 @@ AcquisitionResult Execution::waitForReadiness(ReadinessPurpose purpose)
                         throw std::runtime_error((recordName + " record is not frozen: " + scope->lastError()).toStdString());
                     // Baseline processing owns its diagnostic and extrema. Do
                     // not save twice or discard a naturally completed late record.
-                    if (recover && beforeShort)
+                    if (recover && poweredBaseline) {
+                        log(error + "; acquisition=STOP; " +
+                            (beforePowerOff ? "pre-power-off" : "pre-short") + " record excluded from event results");
                         return late ? AcquisitionResult::CompletedAfterTimeout : AcquisitionResult::Completed;
+                    }
                     if (frozen == ScopeAcquisitionState::Completed && ctx.captureRecord) {
                         ScopeCaptureRecord record;
                         record.phase = "Before READY";
@@ -233,6 +314,8 @@ AcquisitionResult Execution::waitForReadiness(ReadinessPurpose purpose)
                     }
                 }
             }
+            if (beforePowerOff && state == ScopeAcquisitionState::Running)
+                error += "; acquisition=RUN; pre-power-off completion unconfirmed; not continuing";
         } catch (const std::exception &ex) { error += "; Diagnostic Capture: " + QString::fromUtf8(ex.what()); }
           catch (...) { error += "; Diagnostic Capture: unexpected error"; }
     }
@@ -241,12 +324,16 @@ AcquisitionResult Execution::waitForReadiness(ReadinessPurpose purpose)
 
 OscMeasureResult Execution::finish()
 {
+    diagnosticStage("Cleanup");
     // Cleanup is independent of stopFlag; failures never become successful measurements.
     auto cleanup = [&](const QString &label, const std::function<bool(QString &)> &action) {
+        diagnosticStage("Cleanup " + label);
         QString error;
         try {
-            if (action(error))
+            if (action(error)) {
+                diagnostic("complete");
                 return;
+            }
         } catch (const std::exception &ex) {
             error = QString::fromUtf8(ex.what());
         } catch (...) {
@@ -255,6 +342,7 @@ OscMeasureResult Execution::finish()
         result.success = false;
         result.cleanupFailed = true;
         result.errorMessage += (result.errorMessage.isEmpty() ? "" : "; ") + label + ": " + error;
+        diagnostic("failed: " + error);
     };
     if (touched) {
         if (shortTest && !exitShort() && !result.errorMessage.contains(shortExitError)) {
@@ -281,6 +369,8 @@ OscMeasureResult Execution::finish()
             channel.maxVal = std::numeric_limits<double>::quiet_NaN();
         result.channels.append(channel);
     }
+    diagnostic(QString("cleanup finished; result=%1%2")
+        .arg(result.success ? "success" : "failure", result.errorMessage.isEmpty() ? QString{} : "; " + result.errorMessage));
     return result;
 }
 

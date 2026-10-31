@@ -57,6 +57,7 @@ public:
     }
     double measureSignalPeak(int ch,const QString& type)override{
         require(!forbidRmsMean || (event && !autoMode) || (autoMode && allowReferenceQuartet) ||
+                    (!autoMode && allowBaselineQuartet) ||
                     (type != "RMS" && type != "MEAN"), "reference/Baseline queried RMS/Mean");
         ++reads;
         if(event && isClipping(ch))++clippedEventReads;
@@ -71,6 +72,7 @@ public:
     bool waitForOperationComplete(int)override{throw std::runtime_error("OPC used");}
     bool forbidRmsMean = false;
     bool allowReferenceQuartet = false;
+    bool allowBaselineQuartet = false;
     int clippedEventReads=0;
     int totalChannels=2;
     double scale=0,capturedScale=0,requiredScale=4;

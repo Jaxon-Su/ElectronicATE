@@ -14,12 +14,15 @@ TESTS = Path(__file__).resolve().parents[1]
 
 class CompleteSuiteTests(unittest.TestCase):
     def test_both_profiles_include_visa_and_wfm(self):
+        raw = json.loads((TESTS/"ctest-manifest.json").read_text("utf-8"))
+        expected = {(suite,case["name"]) for suite,cases in raw["suites"].items() for case in cases}
         for profile in ("local-full", "ci-offline"):
             with self.subTest(profile=profile):
                 data = load_manifest(TESTS/"ctest-manifest.json", profile)
                 self.assertEqual(set(data["suites"]), {"main", "ocr", "wfm"})
                 self.assertEqual(data["excluded"], [])
-                self.assertEqual(sum(map(len, data["suites"].values())), 839)
+                actual = {(suite,case["name"]) for suite,cases in data["suites"].items() for case in cases}
+                self.assertEqual(actual, expected)
                 self.assertIn("review_fix_visa_partial", [c["name"] for c in data["suites"]["main"]])
 
     def test_wfm_locks_all_101_inner_results(self):

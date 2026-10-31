@@ -41,7 +41,7 @@ public:
         {"HORizontal:FASTframe:STATE?","0"},{"HORizontal:RECOrdlength?","4"},{"CH1:SCAle?","1"},
         {"TRIGger:A:TYPe?","EDGE"},{"TRIGger:A:EDGE:SOUrce?","CH2"},{"TRIGger:A:EDGE:SLOpe?","RISE"},
         {"TRIGger:A:MODe?","AUTO"},{"TRIGger:A:LEVel:CH1?","3"},{"HORizontal:SCAle?",".01"},
-        {"HORizontal:POSition?","40"},{"ACQuire:MODe?","HIRES"},{"ACQuire:STOPAfter?","RUNSTOP"},
+        {"HORizontal:POSition?","40"},{"HORizontal:DIVisions?","10"},{"ACQuire:MODe?","HIRES"},{"ACQuire:STOPAfter?","RUNSTOP"},
         {"ACQuire:SEQuence:MODe?","NUMACQS"},{"ACQuire:SEQuence:NUMSEQuence?","3"},
         {"DATa:SOUrce?","CH2"},{"DATa:ENCdg?","ASCII"},{"DATa:WIDth?","1"},{"DATa:STARt?","2"},{"DATa:STOP?","3"},
         {"ACQuire:STATE?","0"},{"ACQuire:NUMACq?","1"},{"TRIGger:STATE?","READY"},
