@@ -465,7 +465,7 @@ bool TestRunService::executeTransient(const QString &name, const TaskSettings::T
         context.descentChannelEnabled = cfg.descent->channelEnabled;
         context.descentLevels = cfg.descent->levels;
     }
-    const ShortCircuitProtection protection{shortMask, dischargeMask, context.powerOffMs, context.dischargeMs, true};
+    const ShortCircuitProtection protection{shortMask, dischargeMask, context.powerOffMs, context.dischargeMs, true, context.shortExitDelays};
     auto protect = [this, needsShort, protection] {
         if (needsShort && !m_shortCircuit.active()) m_shortCircuit = protection;
         if (needsShort) m_unreleasedOutputs.insert(TableKind::Relay);

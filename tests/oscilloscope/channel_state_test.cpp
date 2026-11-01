@@ -155,7 +155,7 @@ void check(int kind, const QString &mode, int channel = 2, int failAt = 1) {
     Scope scope(transport); QAtomicInt stop{0}; if (mode == "stop") transport.cancel = &stop;
     TransientContext cfg; cfg.target = "MAX"; cfg.trialsPerLevel = 1;
     cfg.settleMs = cfg.dischargeMs = cfg.powerOffMs = 0; cfg.timeoutMs = 5; cfg.phaseTimeoutMs = 10000;
-    cfg.singleProcessingMs = 0; // Real processing time is covered by transient_single_wait.
+    cfg.shortExitDelays={0,0,0}; cfg.singleProcessingMs = 0; // Real processing time is covered by transient_single_wait.
     cfg.descentChannel = 4; cfg.descentLevels = {5};
     cfg.power = [&](bool on, QString &) { if (on) ++scope.outputOn; scope.fire(); return true; };
     cfg.load = [&](bool on, QString &) { if (on) ++scope.outputOn; return true; };

@@ -55,6 +55,7 @@ Peak Detect 預設只畫每組 Min–Max 垂直範圍線；勾選 **上下界連
 
 Static／Dynamic／Turn on／Turn off／Short then turn on／Turn on then short（含 Group）可在 Dialog 選 **Trigger source**，按 Apply 保存。每次測試、Group 成員及重試開始前先設定並確認所選來源，再上電／量測；該通道須事先啟用，量測仍涵蓋已啟用通道。新測項預設 CH1；舊設定缺少此欄位時顯示 **Keep current source**，保留示波器原來源，選擇 CH 後才改變。
 
+- 兩種 Short（含 Group）及 Turn on then short (descent) 退出時，Input OFF 後仍保留原 300 ms；確認 Short ON 後等 1 秒才放電，解除放電後等 1 秒才解除短路，解除短路後再等 2 秒才繼續。這些是固定保護間隔，Stop 仍完成退出；Settle 與 Discharge time 各自保留原用途。
 - **Single／Group Test（單組／群組測試）**：Static、Dynamic、Turn on、Turn off、Short then turn on、Turn on then short；Group 依序測試多個負載條件，逐負載列出結果。每筆有效 Trial 均保存 Max／Min／RMS／Mean，並分 Rise／Fall 選出完整四值代表結果。
 - Turn on／Short then turn on／Turn on then short（含 Group）每次事件 Single 成功後等待 **3000 ms**，再走原 READY／Baseline 檢查；提前觸發後重新 Single 也等待。Stop 可中斷，時間計入 Phase time limit；原 Level 避讓、短路退出及 Rise／Fall 保留，AUTO 參考不加等待。
 - **Descent 單組測試**：Turn off (descent)、Turn on then short (descent)。Trigger CH 選負緣觸發 Channel，量測沿用已啟用的示波器通道。Turn off (descent) 另有 **Enable**（預設勾選），只控制觸發 CH 的顯示／量測，未勾選仍使用該 CH 觸發；其他 CH 不變。若關閉觸發 CH，WFM／CSV Capture 須另選已啟用 CH，PNG 不受此限制。Trigger levels 可新增、刪除與編輯，依列順序執行；每次重新上電後觸發，依序保存四值與 Level。原有 Rise／Fall 追蹤保持不變，詳細流程見 [量測策略](MEASUREMENT_STRATEGIES.md)。

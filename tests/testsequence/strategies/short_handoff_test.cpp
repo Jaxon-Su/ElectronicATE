@@ -56,6 +56,8 @@ int main(int argc, char** argv) {
                 require(QThread::currentThread() == app.thread(), "wrong delivery thread");
                 require(protection.active() && protection.shortMayBeOn && protection.dischargeMs == 1,
                         "retained short metadata lost across queued handoff");
+                require(protection.exitDelays.shortToDischargeMs == 1000 && protection.exitDelays.dischargeToReleaseMs == 1000 &&
+                        protection.exitDelays.afterReleaseMs == 2000, "short exit delays lost in handoff");
                 require(outputs.contains(TableKind::Relay), "held relay not UNKNOWN");
                 ++delivered; manualControl.adoptUncertainOutputs(config, outputs, protection);
             });

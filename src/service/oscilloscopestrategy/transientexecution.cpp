@@ -129,9 +129,14 @@ bool Execution::exitShort()
 {
     if (shortExitFailed) return false; // No automatic retry may release a retained short.
     if (!shortExitNeeded) return true;
-    log("Short exit: Input OFF -> wait -> discharge -> release short");
+    log(shortMayBeOn
+        ? QString("Short exit: Input OFF -> wait %1 ms -> Short ON -> wait %2 ms -> Discharge ON -> wait %3 ms -> Discharge OFF -> wait %4 ms -> Short OFF -> wait %5 ms")
+              .arg(ctx.powerOffMs).arg(ctx.shortExitDelays.shortToDischargeMs).arg(ctx.dischargeMs)
+              .arg(ctx.shortExitDelays.dischargeToReleaseMs).arg(ctx.shortExitDelays.afterReleaseMs)
+        : QString("Short exit: Input OFF -> wait %1 ms -> discharge %2 ms (Short already OFF)")
+              .arg(ctx.powerOffMs).arg(ctx.dischargeMs));
     if (!finishShortCircuit([&](QString& e) { return ctx.power(false, e); }, ctx.relays,
-                            shortMayBeOn, ctx.powerOffMs, ctx.dischargeMs, shortExitError)) {
+                            shortMayBeOn, ctx.powerOffMs, ctx.dischargeMs, shortExitError, ctx.shortExitDelays)) {
         shortExitFailed = true;
         result.success = false;
         result.cleanupFailed = true;

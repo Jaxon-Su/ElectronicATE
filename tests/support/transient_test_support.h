@@ -91,6 +91,7 @@ public:
 TransientContext context(Scope& s){
     TransientContext c;c.target="BOTH";c.timeoutMs=1;c.settleMs=0;c.dischargeMs=0;c.powerOffMs=0;
     c.phaseTimeoutMs=15000;c.maxIterations=100;c.trialsPerLevel=3;c.singleProcessingMs=0;
+    c.shortExitDelays = {0, 0, 0}; // Dedicated real-time exit coverage keeps production defaults.
     c.power=[&](bool on,QString&){s.trace<<(on?"POWER ON":"POWER OFF");
         if(s.armed&&!s.event&&((s.single&&on)||(!s.single&&!on))){s.event=true;++s.events;}return true;};
     c.load=[&](bool on,QString&){s.trace<<(on?"LOAD ON":"LOAD OFF");return true;};

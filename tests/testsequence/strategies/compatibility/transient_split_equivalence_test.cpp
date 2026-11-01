@@ -136,6 +136,8 @@ void compareChannels(const QVector<OscChannelMeasure> &a, const QVector<OscChann
 QStringList comparableSearchLogs(QStringList logs)
 {
     for(auto &line:logs) {
+        // New diagnostics expose the authorized delays; exit ordering is checked by dedicated timing tests.
+        if (line.startsWith("Short exit:")) line = "Short exit";
         if(line.contains(" units/div; initial search step=") || line.contains(": arm Level=") ||
            line.startsWith("AUTO steady reference ") || line.startsWith("Bracket [")) {
             line.replace("(0.04 div)","(Scale/25)");

@@ -141,6 +141,7 @@ public:
             c.timeoutMs = 3; c.phaseTimeoutMs = 10000;
             c.settleMs = c.powerOffMs = c.dischargeMs = 0; c.trialsPerLevel = 1;
             c.singleProcessingMs = 0; // Fast matrix; verify Service's real default before this override.
+            c.shortExitDelays = {0, 0, 0};
             const auto kind = g.base == "Turn on" ? TransientKind::TurnOn : g.base == "Turn off" ? TransientKind::TurnOff
                 : g.base == "Short then turn on" ? TransientKind::ShortThenTurnOn : TransientKind::TurnOnThenShort;
             c.captureRecord = m_captureObserver;
@@ -245,6 +246,8 @@ QVector<TestSequenceResultRecord> executeGroup(TestSequenceTaskKind::Kind kind, 
     d.strategy = makeMeasurementStrategyFactory([&](const QString &name, const TransientContext *c) {
         require(name == g.base && c, "group used different strategy or missing context");
         require(c->singleProcessingMs == 3000, "Service lost fixed Single processing time");
+        require(c->shortExitDelays.shortToDischargeMs == 1000 && c->shortExitDelays.dischargeToReleaseMs == 1000 &&
+                c->shortExitDelays.afterReleaseMs == 2000, "Service/Group lost short exit delays");
         if (TestSequenceTaskKind::isTransient(kind))
             require(!g.inputOn && !g.dcOn && !g.loadOn && g.relayMask == QVector<QString>({"OFF", "OFF"}), "previous member left output active");
         return std::make_unique<GroupStrategy>(g, *c);

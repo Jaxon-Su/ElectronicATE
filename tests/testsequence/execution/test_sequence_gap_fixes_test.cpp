@@ -850,6 +850,7 @@ static void ready()
             // pre-input records still fail at the existing acquisition limit.
             ctx.maxIterations = 3;
             int captures = 0, exitOff = 0, exitRelays = 0;
+            QStringList exitRelayStates;
             auto power = ctx.power; auto relays = ctx.relays;
             ctx.power = [&](bool on, QString &e) {
                 if (scope.completed && !on) {
@@ -861,6 +862,7 @@ static void ready()
             ctx.relays = [&](bool sh, bool dis, QString &e) {
                 if (scope.completed) {
                     ++exitRelays;
+                    exitRelayStates << QString("%1%2").arg(sh).arg(dis);
                     if (fault == "off") throw std::runtime_error("relay after failed Input OFF");
                     if (fault == "discharge" && dis) { e = "discharge rejected"; return false; }
                 }
@@ -871,14 +873,21 @@ static void ready()
                 require(record.phase == "Before READY" && record.channels.size() == 2, "diagnostic identity lost");
                 for (const auto &ch : record.channels)
                     require(std::isnan(ch.maxVal) && std::isnan(ch.rms), "diagnostic reused previous values");
-                require(!shortTest || (exitOff == captures && exitRelays == 4 * captures - 1),
+                // Each protected exit confirms Short ON, discharges, stops discharge,
+                // then releases Short. Each subsequent trial also arms Short once.
+                require(!shortTest || (exitOff == captures && exitRelays == 5 * captures - 1 &&
+                            exitRelayStates.mid(exitRelayStates.size() - 4) ==
+                                QStringList({"10", "11", "10", "00"})),
                         "Capture preceded short protection exit");
                 if (fault == "save") throw std::runtime_error("SAVE failed");
             };
             const auto result = runTransientStrategy(kind, ctx, &scope, stop);
             const bool shouldCapture = fault == "none" || fault == "save";
             const int expectedCaptures = fault == "none" ? 3 : int(shouldCapture);
-            require(!result.success && captures == expectedCaptures, "READY failure capture count/status");
+            require(!result.success && captures == expectedCaptures,
+                    QString("READY failure capture count/status: short=%1 fault=%2 captures=%3 expected=%4 error=%5")
+                        .arg(shortTest).arg(fault).arg(captures).arg(expectedCaptures)
+                        .arg(result.errorMessage).toUtf8().constData());
             require(!scope.trace.contains("POWER ON") && scope.trace.contains("LOAD OFF"), "READY failure enabled input/skipped cleanup");
             if (fault == "save") require(result.errorMessage.contains("Scope not ready") && result.errorMessage.contains("SAVE failed"), "dual error lost");
             if (fault == "off" || fault == "discharge") require(result.cleanupFailed && captures == 0, "short protection bypassed");

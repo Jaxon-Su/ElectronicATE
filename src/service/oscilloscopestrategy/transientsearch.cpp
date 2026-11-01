@@ -113,6 +113,7 @@ void runSearch(Execution &run, Event &event, ReferenceResults references)
     run.touched = true;
     // Configure the load while input is off. Hardware callbacks use the same executors as ManualControl.
     event.prepareRun(run);
+    run.check(); // Stop during protected release must not enable the load afterwards.
     QString error;
     run.diagnosticStage("Load ON");
     run.checked(run.ctx.load(true, error), error);

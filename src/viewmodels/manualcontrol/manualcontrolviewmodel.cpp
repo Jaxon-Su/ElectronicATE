@@ -659,7 +659,7 @@ void ManualControlViewModel::handleRelay(RelayAction action)
             };
             QString error;
             const bool ok = finishShortCircuit(inputOff, relays, protection.shortMayBeOn,
-                                              protection.powerOffMs, protection.dischargeMs, error);
+                                              protection.powerOffMs, protection.dischargeMs, error, protection.exitDelays);
             return InstrumentOperationResult{ok, error};
         }, "Short circuit cleanup", TableKind::Relay, false, false, false);
         return;

@@ -213,7 +213,7 @@ outputsUncertain（Run 設定副本、輸出種類、保留短路設定）
   → 下一次 Run 通過恢復檢查
 ```
 
-短路退出：Input OFF → 等待 → 保持短路並放電 → 解除放電 → 解除短路。任一步失敗保留保護，中止 Group 後續條件與重試；ManualControl 必須先成功關閉全部 Input，Relay OFF 才能重新執行放電／解除程序。
+短路退出：Input OFF → 300 ms → 確認 Short ON → 1000 ms → Discharge ON／放電 → Discharge OFF → 1000 ms → Short OFF → 2000 ms。任一步失敗保留保護，中止 Group 後續條件與重試；ManualControl 必須先成功關閉全部 Input，Relay OFF 才能重新執行放電／解除程序。
 
 來源：[Run 清理](src/service/testrun/testrunservice.cpp)、[Session 收尾](src/infrastructure/worker/testrunsession.cpp)、[ReportWriter](src/infrastructure/execution/reportwriter.cpp)、[跨頁接線](src/viewmodels/mainwindow/pageconnectioncoordinator.cpp)。
 

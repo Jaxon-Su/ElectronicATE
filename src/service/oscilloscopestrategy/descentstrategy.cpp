@@ -238,7 +238,7 @@ OscMeasureResult DescentStrategy::execute(IScopeMeasurement *scope, QAtomicInt &
     context.target = "BOTH"; // Results contain all four values from each completed record.
     OscMeasureResult invalid;
     if (!scope || !context.power || !context.load || !context.relays || context.timeoutMs <= 0 ||
-        context.phaseTimeoutMs <= 0 || context.settleMs < 0 || context.powerOffMs < 0 || context.dischargeMs < 0 ||
+        context.phaseTimeoutMs <= 0 || context.settleMs < 0 || context.powerOffMs < 0 || context.dischargeMs < 0 || !context.shortExitDelays.valid() ||
         context.trialsPerLevel < 1 || context.trialsPerLevel > 10 || context.descentChannel < 1 ||
         context.descentChannel > 8 || context.descentLevels.isEmpty() ||
         context.descentLevels.size() > DescentSettings::maximumLevels) {

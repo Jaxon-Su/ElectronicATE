@@ -182,7 +182,7 @@ void phaseDeadlineContract()
         QAtomicInt stop(0);
         TransientContext context; context.timeoutMs=3; context.phaseTimeoutMs=1000; context.target="MAX";
         context.settleMs=context.powerOffMs=context.dischargeMs=0; context.trialsPerLevel=1;
-        context.singleProcessingMs=0; // Timing has its own real-time regression.
+        context.shortExitDelays={0,0,0}; context.singleProcessingMs=0; // Timing has its own real-time regression.
         context.verticalScale.margin=true;
         bool powered=false, loaded=false, shorted=false;
         context.power=[&](bool on,QString &) { powered=on; if(scope.armed)scope.event=true; return true; };
@@ -269,7 +269,7 @@ int main(int argc, char **argv) {
             TransientContext context;
             context.timeoutMs = 3; context.phaseTimeoutMs = 10000;
             context.settleMs = context.powerOffMs = context.dischargeMs = 0;
-            context.singleProcessingMs = 0;
+            context.shortExitDelays={0,0,0}; context.singleProcessingMs = 0;
             context.trialsPerLevel = 1;
             context.power = [&](bool, QString &) { if (scope.armed) scope.event = true; return true; };
             context.load = [](bool, QString &) { return true; };
@@ -298,7 +298,7 @@ int main(int argc, char **argv) {
             scope.referenceQuartet = name == "Turn off" || name == "Turn on then short";
             TransientContext context;context.timeoutMs=3;context.phaseTimeoutMs=10000;context.trialsPerLevel=1;
             context.settleMs=context.powerOffMs=context.dischargeMs=0;
-            context.singleProcessingMs=0;
+            context.shortExitDelays={0,0,0}; context.singleProcessingMs=0;
             context.power=[&](bool,QString&){if(scope.armed)scope.event=true;return true;};
             context.relays=[&](bool sh,bool,QString&){if(scope.armed&&sh)scope.event=true;return true;};
             context.load=[](bool,QString&){return true;};
@@ -314,7 +314,7 @@ int main(int argc, char **argv) {
         for (QString name : {"Static Test", "Dynamic Test", "Turn on", "Turn off", "Turn on then short", "Short then turn on"}) {
             SemanticScope failed; failed.failArm = true;
             TransientContext context; context.timeoutMs = 3;
-            context.powerOffMs = context.dischargeMs = context.settleMs = 0;
+            context.powerOffMs = context.dischargeMs = context.settleMs = 0; context.shortExitDelays={0,0,0};
             context.power = context.load = [](bool, QString&) { return true; };
             context.relays = [](bool, bool, QString&) { return true; };
             int captured = 0;

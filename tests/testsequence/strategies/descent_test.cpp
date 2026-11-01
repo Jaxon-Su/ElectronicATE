@@ -171,7 +171,7 @@ public:
         trace<<QString("relay %1 %2").arg(sh).arg(dis);
         if(dis&&(dischargeFailure||(arms>0&&eventFault=="discharge"))){e="discharge failure";return false;}
         shortOn=sh;
-        if(sh&&!dis&&armed&&!event)fire();
+        if(sh&&!dis&&powerOn&&armed&&!event)fire(); // OFF cleanup cannot create a powered short event.
         return true;
     }
     void fire() {require(ready,"event before READY");event=true;trace<<"event";if(cancel)cancel->storeRelease(1);}
@@ -204,6 +204,7 @@ TransientContext configuration(Scope &scope)
 {
     TransientContext c;c.descentChannel=4;c.descentLevels={15,5,10,5,0,-1.25};c.trialsPerLevel=2;
     c.settleMs=c.dischargeMs=c.powerOffMs=0;c.timeoutMs=20;c.phaseTimeoutMs=120000;
+    c.shortExitDelays = {0, 0, 0}; // Fast matrix; short exit timing has dedicated coverage.
     c.power=[&](bool on,QString&e){return scope.power(on,e);};
     c.relays=[&](bool sh,bool dis,QString&e){return scope.relay(sh,dis,e);};
     c.load=[&](bool on,QString&){scope.trace<<(on?"load on":"load off");return true;};return c;
@@ -213,6 +214,22 @@ void shortClippingCase()
 {
     Scope scope; scope.shortMode=true; scope.otherDisabled=2; scope.referenceRange={{1,40},{2,1000}};
     QAtomicInt stop{0}; auto cfg=configuration(scope); cfg.descentLevels={15}; cfg.trialsPerLevel=1;
+    cfg.shortExitDelays={5,7,11};
+    QElapsedTimer exitClock;exitClock.start();
+    qint64 confirmAt=-1,dischargeOffAt=-1,releasedAt=-1;
+    bool discharging=false;
+    const auto power=cfg.power;const auto relays=cfg.relays;
+    cfg.power=[&](bool on,QString&e){
+        if(on&&releasedAt>=0)require(exitClock.elapsed()-releasedAt>=11,"descent Input ON before release wait");
+        return power(on,e);
+    };
+    cfg.relays=[&](bool sh,bool dis,QString&e){
+        if(sh&&!dis&&!scope.powerOn&&!discharging)confirmAt=exitClock.elapsed();
+        if(dis&&sh)require(confirmAt>=0&&exitClock.elapsed()-confirmAt>=5,"descent discharge before short wait");
+        if(sh&&!dis&&discharging)dischargeOffAt=exitClock.elapsed();
+        if(!sh&&scope.shortOn){require(dischargeOffAt>=0&&exitClock.elapsed()-dischargeOffAt>=7,"descent released short too soon");releasedAt=exitClock.elapsed();}
+        discharging=dis;return relays(sh,dis,e);
+    };
     DescentStrategy strategy(true,cfg); int diagnostics=0;
     strategy.setCaptureObserver([&](const ScopeCaptureRecord &record) {
         require(!scope.shortOn,"Capture while shorted");
@@ -221,6 +238,7 @@ void shortClippingCase()
         else require(!scope.powerOn,"event Capture before short exit");
     });
     const auto result=strategy.execute(&scope,stop);
+    require(releasedAt>=0&&exitClock.elapsed()-releasedAt>=11,"descent returned before final release wait");
     require(result.success,qPrintable(result.errorMessage));
     require(scope.autoArms==3 && scope.getChannelScale(1)==40 && scope.getChannelScale(2)==10,
             "short descent missing enabled-channel AUTO clipping preflight");
@@ -640,8 +658,13 @@ void serviceCase(const QString &mode, bool triggerEnabled = true, bool allHidden
             return InstrumentOperationResult{scope.relay(!off&&rows[index].values[0]=="ON",!off&&rows[index].values[1]=="ON",error),error};};
         deps.strategy=[&](const MeasurementStrategyRequest &request)->std::unique_ptr<IMeasurementStrategy>{
             ++creations;const auto &r=std::get<ScopeMeasurementRequest>(request);
+            require(r.context.shortExitDelays.shortToDischargeMs==1000 && r.context.shortExitDelays.dischargeToReleaseMs==1000 &&
+                    r.context.shortExitDelays.afterReleaseMs==2000,"descent Service lost short exit delays");
             if(!sh)require(r.context.descentChannelEnabled==triggerEnabled,"Service lost Trigger Enable");
-            std::unique_ptr<IOscilloscopeMeasureStrategy> algorithm(OscilloscopeStrategyFactory::create(r.taskName,&r.context));
+            auto execution = r.context;
+            // This matrix checks Service/results wiring. Default real waits are checked above and in short_exit_success.
+            execution.shortExitDelays = {0,0,0};
+            std::unique_ptr<IOscilloscopeMeasureStrategy> algorithm(OscilloscopeStrategyFactory::create(r.taskName,&execution));
             require(bool(algorithm),"Service factory missing");algorithm->setCaptureObserver(r.capture);
             return std::make_unique<ScopeMeasurementStrategy>(std::move(algorithm),r.scope);};
         TestRunService service(deps);QVector<TestSequenceResultRecord> records;bool held=false;

@@ -60,7 +60,7 @@ Turn off 的診斷 Log 列出實際方向、Trigger／Phase 時限、關機等�
 
 兩種短路測試（含 Group）在無觸發、Stop、例外及最後結束時也執行退出流程。**任一 Input OFF 失敗，不釋放短路 Relay、不開始傳檔，也不自動重試或執行後續條件。** 放電 ON／OFF 失敗同樣不繼續解除短路；Scope STOP、Load OFF 仍會嘗試。錯誤狀態與當次設定交給 ManualControl。
 
-關機等待為 300 ms，放電時間使用該任務的 `Discharge time`；這些等待不是 DUT 殘壓量測，仍須按治具與 DUT 驗證。
+關機等待為 300 ms，Short ON 到 Discharge ON、Discharge OFF 到 Short OFF 各等 1000 ms，Short OFF 後再等 2000 ms；放電時間使用該任務的 `Discharge time`；這些等待不是 DUT 殘壓量測，仍須按治具與 DUT 驗證。
 
 兩種 Short 的單組、Group 流程圖與時間軸，見 [Short 測試流程與時間](#short-測試流程與時間)。
 
@@ -162,7 +162,8 @@ Tasks 顯示摘要；下方 Detail 提供 Summary／Trials 及目前所選 Task 
 整批預檢通過
   → 未選用但已配置的 Input OFF
   → 所選 Input OFF → 等待 0.3 秒
-  → 保持 Short ON，放電 D 秒 → Discharge OFF → Short OFF
+  → 確認 Short ON → 等待 1 秒 → Discharge ON，放電 D 秒
+  → Discharge OFF → 等待 1 秒 → Short OFF → 等待 2 秒
   → Input OFF 下設定本筆 Load → Load ON
   → 執行所選方向：Rise → Fall（單邊設定只跑該方向）
   → 各方向依 Level、Trials 重複對應事件流程
@@ -231,16 +232,18 @@ flowchart TD
 flowchart TD
     A["擷取完成／未觸發／Stop／例外"] --> B{"所選 Input 全部 OFF 成功？"}
     B -->|"是"| C["保持 Short ON<br/>等待 0.3 秒"]
-    C --> D["Discharge ON → 等待 D 秒<br/>Discharge OFF → Short OFF"]
+    C --> D["確認 Short ON → 等待 1 秒<br/>Discharge ON → 等待 D 秒<br/>Discharge OFF → 等待 1 秒<br/>Short OFF → 等待 2 秒"]
     D -->|"成功"| E["退出完成<br/>已完成記錄才讀值／保存"]
     B -->|"否"| F["保留短路保護<br/>停止後續 Relay 動作與測試"]
     D -->|"任一步失敗"| F
     F --> G["仍嘗試 Scope STOP、Load OFF<br/>交由 ManualControl 恢復"]
 ```
 
-**Input OFF 成功 → 0.3 秒 → 保持短路並放電 D 秒 → 解除放電 → 解除短路 → 讀值／保存。** 完成的波形保持 STOP，退出成功後才傳檔。
+**Input OFF 成功 → 0.3 秒 → 確認 Short ON → 1 秒 → Discharge ON／放電 D 秒 → Discharge OFF → 1 秒 → Short OFF → 2 秒 → 讀值／保存與後續測試。** 完成的波形保持 STOP，退出成功後才傳檔。
 
-D＝10 秒時，一次退出等待為 **10.3 秒**，另加設備操作與傳檔時間。Stop 或異常同樣先退出；Input OFF／放電失敗時保留短路保護，不執行後續 Group 或重試。事件已退出且沒有再次上電／短路，最後收尾不重複放電。
+兩種 Short、各 Group 與 Turn on then short (descent) 共用此順序；已短路時保持 Short ON，不先釋放重接。三段 1／1／2 秒從對應成功操作回覆後起算，不從 Dialog／XML 設定。Short 本來已 OFF 的 Baseline 退出只關電／放電，不重新施加短路。
+
+D＝10 秒時，有短路保護的一次退出等待為 **14.3 秒**，另加設備操作與傳檔時間。Stop 或異常同樣先退出；Input OFF／放電失敗時保留短路保護，不執行後續 Group 或重試。事件已退出且沒有再次上電／短路，最後收尾不重複放電。
 
 ### 5. Group：逐負載重做單組
 
