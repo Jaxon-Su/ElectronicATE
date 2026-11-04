@@ -45,7 +45,7 @@ public:
 };
 ICommunication *CommunicationFactory::create(const QString &id) { if (id == fault && faultMode == "create") throw std::runtime_error("create failed"); if (id == fault && faultMode == "create_unknown") throw 42; return new ProbeComm(id); }
 RelayBase *RelayFactory::createRelay(const QString &, ICommunication *c, quint8) { return new ProbeRelay(static_cast<ProbeComm *>(c)); }
-DCLoad *DCLoadFactory::createDCLoad(const QString &model, ICommunication *c) { return model == "unsupported" ? nullptr : new ProbeLoad(static_cast<ProbeComm *>(c)); }
+DCLoad *DCLoadFactory::createDCLoad(const QString &model, ICommunication *c, const QString &) { return model == "unsupported" ? nullptr : new ProbeLoad(static_cast<ProbeComm *>(c)); }
 ACSource *ACSourceFactory::createACSource(const QString &, ICommunication *) { return nullptr; }
 
 static InstrumentSetupConfig config(QString type) {

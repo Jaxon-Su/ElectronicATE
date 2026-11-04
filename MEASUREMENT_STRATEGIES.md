@@ -10,11 +10,13 @@ AUTO 參考會回讀觸發模式、停止方式、擷取／觸發狀態與擷取
 
 ## 一般量測策略
 
-一般六種測項（含 Group）的 **Vertical margin (10% top/bottom)** 預設關閉。開啟時使用未截波新記錄的 Max／Min，檢查實際 Scale／Offset／Position 下的畫面餘量；已在上下 10% 內就不調整。超出時一般波形置中；窄帶直線（跨度不超過 0.1 div）全正靠上、全負靠下，零／跨零窄帶置中。邊界目標留 10.5% 供讀回誤差，Scale 只在跨度或 Position 範圍不足時擴大，Offset 保持。真正 ADC 截波仍先 Scale ×2，不以截斷極值推算位置；調整後重新擷取。每列 attempt 結束時還原原 Scale／Position，Group 成員共用本次調整；還原失敗中止後續測試。此選項不改 Rise／Fall 或固定 Level。
+一般六種測項（含 Group）的 **Vertical margin (10% top/bottom)** 預設關閉。勾選時每列 attempt 在 Auto Period 或第一次策略擷取前，將啟用通道的 Position 歸零。只從未截波的新記錄計算 (Max−Min)/(Scale×垂直格數)。雙極置中，全正以 Max 靠上、全負以 Min 靠下，零線置中；目標占比 79%，接受 76～80%，頂、底各至少留 10%。依振幅縮小或擴大 Scale，按實際讀回 Scale 計算 Position。已截波先保存診斷，以 Scale ×2 重抓。零跨度、Position 限制、較小量程已截波或硬體刻度量化都可能限制可達占比，Log 列出原因。每次變更後重新擷取，Group 成員沿用已調整值，Pass／Fail／Stop 退出時保留實際 Scale／Position。照常處理示波器 STOP 與輸出清理，STOP 失敗時阻擋後續執行。Offset 與 Rise／Fall 搜尋規則沿用原設定。
 
 六種一般測項及各 Group 的 **Trigger source** 在輸出操作、Auto Period 與策略啟動前先套用並讀回確認。新測項預設 CH1；舊設定未選來源時沿用示波器當前來源。選擇必須是可用且已啟用的通道，不改其他量測通道或 Rise／Fall 搜尋方式。
 
 ### 1. Static／Dynamic
+
+啟用 **Auto Period** 時，程式先保留目前的 Edge，用一筆新的 AUTO 波形讀取 Trigger CH 的 Max、Min。以峰對峰振幅的 10% 為距離，Rise 從 Max 往下、Fall 從 Min 往上，朝波形內側對齊 `Scale÷25` 的格點。EITHER 在週期偵測期間採 Rise。Level 回讀成功後，才用 NORMAL 擷取獨立波形來量週期。時間刻度或 Trigger CH 的 V/div 改變時會重新校準 Trigger；單獨移動 Position 或調整其他通道時，以新的 NORMAL 記錄確認週期。階段結束時還原暫用的 Level 與 Edge。
 
 Load OFF → Input OFF → 關機等待 → 在 OFF 狀態設定條件 → Input ON → 開機等待 → 靜態／動態 Load ON → 負載穩定等待 → 示波器 Trigger AUTO。Capture 開啟時準備階段保持 STOP，由後續 AUTO 參考／NORMAL＋Single 啟動各階段擷取；未開啟時允許準備階段連續 RUN。
 
@@ -74,7 +76,7 @@ Turn off (descent) 在 Trigger CH 旁提供 **Enable**（預設勾選）：勾�
 
 Trigger levels 清單以 Add level 新增、Delete 刪除，直接編輯每列數值，沒有上下移動按鈕；依列順序執行，保留重複值、0 與負值，輸入最多四位小數。Trials per level 預設 1。每個 Level 的每次 Trial 都重新上電、等待 Settle、啟動 NORMAL＋Single 並確認 READY，才執行關機或短路；成功或依下述失敗政策完成清理後才進入下一次，不搜尋或自動改寫 Level。
 
-兩種 descent 在上電穩定、Short OFF 後先用 AUTO 完成記錄檢查啟用通道；截波通道的 V/div ×2，重新擷取至不截波才開始正式事件。關機／短路事件仍截波時，保存診斷後擴大量程，重新上電重做同一組 Level／Trial。預檢與重試共用調整上限及 Phase time limit，測試期間只擴大、結束後還原自動改過的刻度；Turn off 的 Trigger CH 顯示 OFF 仍維持原來源，全部 CH 關閉時略過量程預檢。Turn on then short (descent) 的事件記錄先完成短路退出，再診斷、擴量程與重試；上電中的 AUTO 預檢尚未施加短路。
+兩種 descent 在上電穩定、Short OFF 後先用 AUTO 完成記錄檢查啟用通道；截波通道的 V/div ×2，重新擷取至不截波才開始正式事件。關機／短路事件仍截波時，保存診斷後擴大量程，重新上電重做同一組 Level／Trial。預檢與重試共用調整上限及 Phase time limit，測試期間只擴大、結束後保留實際垂直刻度；Turn off 的 Trigger CH 顯示 OFF 仍維持原來源，全部 CH 關閉時略過量程預檢。Turn on then short (descent) 的事件記錄先完成短路退出，再診斷、擴量程與重試；上電中的 AUTO 預檢尚未施加短路。
 
 兩種 descent 每次成功啟動正式事件 Single 後，先等待 **3000 ms** 給示波器處理，再查 READY；確認 READY 才 Input OFF 或 Short ON。這段等待可由 Stop 中斷，並計入 Phase time limit。Turn off (descent) 關機前若確認提前觸發且記錄自然完成，該 Trial 標 Fail，確認 Input OFF／Scope STOP 與診斷保存成功後，跳過同 Level 剩餘 Trials，繼續下一列 Level，整體仍為 Fail。SAVE 但仍在擷取、通訊錯誤、逾時或清理失敗仍中止。等待期間不施加短路；Single 失敗不進入等待，AUTO 預檢不增加此固定等待。Turn on then short (descent) 的短路前自然完成記錄或事件等待 MISS，該 Trial 標 Fail；完整短路退出、Scope STOP 與必要診斷保存成功後，繼續全部剩餘 Trial／Level，整體仍 Fail。MISS 沒有完成記錄，不保存舊波形或四值。擷取未完成逾時、Stop、通訊、Scale／Capture 或清理錯誤仍中止。
 
@@ -108,7 +110,7 @@ flowchart TD
     G -->|"是"| H["讀取已啟用通道四值<br/>保存勾選的 Capture、保留 Trial"]
     H --> I{"還有 Level／Trial？"}
     I -->|"是"| B
-    I -->|"否"| J["清理輸出與 Scope STOP<br/>還原自動改過的刻度"]
+    I -->|"否"| J["清理輸出與 Scope STOP<br/>保留實際垂直刻度"]
     G -->|"否"| K["本次失敗、保留先前 Trial<br/>完成記錄視情況保存診斷"]
     K --> J
 ```

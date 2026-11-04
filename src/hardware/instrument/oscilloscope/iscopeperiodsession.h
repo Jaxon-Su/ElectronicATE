@@ -1,4 +1,5 @@
 #pragma once
+#include "scopetypes.h"
 #include <QString>
 #include <functional>
 
@@ -14,6 +15,9 @@ class IScopePeriodSession
     };
     virtual ~IScopePeriodSession() = default;
     virtual double horizontalDivisions() const = 0;
+    virtual int triggerChannel() const = 0;
+    virtual ScopeTriggerSlope periodSlope() const = 0;
+    virtual bool applyTriggerLevel(double requested, double &actual, QString &error) = 0;
     virtual bool readHorizontalContext(HorizontalContext &context, QString &error) = 0;
     virtual bool readTimeScale(double &secondsPerDivision, QString &error) = 0;
     virtual bool setTimeScale(double secondsPerDivision, QString &error) = 0;

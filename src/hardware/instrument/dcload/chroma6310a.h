@@ -41,6 +41,6 @@ class Chroma6310A : public Chroma6310 {
     QString model() const override { return "6310A"; }
     QString vendor() const override { return "Chroma"; }
   private:
-    QString currentMode(double current, double voltage, const QString &requestedMode) const;
+    QString currentMode(double current, double voltage, const QString &requestedMode, bool dynamic) const;
     bool m_legacyFrame;
 };

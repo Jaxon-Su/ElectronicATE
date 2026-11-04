@@ -63,7 +63,12 @@ QString InstrumentWithCommBase::address() const { return m_address; }
 
 void InstrumentWithCommBase::setCommunication(ICommunication *comm) { m_comm = comm; }
 
-int InstrumentWithCommBase::write(const QString &s) { return write(s.toUtf8()); }
+int InstrumentWithCommBase::write(const QString &s)
+{
+    QByteArray bytes = s.toUtf8();
+    if (usesScpiLineFraming() && !bytes.endsWith('\n')) bytes.append('\n');
+    return write(bytes);
+}
 
 int InstrumentWithCommBase::write(const QByteArray &data)
 {
@@ -89,6 +94,12 @@ int InstrumentWithCommBase::read(QByteArray &data, int maxLen)
     return ret;
 }
 
+int InstrumentWithCommBase::readTextResponse(QByteArray &data, int maxLen)
+{
+    if (usesScpiLineFraming()) return m_comm ? m_comm->readScpiText(data, maxLen) : -1;
+    return read(data, maxLen);
+}
+
 bool InstrumentWithCommBase::queryDouble(const QString &cmd, double &value)
 {
     QMutexLocker lock(&m_commMutex);
@@ -98,7 +109,7 @@ bool InstrumentWithCommBase::queryDouble(const QString &cmd, double &value)
         return false;
     }
     QByteArray resp;
-    int n = read(resp, 64);
+    int n = readTextResponse(resp, 64);
     if (n <= 0) {
         m_lastError = QString("Read failed for: %1").arg(cmd);
         qWarning() << "[Instrument]" << m_lastError;
@@ -152,7 +163,7 @@ bool InstrumentWithCommBase::queryInt(const QString &cmd, int &value)
         return false;
     }
     QByteArray resp;
-    int n = read(resp, 64);
+    int n = readTextResponse(resp, 64);
     if (n <= 0) {
         m_lastError = QString("Read failed for: %1").arg(cmd);
         qWarning() << "[Instrument]" << m_lastError;

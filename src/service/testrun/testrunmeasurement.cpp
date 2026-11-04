@@ -155,6 +155,7 @@ bool TestRunService::executeSteadyTest(const TaskSettings::Steady &cfg, bool dyn
         search.log = [this, name](const QString &text) { emit logMessage(name + ": " + text); };
         search.target = TaskSettings::serialized(cfg.searchDirection);
         search.verticalScale = verticalScaleOptions(cfg.verticalMargin);
+        prepareVerticalMargin(search.verticalScale);
         ScopeMeasurementRequest request{strategyName, *scope, search, {}};
         if (capture)
             request.capture =
@@ -320,7 +321,7 @@ void TestRunService::prepareSteadyScope(const TaskSettings::Steady &cfg, const Q
             throw std::runtime_error("Stopped by user");
     };
     QString startupError;
-    if (!scope->prepareSteadyAcquisition(m_stopRequested, startupError, allowInitialAuto))
+    if (!scope->prepareSteadyAcquisition(m_stopRequested, startupError, allowInitialAuto, cfg.autoPeriod))
         throw std::runtime_error(startupError.toStdString());
     checkStop();
     if (cfg.autoPeriod) {
@@ -454,7 +455,8 @@ bool TestRunService::executeTransient(const QString &name, const TaskSettings::T
     TransientContext context;
     context.target = TaskSettings::serialized(cfg.searchDirection);
     context.edge = QStringLiteral("AUTO");
-    context.verticalScale = verticalScaleOptions(cfg.verticalMargin);
+    context.verticalScale = verticalScaleOptions(!cfg.descent && cfg.verticalMargin);
+    prepareVerticalMargin(context.verticalScale);
     context.timeoutMs = cfg.triggerTimeoutMs;
     context.phaseTimeoutMs = cfg.phaseTimeoutMs;
     context.settleMs = cfg.settleMs;

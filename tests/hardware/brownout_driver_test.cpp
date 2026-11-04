@@ -160,7 +160,41 @@ void monitor6310Test(bool seriesA)
             bool blocked = false;
             try { load->setStaticCurrent(voltageCheck); } catch (const std::invalid_argument &) { blocked = true; }
             expect(blocked == (variant == "63123A"), "63123A voltage variant limits");
+            StaticCurrentParam p; p.loadMode="No Setting"; p.levels={70}; p.expectedVoltage=5;
+            transport.trace.clear(); load->setStaticCurrent(p);
+            expect(transport.trace.contains("CURR:STAT:L1 70"),"rated 70 A / 350 W boundary was rejected");
+            for (const auto &limits : {std::pair{71.0,1.0}, std::pair{35.0,10.1}, std::pair{1.0,121.0}}) {
+                p.levels={limits.first}; p.expectedVoltage=limits.second;
+                transport.trace.clear(); blocked=false;
+                try { load->setStaticCurrent(p); } catch(const std::invalid_argument &) { blocked=true; }
+                expect(blocked && transport.trace.isEmpty(), "63123A driver wrote above I/P/V limits");
+            }
+            p.levels={7.1}; p.expectedVoltage=1; p.loadMode="CCL";
+            transport.trace.clear(); blocked=false;
+            try { load->setStaticCurrent(p); } catch(const std::invalid_argument &) { blocked=true; }
+            expect(blocked && transport.trace.isEmpty(),"63123A low range accepted >7 A");
+            p.levels={4.48}; p.expectedVoltage=78.125;
+            load->setStaticCurrent(p); // Decimal inputs multiply to exactly 350 W.
+            p.expectedVoltage=78.12501;
+            transport.trace.clear(); blocked=false;
+            try { load->setStaticCurrent(p); } catch(const std::invalid_argument &) { blocked=true; }
+            expect(blocked && transport.trace.isEmpty(),"decimal over-limit load passed");
+            p.levels={1}; p.expectedVoltage=1; p.loadMode="CCDL";
+            blocked=false;
+            try { load->setStaticCurrent(p); } catch(const std::invalid_argument &) { blocked=true; }
+            expect(blocked && transport.trace.isEmpty(),"static driver accepted dynamic range");
         }
+        Chroma63600 load600("63630-600-15", &transport);
+        DynamicCurrentParam dyn; dyn.levels={1,5}; dyn.expectedVoltage=60; dyn.loadMode="No Setting";
+        transport.trace.clear(); load600.setDynamicCurrent(dyn);
+        expect(transport.trace.contains("CURR:DYN:L2 5"),"63630-600-15 rejected 300 W boundary");
+        dyn.expectedVoltage=61;
+        transport.trace.clear(); bool rejected=false;
+        try { load600.setDynamicCurrent(dyn); } catch(const std::invalid_argument &) { rejected=true; }
+        expect(rejected && transport.trace.isEmpty(),"63630-600-15 treated 600 V as 600 W");
+        dyn.levels={1,2}; dyn.expectedVoltage=1; dyn.loadMode="CCL"; rejected=false;
+        try { load600.setDynamicCurrent(dyn); } catch(const std::invalid_argument &) { rejected=true; }
+        expect(rejected && transport.trace.isEmpty(),"dynamic driver accepted static range");
     }
     const auto &models = seriesA ? LoadCapabilityCatalog::Chroma6310AModels : LoadCapabilityCatalog::Chroma6310Models;
     for (const auto &model : models) {
@@ -477,31 +511,80 @@ void fragmentedAcReplies() {
       public:
         QList<QByteArray> fragments;
         ScpiLineReader reader;
+        int write(const QByteArray &bytes) override {
+            expect(bytes.endsWith('\n') && bytes.count('\n') == 1, "serial command requires one LF");
+            return Transport::write(bytes);
+        }
         int read(QByteArray &bytes,int) override {
             if (fragments.isEmpty()) return -1;
             bytes=fragments.takeFirst();return int(bytes.size());
         }
         int readScpiText(QByteArray &bytes,int maxLen) override {return reader.read(*this,bytes,maxLen);}
-    } stream;
-    std::unique_ptr<ACSource> source(ACSourceFactory::createACSource("6590",&stream));
-    source->connect();QString error;double volts=-1;
-    stream.fragments={"12","7.0\r","\n"};
-    expect(source->readVoltageSetting(volts,error) && volts==127.0 && stream.timeout==1234,"parsed partial serial voltage");
-    stream.fragments={"O","N\n"};
-    expect(source->outputEnabled(),"fragmented ON reply lost");
-    stream.fragments={"0",".1\n"};stream.trace.clear();bool rejected=false;
-    try { source->prepareOutput(true,127); } catch (const std::exception &) {rejected=true;}
-    expect(rejected && stream.trace==QStringList{"OUTPut?"},"partial 0 allowed a live relay switch");
-    stream.fragments={"12"};volts=77;
-    expect(!source->readVoltageSetting(volts,error) && volts==77 && stream.timeout==1234,"missing LF returned valid voltage");
-    stream.fragments={"3\n"};
-    expect(!source->readVoltageSetting(volts,error) && volts==77,"accepted stale tail after a serial timeout");
-    stream.reader.reset();stream.fragments={"24\r\n"};
-    expect(source->readVoltageSetting(volts,error) && volts==24,"port reopen did not restore clean text reads");
+    };
+    for (const QString model : {"61507", "61508", "61509", "6512", "6520", "6530", "6590"}) {
+        Stream stream;
+        std::unique_ptr<ACSource> source(ACSourceFactory::createACSource(model, &stream));
+        source->connect();
+        QString error;
+        double volts = -1;
+        stream.fragments = {"12", "7.0\r", "\n"};
+        expect(source->readVoltageSetting(volts,error) && volts==127.0 && stream.timeout==1234,"parsed partial serial voltage");
+        stream.fragments = {"O", "N\n"};
+        expect(source->outputEnabled(), "fragmented ON reply lost");
+        stream.fragments = {"0", ".1\n"};
+        bool rejected = false;
+        try { source->setPowerOff(); } catch (const std::exception &) { rejected = true; }
+        expect(rejected && stream.fragments.isEmpty() && stream.trace.last()=="OUTPut?", "partial 0 accepted as OFF");
+        stream.fragments = {"O", "FF\r\n"};
+        if (model == "6590") stream.fragments << "No error\n";
+        source->setPowerOff();
+        if (model == "6590") {
+            stream.fragments = {"0", ".1\n"};
+            stream.trace.clear();
+            rejected = false;
+            try { source->prepareOutput(true,127); } catch (const std::exception &) { rejected = true; }
+            expect(rejected && stream.trace==QStringList{"OUTPut?"}, "partial 0 allowed a live relay switch");
+        }
+        stream.fragments = {"12"};
+        volts = 77;
+        expect(!source->readVoltageSetting(volts,error) && volts==77 && stream.timeout==1234,"missing LF returned valid voltage");
+        stream.fragments = {"3\n"};
+        expect(!source->readVoltageSetting(volts,error) && volts==77,"accepted stale tail after a serial timeout");
+        stream.reader.reset();
+        stream.fragments = {"24\r\n"};
+        expect(source->readVoltageSetting(volts,error) && volts==24,"port reopen did not restore clean text reads");
+    }
+}
+
+void check6500PowerOn() {
+    for (const QString model : {"6512", "6520", "6530"}) {
+        Transport t;
+        std::unique_ptr<ACSource> source(ACSourceFactory::createACSource(model, &t));
+        source->connect();
+        source->setPowerOn();
+        expect(t.trace == QStringList{"ORELay ON", "OUTPut ON", "OUTPut?"}, "ON returned without confirmation");
+        for (const QString failure : {"ORELay ON", "OUTPut ON", "readback"}) {
+            t.trace.clear();
+            t.shortWrite = failure;
+            if (failure == "readback") t.queued["OUTPut?"] = {"OFF"};
+            bool rejected = false;
+            try { source->setPowerOn(); } catch (const std::exception &) { rejected = true; }
+            expect(rejected && t.trace.mid(t.trace.size()-3) == QStringList{"OUTPut OFF", "ORELay OFF", "OUTPut?"},
+                   "failed ON did not run the full shutdown");
+        }
+        t.trace.clear();
+        t.shortWrite = "OUTPut ON";
+        t.fail = "OUTPut OFF";
+        QString error;
+        try { source->setPowerOn(); } catch (const std::exception &e) { error = QString::fromUtf8(e.what()); }
+        expect(error.contains("OUTPut ON") && error.contains("OUTPut OFF") &&
+               t.trace.contains("ORELay OFF") && t.trace.last()=="OUTPut?", "rollback lost errors or skipped cleanup");
+    }
 }
 
 void newAcFailureCases() {
     fragmentedAcReplies();
+    check6500PowerOn();
     Transport t;
     std::unique_ptr<ACSource> high(ACSourceFactory::createACSource("6590",&t));
     high->connect();

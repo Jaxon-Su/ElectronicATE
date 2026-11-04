@@ -60,7 +60,7 @@ class MsoBrownOutSession final : public IScopeBrownOutSession
             write(QString("DATa:STOP %1").arg(m_points));
             // One automatic reference record after source/load settling. It is not an event result.
             QString referenceError;
-            if (!m_scope.beginAutoReference(m_referenceTimeout,referenceError)) fail(referenceError);
+            if (!m_scope.beginReferenceRecord(ScopeTriggerMode::Auto, m_referenceTimeout,referenceError)) fail(referenceError);
             return true;
         } catch (const std::exception &e) { error = QString::fromUtf8(e.what()); return false; }
     }
@@ -94,7 +94,7 @@ class MsoBrownOutSession final : public IScopeBrownOutSession
         record = {};
         try {
             if (!m_armed && !m_referenceFrozen) {
-                const auto status = m_scope.pollAutoReference(m_referenceState,error);
+                const auto status = m_scope.pollReferenceRecord(m_referenceState,error);
                 if (status == ScopeReferenceStatus::Error) fail(error);
                 if (status == ScopeReferenceStatus::Pending) return BrownOutRecordStatus::Pending;
                 m_referenceFrozen = true;

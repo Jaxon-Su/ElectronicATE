@@ -139,6 +139,7 @@ int main(int argc, char** argv)
             CheckpointPage checkpoint;
             TestPage fallback;
             checkpoint.value = "checkpoint-old";
+            checkpoint.failWrite = true; // Unsavable live draft is recoverable through its checkpoint.
             fallback.tag = "TestConditions";
             fallback.value = "fallback-old";
             fallback.failApply = true;

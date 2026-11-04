@@ -90,6 +90,7 @@ ChromaLoad63600Spec createChroma6363060015Spec();
  *         若 subModel 不存在則回傳 nullopt
  */
 std::optional<PowerRangeSpec63600> findPowerRange63600(const QString& subModel, double currval);
+void validateCurrent63600(const QString &model, double amps, double volts, const QString &range, bool dynamic);
 
 /**
  * @brief 選擇最佳靜態負載模式（CCL / CCM / CCH）

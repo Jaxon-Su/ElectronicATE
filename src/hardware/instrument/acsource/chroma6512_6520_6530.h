@@ -130,6 +130,7 @@ class Chroma6512_6520_6530 : public ACSource {
     void setLocalMode();  // SYSTem:LOCal
 
   private:
+    bool usesScpiLineFraming() const override { return true; }
     const QString m_model;
     const QString m_logTag;
     static constexpr double kFreqMin = 15.0;

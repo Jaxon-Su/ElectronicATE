@@ -54,8 +54,8 @@ public:
     bool setTriggerMode(ScopeTriggerMode value, QString &error) override { automatic = value == ScopeTriggerMode::Auto; error.clear(); return true; }
     bool setChannelTriggerLevel(int, double value, QString &error) override { level = value; error.clear(); return true; }
     bool beginSingleAcquisition() override { armed = true; completed = automatic || (steady && hits()); return true; }
-    bool beginAutoReference(int &budget,QString &) override {budget=10000;return beginSingleAcquisition();}
-    ScopeReferenceStatus pollAutoReference(QString &state,QString &) override {
+    bool beginReferenceRecord(ScopeTriggerMode, int &budget,QString &) override {budget=10000;return beginSingleAcquisition();}
+    ScopeReferenceStatus pollReferenceRecord(QString &state,QString &) override {
         state="fake AUTO reference; real display-state parser";
         return completed?ScopeReferenceStatus::Completed:ScopeReferenceStatus::Pending;
     }

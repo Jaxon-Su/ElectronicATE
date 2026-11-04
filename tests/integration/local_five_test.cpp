@@ -521,17 +521,28 @@ void loadFrameChoicesTest() {
         QXmlStreamReader in(xml); in.readNextStartElement(); model.loadXml(in);
         require(!in.hasError(), "Load frame XML rejected");
     };
-    const QMap<QString,QSet<int>> frames{{"63600-1",{1}},{"63600-2",{1,3}},
-                                         {"63600-5",{1,3,5,7,9}},{"63601-5",{1,3,5,7,9,10}}};
+    const QMap<QString,QSet<int>> frames{{"63600-1",{1,2}},{"63600-2",{1,2,3,4}},
+                                         {"63600-5",{1,2,3,4,5,6,7,8,9,10}},{"63601-5",{1,3,5,7,9,10}}};
     for (auto it=frames.cbegin(); it!=frames.cend(); ++it) {
         require(frame() && frame()->findText(it.key())>=0, "frame missing in Load model menu");
         frame()->setCurrentText(it.key());
+        for (const auto *module : {"63610-80-20","63630-80-60","63630-600-15","63640-80-80","63640-150-60"})
+            require(box(1)->findText(module)>=0, "catalog omitted a supported module");
         for (int ch : vm.channels()) {
             for (int offset : {0,1,2})
                 require(box(ch,offset) && box(ch,offset)->isEnabled()==it.value().contains(ch),
                         "module, output index or sync role enabled on wrong channel");
         }
     }
+    frame()->setCurrentText("63600-2");
+    box(4)->setCurrentText("63610-80-20"); box(4,1)->setCurrentText("1");
+    roundTrip();
+    require(mapped(4).index==1 && mapped(4).subModel=="63610-80-20" && mapped(3).index==0,
+            "even channel or its independent index was lost");
+    box(3)->setCurrentText("63630-80-60");
+    require(!box(4)->isEnabled() && mapped(4).index==0 && mapped(4).subModel.isEmpty(),
+            "single-channel module retained a second output");
+    frame()->setCurrentText("63601-5");
     require(box(10)->count()==2 && box(10)->findText("63610-80-20")>=0 &&
             box(10)->findText("63640-80-80")<0,"CH10 offered a single-channel module");
     box(10)->setCurrentText("63610-80-20");
@@ -563,6 +574,38 @@ void loadFrameChoicesTest() {
     box(1)->setCurrentText("63106A");
     require(!box(2)->isEnabled() && !box(3)->isEnabled() && !box(4)->isEnabled() && box(5)->isEnabled(),
             "wide module did not reserve its two slots");
+
+    int peerRow = 0;
+    while (peerRow < table->rowCount() && (!table->item(peerRow,0) || table->item(peerRow,0)->text() != "Load2")) ++peerRow;
+    require(peerRow < table->rowCount(), "no Load2 row");
+    const int ch1col = 4 + vm.channels().indexOf(1);
+    const auto peerBox = [&](int offset,int col){return qobject_cast<QComboBox*>(table->cellWidget(peerRow+offset,col));};
+    frame()->setCurrentText("63600-2");
+    peerBox(0,1)->setCurrentText("63600-2");
+    qobject_cast<QComboBox*>(table->cellWidget(row,2))->setCurrentText("GPIB0::8::INSTR");
+    peerBox(0,2)->setCurrentText("GPIB0::8::INSTR");
+    box(1)->setCurrentText("63610-80-20"); box(1,1)->setCurrentText("1");
+    peerBox(0,ch1col)->setCurrentText("63610-80-20");
+    require(peerBox(1,ch1col)->toolTip().contains("duplicate") && box(1,1)->toolTip().isEmpty(),
+            "second row could claim an occupied physical channel or original owner was blocked");
+    peerBox(0,2)->setCurrentText("GPIB0::9::INSTR");
+    require(peerBox(1,ch1col)->toolTip().isEmpty(), "distinct instrument did not release physical channel lock");
+    const int ch2col = 4 + vm.channels().indexOf(2);
+    peerBox(0,ch1col)->setCurrentText("");
+    peerBox(0,2)->setCurrentText("GPIB0::8::INSTR");
+    page.findChild<QSpinBox*>("spinBox_Load_Outputs")->setValue(2);
+    peerBox(0,ch2col)->setCurrentText("63610-80-20");
+    peerBox(1,ch2col)->setCurrentText("2");
+    peerBox(2,ch2col)->setCurrentText("SLAVE");
+    require(peerBox(0,ch2col)->currentText()=="63610-80-20" && peerBox(1,ch2col)->currentText()=="2" &&
+            peerBox(2,ch2col)->currentText()=="SLAVE", "cross-row second output was never configured");
+    box(1)->setCurrentText("63630-80-60");
+    require(!peerBox(0,ch2col)->isEnabled() && peerBox(0,ch2col)->currentText().isEmpty() &&
+            peerBox(1,ch2col)->currentText().isEmpty() && peerBox(2,ch2col)->currentText().isEmpty(),
+            "switching odd module retained another Load row's invalid even output");
+    roundTrip();
+    peerBox(0,2)->setCurrentText("GPIB0::9::INSTR");
+    require(peerBox(0,ch2col)->isEnabled(), "separate chassis still inherited its peer's slot restriction");
 }
 
 void instrumentSetupSerialTest() {

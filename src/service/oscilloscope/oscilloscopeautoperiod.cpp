@@ -1,5 +1,6 @@
 #include "oscilloscopeautoperiod.h"
 #include "../oscilloscopestrategy/oscilloscopeacquisition.h"
+#include "../measurement/triggerlevelgrid.h"
 #include "iscopemeasurement.h"
 #include <QElapsedTimer>
 #include <QScopeGuard>
@@ -7,6 +8,75 @@
 #include <algorithm>
 #include <cmath>
 #include <exception>
+#include <limits>
+
+namespace {
+struct PeriodScales {
+    double time = 0, channel = 0;
+    bool read(IScopeAutoPeriod &scope, IScopePeriodSession &session, QString &error) {
+        if (!session.readTimeScale(time, error)) return false;
+        channel = scope.getChannelScale(session.triggerChannel());
+        error = scope.lastError();
+        if (!error.isEmpty()) return false;
+        if (std::isfinite(channel) && channel > 0 && channel < 1e20 &&
+            std::isfinite(time) && time > 0 && time < 1e30) return true;
+        error = "Auto Period: invalid trigger channel or time scale";
+        return false;
+    }
+    bool matches(const PeriodScales &other) const {
+        return qFuzzyCompare(time, other.time) && qFuzzyCompare(channel, other.channel);
+    }
+};
+
+// A narrow/flat reference can be a short time window. Let the caller use its
+// existing bounded expansion policy; device errors must stop the measurement.
+bool configurePeriodTrigger(IScopeAutoPeriod *scope, IScopePeriodSession &session, double step, QAtomicInt &stop,
+                            QDeadlineTimer deadline, QString &error, const OscilloscopeAcquisition::ReferenceLog &log)
+{
+    const int ch = session.triggerChannel();
+    auto check = [&] {
+        if (stop.loadAcquire()) throw std::runtime_error("stopped by user");
+        if (deadline.hasExpired()) throw std::runtime_error("overall deadline reached");
+    };
+    auto extremum = [&](ScopeMeasurement type) {
+        check();
+        return OscilloscopeAcquisition::readReadyMeasurement(scope, stop, ch, type,
+                int(qMin<qint64>(5000, deadline.remainingTime())));
+    };
+    const double maximum = extremum(ScopeMeasurement::Maximum);
+    const double minimum = extremum(ScopeMeasurement::Minimum);
+    check();
+    const TriggerLevelGrid grid(step);
+    const bool rise = session.periodSlope() == ScopeTriggerSlope::Rise;
+    const QString details = QString("Auto Period: CH%1 %2 Max=%3 Min=%4 Step=%5")
+            .arg(ch).arg(rise ? "Rise" : "Fall").arg(maximum,0,'g',12).arg(minimum,0,'g',12).arg(step,0,'g',12);
+    if (maximum < minimum) { error = details + "; invalid extrema"; return false; }
+    double requested = std::numeric_limits<double>::quiet_NaN();
+    if (std::isfinite(minimum) && std::isfinite(maximum) && minimum < maximum) {
+        const double inset = (maximum - minimum) * 0.1;
+        const double index = rise ? grid.floorIndex(maximum - inset) : grid.ceilIndex(minimum + inset);
+        if (grid.floorIndex(minimum) < index && index < grid.ceilIndex(maximum))
+            requested = grid.valueAt(index);
+    }
+    if (!(minimum < requested && requested < maximum)) {
+        if (log) log(details + "; no resolvable interior trigger level");
+        return false;
+    }
+    double actual = 0;
+    if (!session.applyTriggerLevel(requested, actual, error)) {
+        if (error.isEmpty()) error = details + "; could not apply trigger level";
+        return false;
+    }
+    check();
+    const QString result = details + QString("; requested Level=%1 actual=%2").arg(requested,0,'g',12).arg(actual,0,'g',12);
+    if (!std::isfinite(actual) || actual <= minimum || actual >= maximum || std::abs(actual-requested) > step * .01) {
+        error = result + "; trigger level readback mismatch";
+        return false;
+    }
+    if (log) log(result);
+    return true;
+}
+}
 
 bool adjustOscilloscopeAutoPeriod(IScopeAutoPeriod *scope, QAtomicInt &stop, QString &error,
                                   const OscCaptureObserver &capture, const VerticalScaleOptions &options,
@@ -55,6 +125,13 @@ bool adjustOscilloscopeAutoPeriod(IScopeAutoPeriod *scope, QAtomicInt &stop, QSt
     int stableCaptures = 0;
     int inWindowCaptures = 0;
     int timeScaleChanges = 0;
+    bool triggerConfigured = false;
+    double normalFitTimeScale = 0;
+    PeriodScales calibrated;
+    auto discardCalibration = [&] {
+        triggerConfigured = false;
+        stableCaptures = inWindowCaptures = 0;
+    };
     double stablePeriod = 0;
     auto agrees = [](double a, double b) { return std::abs(a - b) <= 0.05 * std::max(a, b); };
     // Only absorb floating-point arithmetic at the inclusive 3/8 boundaries.
@@ -71,9 +148,15 @@ bool adjustOscilloscopeAutoPeriod(IScopeAutoPeriod *scope, QAtomicInt &stop, QSt
     {
         if (!ready())
             return false;
-        double scale = 0;
-        if (!session->readTimeScale(scale, error))
-            return false;
+        PeriodScales startScales;
+        if (!startScales.read(*scope,*session,error) || !ready()) return false;
+        const double scale = startScales.time;
+        if (!qFuzzyCompare(normalFitTimeScale,scale)) normalFitTimeScale = 0;
+        if (triggerConfigured && !calibrated.matches(startScales)) {
+            if (log) log("Auto Period: scale changed between records; reacquiring trigger reference");
+            discardCalibration();
+            if (++periodAttempts >= 24) break;
+        }
         IScopePeriodSession::HorizontalContext horizontal;
         if (!session->readHorizontalContext(horizontal, error)) return false;
         if (log) {
@@ -99,10 +182,11 @@ bool adjustOscilloscopeAutoPeriod(IScopeAutoPeriod *scope, QAtomicInt &stop, QSt
         const int measurementTimeoutMs = int(std::ceil(std::clamp(10000 + windowMs, 10000.0, 60000.0)));
         // Configure PERIOD before the next fresh acquisition, including after
         // clipping retries.
-        if (!session->prepareRecord(error))
+        if (triggerConfigured && !session->prepareRecord(error))
             return false;
-        const auto capture = OscilloscopeAcquisition::acquireAutoRecord(
-            scope, stop, qMax(0, totalLimitMs - int(total.elapsed())), error, log);
+        const auto capture = OscilloscopeAcquisition::acquireReferenceRecord(
+            scope, stop, qMax(0, totalLimitMs - int(total.elapsed())), error, log,
+            triggerConfigured ? ScopeTriggerMode::Normal : ScopeTriggerMode::Auto);
         if (!OscilloscopeAcquisition::hasCompletedRecord(capture))
         {
             if (!error.isEmpty()) error.prepend("Auto Period: ");
@@ -120,13 +204,43 @@ bool adjustOscilloscopeAutoPeriod(IScopeAutoPeriod *scope, QAtomicInt &stop, QSt
         {
             // A completed record remains traceable even when reading or archiving it
             // reaches the overall limit. Cancellation is checked by the helper.
-            if (OscilloscopeAcquisition::expandVerticalRange(scope, stop, scaleAdjustments, &vertical, "Auto Period",
+            vertical.fitDisplay = triggerConfigured || normalFitTimeScale == 0;
+            if (OscilloscopeAcquisition::expandVerticalRange(scope, stop, scaleAdjustments, &vertical,
+                    triggerConfigured ? "Auto Period" : "Auto Period reference",
                     capture == OscilloscopeAcquisition::AcquisitionResult::CompletedAfterTimeout,
                     QDeadlineTimer(qMax(0, totalLimitMs - int(total.elapsed())))))
             {
-                stableCaptures = 0;
-                inWindowCaptures = 0;
+                // Margin fitting can move only a display Position or another
+                // channel. Recheck the calibrated trigger/time scales at loop
+                // entry before deciding whether a new AUTO pilot is necessary.
+                if (options.margin) {
+                    if (triggerConfigured) normalFitTimeScale = scale;
+                    stableCaptures = inWindowCaptures = 0;
+                }
+                else discardCalibration();
                 continue;
+            }
+            PeriodScales frozen;
+            if (!frozen.read(*scope,*session,error) || !ready()) return false;
+            if (!startScales.matches(frozen)) {
+                if (log) log("Auto Period: scale changed during acquisition; discarding record");
+                ++periodAttempts;
+                discardCalibration();
+                continue;
+            }
+            if (!triggerConfigured) {
+                triggerConfigured = configurePeriodTrigger(scope, *session, frozen.channel / 25, stop,
+                        QDeadlineTimer(qMax(0, totalLimitMs - int(total.elapsed()))), error, log);
+                if (!error.isEmpty() || !ready()) return false;
+                if (triggerConfigured) {
+                    calibrated = frozen;
+                    continue; // The AUTO pilot never supplies a PERIOD.
+                }
+                if (!vertical.fitDisplay) {
+                    normalFitTimeScale = 0;
+                    ++periodAttempts;
+                    continue; // Retry an unresolved pilot with display fitting before changing timebase.
+                }
             }
         }
         catch (const std::exception &ex)
@@ -146,12 +260,12 @@ bool adjustOscilloscopeAutoPeriod(IScopeAutoPeriod *scope, QAtomicInt &stop, QSt
         QElapsedTimer measurement;
         measurement.start();
         const int measurementLimitMs = qMin(measurementTimeoutMs, qMax(0, totalLimitMs - int(total.elapsed())));
-        if (log) log(QString("Auto Period: PERIOD wait begin; %1; window=%2 s; wait limit=%3 ms; remaining overall=%4 ms")
+        if (triggerConfigured && log) log(QString("Auto Period: PERIOD wait begin; %1; window=%2 s; wait limit=%3 ms; remaining overall=%4 ms")
             .arg(progress(), number(windowMs / 1000)).arg(measurementLimitMs).arg(qMax(0, totalLimitMs - int(total.elapsed()))));
         double previousReading = 0;
         int consistentReads = 0;
         bool measurementReady = false;
-        do
+        while (triggerConfigured && measurement.elapsed() < measurementLimitMs)
         {
             if (!ready()) return false;
             if (measurement.elapsed() >= measurementLimitMs) break;
@@ -181,18 +295,18 @@ bool adjustOscilloscopeAutoPeriod(IScopeAutoPeriod *scope, QAtomicInt &stop, QSt
                 break;
             }
             QThread::msleep(static_cast<unsigned long>(qMin<qint64>(50, qMax<qint64>(0, measurementLimitMs - measurement.elapsed()))));
-        } while (measurement.elapsed() < measurementLimitMs);
-        if (log) log(QString("Auto Period: PERIOD wait %1; %2; elapsed=%3 ms; limit=%4 ms; last=%5 s")
+        }
+        if (triggerConfigured && log) log(QString("Auto Period: PERIOD wait %1; %2; elapsed=%3 ms; limit=%4 ms; last=%5 s")
             .arg(measurementReady ? "ready" : positive(period) ? "expired (not stable within deadline)" : "expired (NA)", progress())
             .arg(measurement.elapsed()).arg(measurementLimitMs).arg(positive(period) ? number(period) : "NA"));
-        if (!ready() || !session->readTimeScale(scale, error))
-            return false;
-        if (!positive(scale))
-        {
-            error = "Auto Period: invalid time scale";
-            return false;
+        PeriodScales measured;
+        if (!ready() || !measured.read(*scope,*session,error) || !ready()) return false;
+        if (!startScales.matches(measured)) {
+            if (log) log("Auto Period: scale changed during measurement; discarding record");
+            discardCalibration();
+            continue;
         }
-        const double cycles = scale * divisions / period;
+        const double cycles = measurementReady ? scale * divisions / period : 0;
         if (measurementReady)
         {
             stableCaptures = stableCaptures > 0 && agrees(period, stablePeriod) ? stableCaptures + 1 : 1;
@@ -269,8 +383,7 @@ bool adjustOscilloscopeAutoPeriod(IScopeAutoPeriod *scope, QAtomicInt &stop, QSt
                         .arg(number(target), number(actual), progress());
             return false;
         }
-        stableCaptures = 0;
-        inWindowCaptures = 0;
+        discardCalibration();
     }
     if (!success)
         error = "Auto Period: could not verify stable PERIOD and 3-8 cycles (NA); " + progress();

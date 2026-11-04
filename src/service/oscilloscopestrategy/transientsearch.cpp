@@ -435,7 +435,8 @@ DirectionSearch::Probe DirectionSearch::processBaseline(AcquisitionResult status
         // Rescaling invalidates the record for later measurement, not the pre-short
         // threshold it already excluded. Only use extrema saved before scale writes.
         baselineFloor = std::max(baselineFloor, candidate);
-        if (!extremum.clipped) baselineFloor = std::max(baselineFloor, direction * extremum.value);
+        if (!extremum.clipped && valid(extremum.value))
+            baselineFloor = std::max(baselineFloor, direction * extremum.value);
         excludedFloorKnown = true;
         run.stopScope("Baseline STOP");
         run.log("Baseline trigger excluded from event results");

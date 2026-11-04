@@ -16,7 +16,6 @@ struct GroupState : State {
     QMap<int, int> earlyByLoad;
     bool falling = false;
     double triggerScale = 1;
-    int scaleRestores = 0;
     QMap<int, int> scaleExpansions;
     QMap<QString, double> excludedLevels;
     int referenceAcquisitions = 0;
@@ -24,8 +23,8 @@ struct GroupState : State {
 class GroupScope : public Scope {
 public:
     explicit GroupScope(GroupState &state) : Scope(state), g(state) {}
-    bool beginAutoReference(int &budget,QString &) override {budget=10000;return beginSingleAcquisition();}
-    ScopeReferenceStatus pollAutoReference(QString &state,QString &) override {
+    bool beginReferenceRecord(ScopeTriggerMode, int &budget,QString &) override {budget=10000;return beginSingleAcquisition();}
+    ScopeReferenceStatus pollReferenceRecord(QString &state,QString &) override {
         state="fake group AUTO reference";
         return acquisitionState()==ScopeAcquisitionState::Completed?ScopeReferenceStatus::Completed:ScopeReferenceStatus::Pending;
     }
@@ -43,10 +42,10 @@ public:
     }
     double getChannelScale(int) override { return g.triggerScale; }
     bool setVerticalScale(int ch, double value, QString&) override {
-        const bool restoring = value == 1 && !g.armed && !g.inputOn && !g.dcOn;
-        require(ch == 1 && (g.early || restoring) && g.mode == "pre_short_rescale", "Group unexpected scale change");
+        require(ch == 1 && g.early && g.mode == "pre_short_rescale" && value == g.triggerScale * 2,
+                "Group rewrote scale outside clipping recovery");
         g.triggerScale = value;
-        if (restoring) ++g.scaleRestores; else ++g.scaleExpansions[g.current];
+        ++g.scaleExpansions[g.current];
         g.trace << QString("scale %1").arg(value); return true;
     }
     double getTriggerLevel() override { return g.level; }
@@ -514,10 +513,8 @@ int main(int argc, char **argv)
                     require(noisyGroup.earlyByLoad.value(0) == recordsPerLoad && noisyGroup.earlyByLoad.value(2) == recordsPerLoad &&
                             noisyGroup.earlyByLoad == noisySingles.earlyByLoad, "Group shared a pre-short floor across loads/directions");
                     if (noise == "pre_short_rescale") {
-                        // Scale restoration belongs to each row attempt. Group shares scale
-                        // across members; equivalent Singles restore after each row.
-                        require(noisyGroup.scaleRestores == 1 && noisySingles.scaleRestores == 2 &&
-                                noisyGroup.triggerScale == 1 && noisySingles.triggerScale == 1 &&
+                        // Group members and separate rows retain all four clipping expansions.
+                        require(noisyGroup.triggerScale == 16 && noisySingles.triggerScale == 16 &&
                                 noisyGroup.scaleExpansions.value(0) == 2 && noisyGroup.scaleExpansions.value(2) == 2 &&
                                 noisyGroup.scaleExpansions == noisySingles.scaleExpansions, "Group scale lifecycle changed");
                     } else require(noisyGroup.trace == noisySingles.trace, "Group pre-short trace differs from Singles");

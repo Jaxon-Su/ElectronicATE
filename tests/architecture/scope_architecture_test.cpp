@@ -84,6 +84,10 @@ void driverContract()
         "*ESR?", "ACQuire:STATE RUN", "*ESR?"};
     require(transport.writes == expected, "real SCPI sequence or CH2 scale-derived level changed");
     transport.writes.clear();
+    require(scope->prepareSteadyAcquisition(stop, error, false, true), "Auto Period startup failed");
+    require(!transport.writes.contains("TRIGger:A:EDGE:SLOpe RISE") && !transport.writes.contains("TRIGger:A:LEVel:CH2 0.1"),
+            "Auto Period startup overwrote user's edge or level");
+    transport.writes.clear();
     require(scope->prepareSteadyAcquisition(stop, error, false), "Capture startup configuration failed");
     require(transport.writes.contains("ACQuire:STATE STOP") &&
                 transport.writes.indexOf("ACQuire:STATE STOP") < transport.writes.indexOf("TRIGger:A:MODe AUTO") &&
@@ -243,23 +247,23 @@ void referenceDriverContract()
     transport.responses["TRIGger:STATE?"] = "AUTO";
     transport.responses["ACQuire:NUMACq?"] = "0";
     QString error, state; int budget = 0;
-    require(scope->beginAutoReference(budget,error), qPrintable(error));
+    require(scope->beginReferenceRecord(ScopeTriggerMode::Auto, budget,error), qPrintable(error));
     require(budget == 10000 && transport.writes.contains("ACQuire:STOPAfter RUNSTop") &&
             !transport.writes.contains("ACQuire:STOPAfter SEQuence"), "DC reference still depends on Single");
     transport.writes.clear();
-    require(scope->pollAutoReference(state,error) == ScopeReferenceStatus::Pending &&
+    require(scope->pollReferenceRecord(state,error) == ScopeReferenceStatus::Pending &&
             !transport.writes.contains("ACQuire:STATE STOP"), "empty acquisition became a reference");
     transport.responses["ACQuire:NUMACq?"] = "1";
     transport.queued["ACQuire:STATE?"] = {"1","0"};
-    require(scope->pollAutoReference(state,error) == ScopeReferenceStatus::Completed &&
+    require(scope->pollReferenceRecord(state,error) == ScopeReferenceStatus::Completed &&
             transport.writes.contains("ACQuire:STATE STOP"), "fresh AUTO record was not frozen");
     require(state.contains("count=1") && state.contains("AUTO"), "reference diagnostics lost actual state");
     transport.responses["TRIGger:A:MODe?"] = "NORMAL";
-    require(!scope->beginAutoReference(budget,error) && error.contains("AUTO"), "wrong actual trigger mode accepted");
+    require(!scope->beginReferenceRecord(ScopeTriggerMode::Auto, budget,error) && error.contains("AUTO"), "wrong actual trigger mode accepted");
     transport.responses["TRIGger:A:MODe?"] = "AUTO";
     transport.responses["HORizontal:SCAle?"] = "3";
     transport.writes.clear();
-    require(!scope->beginAutoReference(budget,error) && !transport.writes.contains("ACQuire:STATE RUN"),
+    require(!scope->beginReferenceRecord(ScopeTriggerMode::Auto, budget,error) && !transport.writes.contains("ACQuire:STATE RUN"),
             "excessive reference window started without a bounded budget");
 
     auto start = [&] {
@@ -271,46 +275,62 @@ void referenceDriverContract()
         transport.responses["ACQuire:STATE?"] = "1";
         transport.responses["TRIGger:STATE?"] = "AUTO";
         transport.responses["ACQuire:NUMACq?"] = "0";
-        require(scope->beginAutoReference(budget,error), "reference restart failed");
+        require(scope->beginReferenceRecord(ScopeTriggerMode::Auto, budget,error), "reference restart failed");
     };
     for (const QByteArray bad : {QByteArray("-1"),QByteArray("1.5"),QByteArray("bad")}) {
         start(); transport.responses["ACQuire:NUMACq?"] = bad;
-        require(scope->pollAutoReference(state,error)==ScopeReferenceStatus::Error && error.contains("count"),
+        require(scope->pollReferenceRecord(state,error)==ScopeReferenceStatus::Error && error.contains("count"),
                 "invalid acquisition count accepted");
     }
     start(); transport.responses["ACQuire:STATE?"] = "0";
-    require(scope->pollAutoReference(state,error)==ScopeReferenceStatus::Error && error.contains("without a new"),
+    require(scope->pollReferenceRecord(state,error)==ScopeReferenceStatus::Error && error.contains("without a new"),
             "manual STOP with zero records became a reference");
     for (const QString key : {QString("TRIGger:A:MODe?"),QString("ACQuire:STOPAfter?")}) {
         start(); transport.responses[key] = key.contains("STOPAfter") ? "SEQUENCE" : "NORMAL";
-        require(scope->pollAutoReference(state,error)==ScopeReferenceStatus::Error && error.contains("mismatch"),
+        require(scope->pollReferenceRecord(state,error)==ScopeReferenceStatus::Error && error.contains("mismatch"),
                 "changed front-panel mode accepted while waiting");
     }
     start(); transport.failWrite = "ACQuire:NUMACq?";
-    require(scope->pollAutoReference(state,error)==ScopeReferenceStatus::Error && !error.isEmpty(),
+    require(scope->pollReferenceRecord(state,error)==ScopeReferenceStatus::Error && !error.isEmpty(),
             "counter transport error was hidden");
     start(); transport.responses["ACQuire:NUMACq?"] = "1"; transport.failWrite = "ACQuire:STATE STOP";
-    require(scope->pollAutoReference(state,error)==ScopeReferenceStatus::Error && !error.isEmpty(),
+    require(scope->pollReferenceRecord(state,error)==ScopeReferenceStatus::Error && !error.isEmpty(),
             "failed freeze exposed a running record");
     start(); transport.queued["ACQuire:NUMACq?"] = {"2","1"};
     transport.queued["ACQuire:STATE?"] = {"1","0"};
-    require(scope->pollAutoReference(state,error)==ScopeReferenceStatus::Error && error.contains("counter reset"),
+    require(scope->pollReferenceRecord(state,error)==ScopeReferenceStatus::Error && error.contains("counter reset"),
             "counter rollback during STOP accepted");
     start(); transport.responses["ACQuire:MODe?"] = "AVERAGE";
     transport.responses["ACQuire:NUMAVg?"] = "4";
-    require(scope->beginAutoReference(budget,error), "averaged reference setup failed");
+    require(scope->beginReferenceRecord(ScopeTriggerMode::Auto, budget,error), "averaged reference setup failed");
     transport.responses["ACQuire:NUMACq?"] = "3"; transport.writes.clear();
-    require(scope->pollAutoReference(state,error)==ScopeReferenceStatus::Pending &&
+    require(scope->pollReferenceRecord(state,error)==ScopeReferenceStatus::Pending &&
             !transport.writes.contains("ACQuire:STATE STOP"), "incomplete averaging was frozen");
     transport.responses["ACQuire:NUMACq?"] = "4"; transport.queued["ACQuire:STATE?"] = {"1","0"};
-    require(scope->pollAutoReference(state,error)==ScopeReferenceStatus::Completed,
+    require(scope->pollReferenceRecord(state,error)==ScopeReferenceStatus::Completed,
             "complete averaging was not frozen");
+    transport.responses["TRIGger:A:MODe?"]="NORMAL";
+    transport.responses["TRIGger:STATE?"]="READY";
+    transport.queued["ACQuire:STATE?"]={"1","0"};
+    transport.writes.clear();
+    require(scope->beginReferenceRecord(ScopeTriggerMode::Normal,budget,error) &&
+            transport.writes.contains("TRIGger:A:MODe NORMAL") && !transport.writes.contains("TRIGger:A:MODe AUTO") &&
+            scope->pollReferenceRecord(state,error)==ScopeReferenceStatus::Completed,
+            "period record was not frozen using NORMAL acquisition");
+    require(scope->beginReferenceRecord(ScopeTriggerMode::Normal,budget,error),"NORMAL restart failed");
+    transport.responses["TRIGger:A:MODe?"]="AUTO";
+    require(scope->pollReferenceRecord(state,error)==ScopeReferenceStatus::Error,"AUTO fallback counted as a period record");
+    transport.responses["TRIGger:A:MODe?"]="NORMAL";
+    transport.responses["ACQuire:NUMACq?"]="invalid";
+    require(scope->pollReferenceRecord(state,error)==ScopeReferenceStatus::Error && error.contains("NORMAL reference acquisition count"),
+            "triggered record failure misidentified as AUTO");
 }
 
 void periodDriverContract()
 {
     ScriptedTransport transport;
     transport.responses = {{"HORizontal:DIVisions?", "10"}, {"ACQuire:STATE?", "1"},
+        {"TRIGger:A:TYPe?","EDGE"},{"TRIGger:A:EDGE:SLOpe?","FALL"},{"TRIGger:A:LEVel:CH2?","2"},
         {"ACQuire:STOPAfter?", "RUNSTOP"}, {"TRIGger:A:MODe?", "NORMAL"}, {"MEASUrement:LIST?", ":MEASUREMENT:LIST MEAS1,MEAS3"},
         {"HORizontal:SCAle?", "0.02"}, {"MEASUrement:MEAS2:RESUlts:CURRentacq:MEAN?", "0.02"}};
     std::unique_ptr<Oscilloscope> scope(OscilloscopeFactory::createOscilloscope("MSO44B", &transport));
@@ -323,7 +343,7 @@ void periodDriverContract()
     require(session->prepareRecord(error) && session->readPeriod(period,error) && period==.02,
             "PERIOD record commands failed");
     require(session->setTimeScale(.01,error) && session->restore(true,error), "PERIOD restore failed");
-    QStringList expected{"TRIGger:A:EDGE:SOUrce?", "DISplay:GLObal:CH2:STATE?", "HORizontal:DIVisions?",
+    QStringList expected{"TRIGger:A:EDGE:SOUrce?", "TRIGger:A:TYPe?", "TRIGger:A:EDGE:SLOpe?", "TRIGger:A:LEVel:CH2?", "DISplay:GLObal:CH2:STATE?", "HORizontal:DIVisions?",
         "ACQuire:STATE?", "ACQuire:STOPAfter?", "TRIGger:A:MODe?", "MEASUrement:LIST?", "HORizontal:SCAle?"};
     auto checked=[&](const QString &command){ expected << "*ESR?" << command << "*ESR?"; };
     checked("ACQuire:STATE STOP"); checked("MEASUrement:ADDNew \"MEAS2\"");

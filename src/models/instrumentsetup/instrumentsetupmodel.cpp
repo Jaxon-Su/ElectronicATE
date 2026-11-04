@@ -1,10 +1,27 @@
 #include "instrumentsetupmodel.h"
 #include "channelnumberpolicy.h"
 #include "chroma6310frame.h"
+#include "chroma63600frame.h"
 #include <QFile>
 #include <QDomDocument>
 #include <QDebug>
 #include <QSet>
+
+namespace {
+QString frameMappingError(const InstrumentSetupConfig &config)
+{
+    for (const auto &load : config.instruments) {
+        if (!load.enabled || load.type != "Load" || !Chroma63600Frame::lastChannel(load.modelName) ||
+            load.getResourceString().isEmpty() || load.channelNumbers.isEmpty()) continue;
+        for (int slot = 0; slot < load.channels.size(); ++slot) {
+            if (load.channels[slot].index <= 0 || load.channels[slot].subModel.isEmpty()) continue;
+            const auto error = Chroma63600Frame::mappingError(config, load, slot);
+            if (!error.isEmpty()) return error;
+        }
+    }
+    return {};
+}
+}
 
 InstrumentSetupModel::InstrumentSetupModel(QObject* parent) : QObject(parent)
 {
@@ -47,6 +64,11 @@ bool InstrumentSetupModel::loadBaseXml(const QString& fileName)
 
 void InstrumentSetupModel::writeXml(QXmlStreamWriter& writer) const
 {
+    const auto error = frameMappingError(m_config);
+    if (!error.isEmpty()) {
+        writer.raiseError(error);
+        return;
+    }
     writer.writeStartElement("InstrumentSetup");
     // Older applications interpret physical CH by list position. Prevent them from
     // loading a numbered layout as if the added CH6/8 were the old CH7/9.
@@ -67,6 +89,8 @@ QList<int> InstrumentSetupModel::catalogChannels(bool legacy) const
         auto numbers = ChannelNumberPolicy::parse(it.value());
         if (legacy && Chroma6310Frame::isFrame(it.key()))
             numbers.intersect(QSet<int>{1, 3, 5, 7});
+        if (legacy && Chroma63600Frame::lastChannel(it.key()) && it.key() != "63601-5")
+            numbers.intersect(QSet<int>{1, 3, 5, 7, 9}); // Unnumbered XML predates the even CH columns.
         all.unite(numbers);
     }
     return ChannelNumberPolicy::sorted(all);
@@ -149,6 +173,11 @@ void InstrumentSetupModel::loadXml(QXmlStreamReader& reader, const InstrumentSet
                 return;
             }
         }
+    }
+    const auto error = frameMappingError(config);
+    if (!error.isEmpty()) {
+        reader.raiseError(error);
+        return;
     }
     for (const auto& instrument : config.instruments) {
         if (instrument.type != "InputDCSource")

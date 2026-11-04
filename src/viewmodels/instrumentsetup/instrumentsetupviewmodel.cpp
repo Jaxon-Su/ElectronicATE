@@ -21,7 +21,8 @@ QStringList InstrumentSetupViewModel::subModels(const QString& modelName, int ch
     QStringList choices;
     for (const auto &module : m_model->getSubModelMap().value(modelName)) {
         if (!Chroma63600Frame::allows(modelName, channel, module)) continue;
-        if (modelName == "63601-5" && channel == 10 && !installed.value(9).isEmpty() && installed.value(9) != module) continue;
+        if (Chroma63600Frame::lastChannel(modelName) && channel % 2 == 0 &&
+            !installed.value(channel - 1).isEmpty() && installed.value(channel - 1) != module) continue;
         if (Chroma6310Frame::isFrame(modelName)) {
             if (!Chroma6310Frame::allows(modelName, channel, module)) continue;
             bool fits = true;
@@ -195,6 +196,16 @@ void InstrumentSetupViewModel::validateXml(QXmlStreamReader& reader) const
 {
     InstrumentSetupModel candidate;
     candidate.loadXml(reader, m_model);
+}
+
+std::function<void()> InstrumentSetupViewModel::captureXmlRollback()
+{
+    // A draft with conflicting mappings can be replaced by a valid file even
+    // though saving that draft is forbidden. Restore the exact draft on failure.
+    return [this, config = currentConfig()] {
+        m_model->setConfig(config);
+        onConfigLoaded(config);
+    };
 }
 
 void InstrumentSetupViewModel::publishXmlLoaded()

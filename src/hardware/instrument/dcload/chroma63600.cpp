@@ -1,5 +1,6 @@
 
 #include "chroma63600.h"
+#include "chromacurrentrating.h"
 #include "chromaload63600spec.h"
 #include <QDebug>
 #include <QSet>
@@ -85,9 +86,10 @@ void Chroma63600::setStaticCurrent(const StaticCurrentParam& param)
     if (param.levels.isEmpty())
         return;
 
-    double maxCurrent = *std::max_element(param.levels.begin(), param.levels.end());
+    double maxCurrent = peakLoadCurrent(param.levels, param.enabledMask, getNumSegments());
     double voltage = param.expectedVoltage;
 
+    validateCurrent63600(m_model, maxCurrent, voltage, param.loadMode, false);
     QString modeStr = selectOptimalLoadMode63600(m_model, maxCurrent, voltage);
     const QString requestedMode = param.loadMode.trimmed().toUpper();
     if (requestedMode == "NO SETTING") {
@@ -123,9 +125,10 @@ void Chroma63600::setDynamicCurrent(const DynamicCurrentParam& param)
     if (param.levels.isEmpty())
         return;
 
-    double maxCurrent = *std::max_element(param.levels.begin(), param.levels.end());
+    double maxCurrent = peakLoadCurrent(param.levels, param.enabledMask, getNumSegments());
     double voltage = param.expectedVoltage;
 
+    validateCurrent63600(m_model, maxCurrent, voltage, param.loadMode, true);
     QString baseMode = selectOptimalLoadMode63600(m_model, maxCurrent, voltage);
 
     QString modeStr;

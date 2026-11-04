@@ -31,6 +31,7 @@ class InstrumentSetupViewModel : public QObject, public IXmlSerializable {
     void publishXmlLoaded() override;
     void validateXml(QXmlStreamReader& reader) const override;
     void loadXml(QXmlStreamReader& reader) override;
+    std::function<void()> captureXmlRollback() override;
 
   public slots:
     void setLoadOutputs(int value);

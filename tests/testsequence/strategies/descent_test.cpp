@@ -65,7 +65,7 @@ public:
     bool setVerticalScale(int channel,double scale,QString &e) override {
         require(!shortOn && (!shortMode || !powerOn || autoRecord),"scale before safe exit or powered AUTO preflight");
         trace<<QString("scale %1 %2").arg(channel).arg(scale);
-        if(scaleFault=="write"||(scaleFault=="restore"&&scale==10)){e="scale write failure";return false;}
+        if(scaleFault=="write"||(scaleFault=="reject-old-scale"&&scale==10)){e="scale write failure";return false;}
         scaleWritten=true;
         if(scaleFault!="mismatch")scales[channel]=scale;
         if(onScale)onScale();
@@ -84,10 +84,10 @@ public:
     bool setChannelTriggerLevel(int channel,double level,QString &) override {require(channel==4,"wrong trigger source");levels<<level;return true;}
     bool stopAcquisition(QString &e) override {armed=false;trace<<"stop";if((event&&!autoRecord&&readinessFault=="cleanup-stop")||(displayWritten&&displayFault=="cleanup")){e="cleanup stop failed";return false;}return true;}
     void stop() override {armed=false;}
-    bool beginAutoReference(int &budget, QString &e) override {
+    bool beginReferenceRecord(ScopeTriggerMode, int &budget, QString &e) override {
         budget=20;if(beginSingleAcquisition())return true;e="reference arm failed";return false;
     }
-    ScopeReferenceStatus pollAutoReference(QString &state, QString &e) override {
+    ScopeReferenceStatus pollReferenceRecord(QString &state, QString &e) override {
         const auto value=acquisitionState();state="mode=AUTO";
         if(value==ScopeAcquisitionState::Invalid){e="reference communication error";return ScopeReferenceStatus::Error;}
         return value==ScopeAcquisitionState::Completed?ScopeReferenceStatus::Completed:ScopeReferenceStatus::Pending;
@@ -614,8 +614,8 @@ void serviceCase(const QString &mode, bool triggerEnabled = true, bool allHidden
         const bool shortReport=mode=="short_continue_service"||mode=="short_miss_service";
         const bool levelReport=mode=="levels"||mode=="pretrigger_service"||shortReport;
         if(levelReport&&sh!=shortReport)continue;
-        const bool restoreTest=mode.startsWith("restore_");
-        if(restoreTest && sh!=shortOnly)continue;
+        const bool retainTest=mode.startsWith("retain_");
+        if(retainTest && sh!=shortOnly)continue;
         if(sh&&allHidden)continue;
         if(mode=="service_off"&&!sh)continue;
         Scope scope;scope.shortMode=sh;scope.offFailure=mode=="service_off";
@@ -623,10 +623,10 @@ void serviceCase(const QString &mode, bool triggerEnabled = true, bool allHidden
             scope.early=true;scope.earlyArm=shortReport?2:3;scope.earlyState=ScopeTriggerState::Saving;
         }
         if(mode=="short_miss_service")scope.missArm=2;
-        if(restoreTest) {
+        if(retainTest) {
             scope.referenceRange={{1,20}};
-            if(mode=="restore_fail")scope.readError=true;
-            if(mode=="restore_reject")scope.scaleFault="restore";
+            if(mode=="retain_fail")scope.readError=true;
+            if(mode=="retain_no_writeback")scope.scaleFault="reject-old-scale";
         }
         scope.allHidden=allHidden;
         TestSequenceExecutionContext context;context.scope=&scope;
@@ -644,7 +644,7 @@ void serviceCase(const QString &mode, bool triggerEnabled = true, bool allHidden
         if(levelReport)task.settings["trigger_levels"]=QVariantList{10.0,9.0,8.0,7.0,6.0};
         if(mode=="pretrigger_service"||shortReport)task.settings["trials_per_level"]=2;
         if(shortReport)task.settings["trigger_levels"]=QVariantList{10.0,10.0,5.0};
-        if(restoreTest)task.settings["trigger_levels"]=QVariantList{10.0};
+        if(retainTest)task.settings["trigger_levels"]=QVariantList{10.0};
         if(!sh)task.settings["trigger_channel_enabled"]=triggerEnabled;
         if(sh){task.settings["relay_index"]=0;task.settings["discharge_index"]=1;}
         TestRunDependencies deps;int creations=0;
@@ -668,15 +668,15 @@ void serviceCase(const QString &mode, bool triggerEnabled = true, bool allHidden
             require(bool(algorithm),"Service factory missing");algorithm->setCaptureObserver(r.capture);
             return std::make_unique<ScopeMeasurementStrategy>(std::move(algorithm),r.scope);};
         TestRunService service(deps);QVector<TestSequenceResultRecord> records;bool held=false;
-        if(mode=="restore_stop")scope.onScale=[&]{service.stop();};
+        if(mode=="retain_stop")scope.onScale=[&]{service.stop();};
         QObject::connect(&service,&TestRunService::logMessage,[](const QString &message){std::cerr<<message.toStdString()<<'\n';});
         QObject::connect(&service,&TestRunService::resultRecordsReady,[&](const auto&r){records=r;});
         QObject::connect(&service,&TestRunService::outputsUncertain,[&](const auto&,const auto&,const ShortCircuitProtection&p){held=p.active()&&p.shortMayBeOn;});
         QVector<TaskPayload> tasks{task};
         if(mode=="preflight") {auto invalid=task;invalid.settings["trigger_levels"]=QVariantList{"5"};tasks<<invalid;}
         if(mode=="service_off") {tasks[0].retry=2;tasks<<task;}
-        if(mode=="restore_success")tasks<<task;
-        if(mode=="restore_reject"){tasks[0].retry=2;tasks<<task;}
+        if(mode=="retain_success")tasks<<task;
+        if(mode=="retain_no_writeback"){tasks[0].retry=2;tasks<<task;}
         service.startTasks(tasks,context);
         if(levelReport) {
             const bool failed=mode=="pretrigger_service"||shortReport;
@@ -717,18 +717,17 @@ void serviceCase(const QString &mode, bool triggerEnabled = true, bool allHidden
             QFile input(path);require(input.open(QIODevice::ReadOnly),"cannot read Excel");
             QFile output(TestEvidence::path("descent/"+mode+".xlsx"));require(output.open(QIODevice::WriteOnly),"cannot save evidence");output.write(input.readAll());
         }
-        else if(restoreTest) {
-            require(!scope.powerOn&&!scope.shortOn,"restore before output cleanup");
-            require(scope.trace.indexOf("load off")<scope.trace.indexOf("scale 1 10"),"Scale restored before output cleanup");
-            require(scope.getChannelScale(2)==10&&scope.getChannelScale(3)==10&&scope.getChannelScale(4)==10,"restored untouched channel");
-            if(mode=="restore_reject")require(records.size()==2&&records[0].status=="Fail"&&records[1].status=="Skipped"&&creations==1&&
-                 scope.getChannelScale(1)==20&&records[0].error.contains("restore failed"),"restore failure lost/retried");
-            else {
-                require(scope.getChannelScale(1)==10,"original Scale not restored");
-                if(mode=="restore_success")require(records.size()==2&&records[0].status=="Pass"&&records[1].status=="Pass"&&
-                    scope.trace.count("scale 1 20")==2&&scope.trace.count("scale 1 10")==2,"next row did not begin at original scale");
-                else require(records.size()==1&&records[0].status==(mode=="restore_stop"?"Cancelled":"Fail"),"restore hid failure/Stop");
-            }
+        else if(retainTest) {
+            require(!scope.powerOn && !scope.shortOn && scope.trace.contains("load off"),"descent output cleanup missing");
+            require(scope.getChannelScale(1)==20 && scope.trace.count("scale 1 20")==1 &&
+                    !scope.trace.contains("scale 1 10"),"descent exit lost clipped channel adjustment");
+            require(scope.getChannelScale(2)==10 && scope.getChannelScale(3)==10 && scope.getChannelScale(4)==10,
+                    "descent changed an untouched channel");
+            if(mode=="retain_success" || mode=="retain_no_writeback")
+                require(records.size()==2 && records[0].status=="Pass" && records[1].status=="Pass" &&
+                        creations==2,"next descent row did not inherit retained scale");
+            else require(records.size()==1 && records[0].status==(mode=="retain_stop"?"Cancelled":"Fail"),
+                         "retaining scale masked failure/Stop");
         }
         else if(mode=="preflight")require(creations==0&&scope.trace.isEmpty()&&records.size()==2&&records[0].status=="Skipped"&&records[1].status=="Fail","bad later row allowed IO");
         else if(mode=="service_off")require(creations==1&&scope.arms==1&&scope.shortOn&&held&&records.size()==2&&records[0].status=="Fail"&&records[1].status=="Skipped","Service retried or bypassed short protection");
@@ -1014,11 +1013,11 @@ int main(int argc,char**argv){
         else if(mode=="pretrigger_faults")pretriggerFaultCases(argc>2?argv[2]:QString{});
         else if(mode=="short_recovery")shortClippingCase();
         else if(mode=="short_recovery_faults")clippingFaultCases(argc>2?argv[2]:QString{},true);
-        else if(mode=="short_recovery_service")for(const QString m:{"restore_success","restore_fail","restore_stop","restore_reject"})serviceCase(m,true,false,true);
+        else if(mode=="short_recovery_service")for(const QString m:{"retain_success","retain_fail","retain_stop","retain_no_writeback"})serviceCase(m,true,false,true);
         else if(mode=="recovery")clippingRecoveryCase();
         else if(mode=="recovery_faults")clippingFaultCases();
         else if(mode=="late_capture")clippingFaultCases(mode);
-        else if(mode=="recovery_service")for(const QString s:{"restore_success","restore_fail","restore_stop","restore_reject"})serviceCase(s,false);
+        else if(mode=="recovery_service")for(const QString s:{"retain_success","retain_fail","retain_stop","retain_no_writeback"})serviceCase(s,false);
         else if(mode=="single_wait")singleWaitCase();
         else if(mode=="ui"){uiCase();triggerEnableSettings();}else if(mode=="precision")precisionCase();else if(mode=="driver")driverCase();
         else if(mode=="levels"||mode=="pretrigger_service"||mode=="service"||mode=="preflight"||mode=="service_off"){

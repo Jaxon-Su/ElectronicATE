@@ -1,9 +1,25 @@
 #include "chroma6512_6520_6530.h"
 #include "acsourcefamily.h"
 #include <stdexcept>
+#include <QStringList>
 #include <QDebug>
 #include <algorithm>
 #include <cmath>
+
+namespace {
+template<typename Operation>
+QString stepError(const QString &step, Operation operation)
+{
+    try {
+        operation();
+        return {};
+    } catch (const std::exception &error) {
+        return step + ": " + QString::fromUtf8(error.what());
+    } catch (...) {
+        return step + ": unknown communication error";
+    }
+}
+}
 
 bool Chroma6512_6520_6530::readVoltageSetting(double &voltage, QString &error)
 {
@@ -37,23 +53,28 @@ QString Chroma6512_6520_6530::vendor() const
 //  Manual 6.6.2: OUTPut[:STATe] ON | OFF
 void Chroma6512_6520_6530::setPowerOn()
 {
-    // Relay 預設跟著 Power ON 一起動
-    sendCommandWithLog("ORELay ON", m_logTag);
-    sendCommandWithLog("OUTPut ON", m_logTag);
+    QString failure = stepError("ORELay ON", [&]{ sendCommandWithLog("ORELay ON", m_logTag); });
+    if (failure.isEmpty()) {
+        failure = stepError("OUTPut ON", [&] {
+            sendCommandWithLog("OUTPut ON", m_logTag);
+            if (!outputEnabled()) throw std::runtime_error("AC output did not turn on");
+        });
+    }
+    if (failure.isEmpty()) return;
+
+    const QString rollback = stepError("Rollback", [&]{ setPowerOff(); });
+    if (!rollback.isEmpty()) failure += "; " + rollback;
+    throw std::runtime_error(failure.toStdString());
 }
 
 void Chroma6512_6520_6530::setPowerOff()
 {
-    std::exception_ptr outputError;
-    try {
-        sendCommandWithLog("OUTPut OFF", m_logTag);
-    } catch (...) {
-        outputError = std::current_exception();
-    }
-    sendCommandWithLog("ORELay OFF", m_logTag);
-    requireOutputOff("OUTPut?");
-    if (outputError)
-        std::rethrow_exception(outputError);
+    QStringList failures;
+    for (const QString command : {"OUTPut OFF", "ORELay OFF"})
+        failures << stepError(command, [&]{ sendCommandWithLog(command, m_logTag); });
+    failures << stepError("OUTPut?", [&]{ requireOutputOff("OUTPut?"); });
+    failures.removeAll(QString{});
+    if (!failures.isEmpty()) throw std::runtime_error(failures.join("; ").toStdString());
 }
 
 //  SOURce: VOLTage 子系統

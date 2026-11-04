@@ -836,9 +836,9 @@ bool MSOSeries456::queryConfiguration(const QString& command, QString& response,
     return true;
 }
 
-bool MSOSeries456::prepareSteadyAcquisition(QAtomicInt &stop, QString &error, bool startContinuous)
+bool MSOSeries456::prepareSteadyAcquisition(QAtomicInt &stop, QString &error, bool startContinuous, bool preserveEdge)
 {
-    return prepareMsoSteadyAcquisition(*this, stop, error, startContinuous);
+    return prepareMsoSteadyAcquisition(*this, stop, error, startContinuous, preserveEdge);
 }
 
 std::unique_ptr<IScopePeriodSession> MSOSeries456::beginPeriodSession(IScopePeriodSession::Continue ready,

@@ -32,7 +32,8 @@ inline bool canShareFrame(int channel, const QString &module, int otherChannel, 
     return slot + slotWidth(module) <= otherSlot || otherSlot + slotWidth(otherModule) <= slot;
 }
 
-inline QString mappingError(const InstrumentSetupConfig &setup, const InstrumentConfig &load, int position)
+inline QString mappingError(const InstrumentSetupConfig &setup, const InstrumentConfig &load, int position,
+                            bool forShutdown = false)
 {
     if (!isFrame(load.modelName)) return {};
     const int channel = load.channelNumbers.value(position, -1);
@@ -48,7 +49,9 @@ inline QString mappingError(const InstrumentSetupConfig &setup, const Instrument
             if (setting.subModel.isEmpty()) continue;
             if (other.modelName != load.modelName)
                 return load.name + ": conflicting mainframe models at the same address";
-            if (!allows(other.modelName, peer, setting.subModel) ||
+            // An invalid assignment in another slot must not block OFF on this channel.
+            // Overlapping modules and ambiguous channel ownership still block it.
+            if ((!forShutdown && !allows(other.modelName, peer, setting.subModel)) ||
                 !canShareFrame(channel, module, peer, setting.subModel) ||
                 (peer == channel && setting.index > 0 && other.name != load.name))
                 return QString("%1 CH%2 conflicts with %3 CH%4 on the same mainframe")

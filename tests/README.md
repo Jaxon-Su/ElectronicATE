@@ -59,4 +59,4 @@ desktop、歷史診斷、coverage、SDK、私人波形、產物及維護文件�
 
 Turn on then short (descent) 的 `descent_short_continue*` 覆蓋提前觸發／MISS 後依序執行全部剩餘 Trials／Levels、致命錯誤中止，以及真 Service／Detail／Excel 的逐筆狀態與四值；沿用真策略與假儀器，不連接硬體。
 
-Issue #9 的垂直餘量回歸放在既有測試：`vertical_scale_calculation`（顯示位置、直線／一般波形、讀回與失敗）、`channel_state_startup`（真 Driver）、`steady_transition_settings`（Scale／Position 還原）、`test_sequence_gap_ready`（提前觸發與調整交界）。使用合成數據，不包含實機私人波形；CTest 外層數量不代表內部案例數。
+Issue #9 的 `vertical_scale_calculation` 驗證振幅占比、極性定位、雙向縮放與截波重試。`steady_transition_settings` 驗證 Group、Fail Retry、Pass／Fail／Stop 後保留實際 Scale／Position，以及下一個勾選餘量的 attempt 初始化。`descent_recovery_service` 與 `descent_short_recovery_service` 驗證兩種 descent 測後保留刻度。`channel_state_startup` 涵蓋 Driver 讀回，`test_sequence_gap_ready` 涵蓋提前觸發與範圍調整的交界。

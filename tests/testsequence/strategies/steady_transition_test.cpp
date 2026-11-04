@@ -124,19 +124,21 @@ static void verticalMarginLifecycle()
         class ScalingScope : public Scope {
         public:
             double scale=4;
-            int restores=0;
+            int oldScaleWrites=0;
             double position=-2;
-            int positionRestores=0;
-            bool readVerticalRange(int,ScopeVerticalRange &range,QString &) override {
+            int zeroWrites=0;
+            bool isChannelEnabled(int ch) override { return ch==1; }
+            bool readVerticalRange(int ch,ScopeVerticalRange &range,QString &) override {
+                require(ch==1,"queried disabled channel range");
                 range={scale,0,10,position,-8,8}; return true;
             }
             bool setVerticalPosition(int,double value,QString &) override {
-                if(value==-2) ++positionRestores;
+                if(value==0) ++zeroWrites;
                 position=value; return true;
             }
             double getChannelScale(int) override { return scale; }
             bool setVerticalScale(int, double value, QString &) override {
-                if (value==4) ++restores;
+                if (value==4) ++oldScaleWrites;
                 scale=value; return true;
             }
         } scope;
@@ -149,11 +151,14 @@ static void verticalMarginLifecycle()
         deps.autoPeriod=[&](IScopeMeasurement *,QAtomicInt &,QString &,const OscCaptureObserver &,const VerticalScaleOptions &options,const std::function<void(const QString&)>&) {
             require(options.margin==margin && bool(options.beforeChange),"Auto Period option missing");
             const bool firstMember=!group || measurements%2==0;
-            require(scope.scale==(firstMember?4:12),"Auto Period inherited wrong original scale");
-            const double target=firstMember?8:12;
+            require(scope.scale==(measurements==0?4:12),"Auto Period lost retained scope scale");
+            const double target=measurements==0?8:12;
             if (margin) {
                 require(bool(options.beforePositionChange),"Position snapshot missing from Auto Period");
-                require(scope.position==(firstMember?-2:2),"Auto Period inherited wrong Position");
+                require(options.history && options.history->value(1).clippedScale==(firstMember?0:3),
+                        "Auto Period did not receive the current attempt's fit history");
+                (*options.history)[1].clippedScale=3;
+                require(scope.position==(firstMember?0:2),"Auto Period inherited wrong Position");
                 options.beforePositionChange(1,scope.position,1); scope.position=1;
             }
             options.beforeChange(1,scope.scale,target); scope.scale=target; return true;
@@ -163,12 +168,15 @@ static void verticalMarginLifecycle()
             require(options.margin==margin && bool(options.beforeChange),"vertical option missing from runtime request");
             return std::make_unique<Strategy>([&,options] {
                 const bool firstMember=!group || measurements%2==0;
-                require(scope.scale==(firstMember?(autoPeriod?8:4):12),"new task inherited expanded scale, or Group shrank early");
+                require(scope.scale==(measurements==0?(autoPeriod?8:4):12),"new task lost previous scope scale");
                 options.beforeChange(1,scope.scale,12);
                 scope.scale=12; ++measurements;
                 if (margin) {
                     require(bool(options.beforePositionChange),"Position snapshot missing from strategy");
-                    require(scope.position==(autoPeriod?1:firstMember?-2:2),"Group position restored early or task not restored");
+                    require(options.history && options.history->value(1).clippedScale==(firstMember&&!autoPeriod?0:3),
+                            "strategy did not share fit history with Auto Period / Group member");
+                    (*options.history)[1].clippedScale=3;
+                    require(scope.position==(autoPeriod?1:firstMember?0:2),"Group position restored early or task not restored");
                     options.beforePositionChange(1,scope.position,2); scope.position=2;
                 }
                 MeasurementResult result; result.success=true; return result;
@@ -180,9 +188,9 @@ static void verticalMarginLifecycle()
         configured.settings["auto_period"]=autoPeriod;
         for (int run=0;run<2;++run) {
             runner.prepareRun(); runner.startTasks({configured,configured},c);
-            require(scope.scale==4 && scope.restores==2*(run+1),"task/Run did not restore original scale");
-            require(scope.position==-2 && scope.positionRestores==(margin?2*(run+1):0),
-                    "task/Run did not restore original Position or unselected modified Position");
+            require(scope.scale==12 && scope.oldScaleWrites==0,"task or Run rewrote the original scale");
+            require(scope.position==(margin?2:-2) && scope.zeroWrites==(margin?2*(run+1):0),
+                    "Position was lost on exit or initialized more than once per attempt");
         }
         require(measurements==(group?8:4),"lifecycle test skipped measurements");
     }
@@ -190,83 +198,122 @@ static void verticalMarginLifecycle()
 
 static void verticalMarginFailures()
 {
-    for (const QString mode : {"failure","stop","restore","stop_restore","auto_period_failure","position_only_failure","position_restore"}) {
-        class ScalingScope : public Scope {
+    for (bool stopDuringWrite : {false,true}) {
+        class PartialInit : public Scope {
         public:
-            QMap<int,double> scales{{1,4},{2,2}};
-            QMap<int,double> positions{{1,-2},{2,3}};
-            QVector<int> restores;
-            QVector<int> positionRestores;
-            bool reject=false, rejectPosition=false;
+            QVector<double> positions{0,-2,3};
+            QVector<int> zeroed;
+            std::function<void()> cancel;
+            int getTotalChannel() override { return 2; }
             bool readVerticalRange(int ch,ScopeVerticalRange &range,QString &) override {
-                range={scales[ch],0,10,positions[ch],-8,8}; return true;
+                range={4,0,10,positions[ch],-8,8}; return true;
             }
-            bool setVerticalPosition(int ch,double value,QString &error) override {
-                positionRestores<<ch;
-                if(rejectPosition && ch==1) {error="injected Position restore failure";return false;}
-                positions[ch]=value;return true;
-            }
-            double getChannelScale(int ch) override {return scales[ch];}
-            bool setVerticalScale(int ch,double value,QString &error) override {
-                restores<<ch;
-                if (reject && ch==1) {error="injected restore failure";return false;}
-                scales[ch]=value;return true;
+            bool setVerticalPosition(int ch,double value,QString &e) override {
+                positions[ch]=value; // Device can apply a write even if the response is lost.
+                if (value==0) zeroed << ch;
+                if (ch==2 && value==0) {
+                    if (cancel) cancel();
+                    else { e="initial Position rejected"; return false; }
+                }
+                return true;
             }
         } scope;
-        auto c=context();c.scope=&scope;
+        TestRunDependencies deps; deps.validateMeasurement=validateMeasurementConditions;
+        int starts=0;
+        deps.instruments.input=[&](const auto &,const auto &,InputAction a) {
+            if (a==InputAction::PowerOn) ++starts;
+            return InstrumentOperationResult{};
+        };
+        deps.instruments.dcGroup=[&](const auto &,const auto &,InputAction a) {
+            if (a==InputAction::PowerOn) ++starts;
+            return InstrumentOperationResult{};
+        };
+        deps.instruments.load=[](const auto &,const auto &,int,const auto &,auto,bool) {return InstrumentOperationResult{};};
+        deps.instruments.relay=[](const auto &,const auto &,int,RelayAction) {return InstrumentOperationResult{};};
+        deps.strategy=[&](const MeasurementStrategyRequest &) { ++starts; return std::unique_ptr<IMeasurementStrategy>{}; };
+        TestRunService runner(deps);
+        if (stopDuringWrite) scope.cancel=[&] {runner.stop();};
+        auto c=context(); c.scope=&scope;
+        QVector<TestSequenceResultRecord> records;
+        QObject::connect(&runner,&TestRunService::resultRecordsReady,[&](auto r){records=r;});
+        auto p=task("Turn off"); p.settings["vertical_margin"]=true;
+        runner.startTasks({p},c);
+        require(starts==0 && scope.zeroed==QVector<int>({1,2}) && records.size()==1 &&
+                records[0].status==(stopDuringWrite?"Cancelled":"Fail") &&
+                scope.positions==QVector<double>({0,0,0}),"partial initialization: "+records.value(0).error);
+    }
+    for (const QString mode : {"failure","stop","auto_period_failure","position_only_failure","stop_error"}) {
+        class ScalingScope : public Scope {
+        public:
+            double scale=4, position=-2;
+            int scaleWrites=0, resets=0, failedStops=0;
+            int stopsAfterMeasurement=0;
+            bool rejectStop=false;
+            bool isChannelEnabled(int ch) override { return ch==1; }
+            bool readVerticalRange(int,ScopeVerticalRange &r,QString &) override {
+                r={scale,0,10,position,-8,8}; return true;
+            }
+            bool setVerticalPosition(int,double v,QString &) override {
+                if (v==0) ++resets;
+                position=v; return true;
+            }
+            bool setVerticalScale(int,double v,QString &) override { ++scaleWrites; scale=v; return true; }
+            bool stopAcquisition(QString &e) override {
+                if (!rejectStop || ++stopsAfterMeasurement==1) return true;
+                ++failedStops; e="injected STOP failure"; return false;
+            }
+        } scope;
+        auto c=context(); c.scope=&scope;
         TestRunDependencies deps; deps.validateMeasurement=validateMeasurementConditions;
         deps.instruments.input=[](const auto &,const auto &,auto) {return InstrumentOperationResult{};};
         deps.instruments.dcGroup=[](const auto &,const auto &,auto) {return InstrumentOperationResult{};};
         deps.instruments.load=[](const auto &,const auto &,int,const auto &,auto,bool) {return InstrumentOperationResult{};};
-        int calls=0,periodCalls=0;
-        auto expand=[&](const VerticalScaleOptions &options) {
-            require(scope.scales[1]==4 && scope.scales[2]==2,"retry inherited expansion");
-            require(scope.positions[1]==-2 && scope.positions[2]==3,"retry inherited automatic Position");
-            options.beforePositionChange(1,-2,1);scope.positions[1]=1;
-            options.beforePositionChange(2,3,-1);scope.positions[2]=-1;
-            if(mode!="position_only_failure") {
-                options.beforeChange(1,4,8);scope.scales[1]=8;
-                options.beforeChange(2,2,4);scope.scales[2]=4;
+        int changes=0, periods=0;
+        const bool positionOnly=mode=="position_only_failure";
+        auto adjust=[&](const VerticalScaleOptions &options) {
+            require(scope.scale==(changes && !positionOnly ? 8 : 4) && scope.position==0,
+                    "attempt did not start from retained scale / initial Position zero");
+            if (!positionOnly) {
+                options.beforeChange(1,scope.scale,8);
+                scope.scale=8;
             }
+            options.beforePositionChange(1,scope.position,1);
+            scope.position=1;
+            ++changes;
         };
-        TestRunService *service=nullptr;
-        deps.autoPeriod=[&](IScopeMeasurement *,QAtomicInt &,QString &error,const OscCaptureObserver &,const VerticalScaleOptions &options,const std::function<void(const QString&)>&) {
-            if (++periodCalls==1) {expand(options);error="injected Auto Period failure";return false;}
+        deps.autoPeriod=[&](IScopeMeasurement *,QAtomicInt &,QString &e,const OscCaptureObserver &,
+                           const VerticalScaleOptions &options,const std::function<void(const QString&)>&) {
+            if (++periods==1) { adjust(options); e="injected Auto Period failure"; return false; }
             return true;
         };
+        TestRunService *service=nullptr;
         deps.strategy=[&](const MeasurementStrategyRequest &request) {
             const auto options=std::get<ScopeMeasurementRequest>(request).context.verticalScale;
             return std::make_unique<Strategy>([&,options] {
-                ++calls;expand(options);
-                if (mode.contains("restore")) {
-                    scope.reject=mode!="position_restore"; scope.rejectPosition=true;
-                }
-                if (mode.startsWith("stop")) service->stop();
-                if ((mode=="failure" || mode=="position_only_failure") && calls==1)
-                    throw std::runtime_error("injected failure after partial vertical write");
-                MeasurementResult result;result.success=true;return result;
+                adjust(options);
+                if (mode=="stop") service->stop();
+                if (mode=="stop_error") scope.rejectStop=true;
+                if ((mode=="failure" || positionOnly) && changes==1)
+                    throw std::runtime_error("injected failure after vertical changes");
+                MeasurementResult result; result.success=true; return result;
             });
         };
-        TestRunService runner(deps);service=&runner;
+        TestRunService runner(deps); service=&runner;
         QVector<TestSequenceResultRecord> records;
         QObject::connect(&runner,&TestRunService::resultRecordsReady,[&](auto r) {records=r;});
-        auto configured=task("Static Test");configured.settings["vertical_margin"]=true;configured.retry=1;
-        configured.settings["auto_period"]=mode=="auto_period_failure";
-        runner.startTasks({configured,configured},c);
-        if (mode.contains("restore")) {
-            require(calls==1 && scope.restores==QVector<int>({1,2}) && scope.scales[2]==2 && records.size()==2 &&
-                    scope.positionRestores==QVector<int>({1,2}) && scope.positions[2]==3 &&
-                    records[0].error.contains("restore failed") && records[1].status=="Skipped",
-                    "restore failure skipped healthy channel or continued/retried");
-        } else if (mode=="stop") {
-            require(calls==1 && scope.scales[1]==4 && scope.scales[2]==2 && records[0].status=="Cancelled" &&
-                    scope.positions[1]==-2 && scope.positions[2]==3 && scope.positionRestores.size()==2 &&
-                    records[1].status=="Skipped","Stop skipped scale cleanup or continued");
+        auto p=task("Static Test"); p.settings["vertical_margin"]=true; p.retry=1;
+        p.settings["auto_period"]=mode=="auto_period_failure";
+        runner.startTasks({p,p},c);
+        require(scope.position==1 && scope.scale==(positionOnly?4:8) && scope.scaleWrites==0 &&
+                scope.resets==changes,"exit rewrote vertical settings");
+        if (mode=="stop" || mode=="stop_error") {
+            require(records.size()==2 && records[1].status=="Skipped" && changes==1 &&
+                    records[0].status==(mode=="stop"?"Cancelled":"Fail"),"Stop / STOP failure allowed retry or next row");
+            if (mode=="stop_error") require(scope.failedStops==1 && records[0].error.contains("Scope STOP after vertical adjustment"),
+                                            "hidden final STOP failure");
         } else {
-            require(records.size()==3 && records[0].status=="Fail" && records[1].status=="Pass" && records[2].status=="Pass" &&
-                    scope.scales[1]==4 && scope.scales[2]==2 && scope.restores.size()==(mode=="position_only_failure"?0:6) &&
-                    scope.positions[1]==-2 && scope.positions[2]==3 && scope.positionRestores.size()==6,
-                    "failed attempt/Auto Period lost restore before retry");
+            require(records.size()==3 && records[0].status=="Fail" && records[1].status=="Pass" &&
+                    records[2].status=="Pass" && changes==3,"failed attempt did not retain settings through retry");
         }
     }
 }

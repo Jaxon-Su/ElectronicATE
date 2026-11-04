@@ -130,7 +130,8 @@ public:
         source = channel; s.trace << QString("source CH%1").arg(channel); return true;
     }
     int triggerChannel() override { return source; }
-    bool prepareSteadyAcquisition(QAtomicInt&, QString&, bool startContinuous) override {
+    bool prepareSteadyAcquisition(QAtomicInt&, QString&, bool startContinuous, bool preserveEdge) override {
+        require(preserveEdge == (s.mode != "no_period"), "Auto Period edge not preserved on group startup");
         require(startContinuous != s.mode.startsWith("capture"), "Capture preparation started continuous acquisition");
         require(s.trace.last() == "settled", "startup before settle");
         ++s.starts; s.trace << "startup"; return true;

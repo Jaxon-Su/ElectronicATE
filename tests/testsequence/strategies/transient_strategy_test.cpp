@@ -36,9 +36,9 @@ void turnOffDiagnosticBoundaries() {
         class DiagnosticScope : public Scope {
         public:
             bool pending=false;
-            ScopeReferenceStatus pollAutoReference(QString& state,QString& error) override {
+            ScopeReferenceStatus pollReferenceRecord(QString& state,QString& error) override {
                 if(pending){state="mode=AUTO acquisition=RUN count=0";return ScopeReferenceStatus::Pending;}
-                return Scope::pollAutoReference(state,error);
+                return Scope::pollReferenceRecord(state,error);
             }
         } scope;
         auto cfg=context(scope);cfg.target=scenario=="both"?"BOTH":"MIN";cfg.trialsPerLevel=1;

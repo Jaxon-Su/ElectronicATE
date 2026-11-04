@@ -147,8 +147,8 @@ void validateMeasurementConditions(const TestSequenceExecutionContext &context, 
             if (Chroma63107Range::applies(model))
                 Chroma63107Range::select(hw, current, voltage, range);
             else if (c6310) validate6310Rating(model, current, voltage, label);
-            else if (c6310a) checkRating(findPowerRange6310A(model, max), current, voltage, label);
-            if (c63600) checkRating(findPowerRange63600(model, max), current, voltage, label);
+            else if (c6310a) validateCurrent6310A(model, hw, current, voltage, range, dynamic);
+            if (c63600) validateCurrent63600(model, current, voltage, range, dynamic);
             if (c63200) checkRating(findPowerRange63200A(model, max), current, voltage, label);
         }
     }

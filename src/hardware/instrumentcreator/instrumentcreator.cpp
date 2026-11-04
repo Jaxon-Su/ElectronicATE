@@ -109,7 +109,7 @@ InstrumentCreator::DCLoadResult InstrumentCreator::createDCLoads(const Instrumen
                 ++mapped;
                 try {
                     const auto frameError = Chroma6310Frame::isFrame(ic.modelName)
-                        ? Chroma6310Frame::mappingError(config, ic, i) : Chroma63600Frame::mappingError(config, ic, i);
+                        ? Chroma6310Frame::mappingError(config, ic, i, forShutdown) : Chroma63600Frame::mappingError(config, ic, i);
                     if (!frameError.isEmpty()) throw std::invalid_argument(frameError.toStdString());
                     if (forShutdown && ic.channelNumbers.value(i, -1) <= 0)
                         throw std::invalid_argument("Invalid hardware channel for Load OFF");

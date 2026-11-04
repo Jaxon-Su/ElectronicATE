@@ -44,7 +44,7 @@ public:
 };
 ICommunication* CommunicationFactory::create(const QString&){if(throwCreate&&created==1)throw 42;++created;return new Comm;}
 RelayBase* RelayFactory::createRelay(const QString&,ICommunication* c,quint8){return allowDrivers?new Relay(c):nullptr;}
-DCLoad* DCLoadFactory::createDCLoad(const QString&,ICommunication* c){return allowDrivers?new Load(c):nullptr;}
+DCLoad* DCLoadFactory::createDCLoad(const QString&,ICommunication* c,const QString&){return allowDrivers?new Load(c):nullptr;}
 ACSource* ACSourceFactory::createACSource(const QString&,ICommunication*){return nullptr;}
 int main(){try{
  for(bool unknown:{false,true})for(const QString type:{"Relay","Load"}){

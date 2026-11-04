@@ -26,9 +26,9 @@ class MSOSeries456 : public Oscilloscope
     bool setVerticalPosition(int channel, double position, QString &error) override;
     bool readVerticalRange(int channel, ScopeVerticalRange &range, QString &error) override;
     bool beginSingleAcquisition() override;
-    bool beginAutoReference(int &timeoutMs, QString &error) override;
-    ScopeReferenceStatus pollAutoReference(QString &state, QString &error) override;
-    bool prepareSteadyAcquisition(QAtomicInt &stop, QString &error, bool startContinuous = true) override;
+    bool beginReferenceRecord(ScopeTriggerMode triggerMode, int &timeoutMs, QString &error) override;
+    ScopeReferenceStatus pollReferenceRecord(QString &state, QString &error) override;
+    bool prepareSteadyAcquisition(QAtomicInt &stop, QString &error, bool startContinuous = true, bool preserveEdge = false) override;
     std::unique_ptr<IScopePeriodSession> beginPeriodSession(IScopePeriodSession::Continue ready,
                                                            QString &error) override;
     bool queryConfiguration(const QString &command, QString &response, QString &error) override;
@@ -126,6 +126,7 @@ class MSOSeries456 : public Oscilloscope
   private:
     friend class MsoBrownOutSession;
     bool m_referenceActive = false;
+    QString m_referenceMode;
     bool m_referenceStopping = false;
     quint64 m_referenceRequired = 1;
     quint64 m_referenceFrozenAfter = 0;

@@ -30,7 +30,19 @@ template<class Dialog> void check(Dialog &dialog, const QString &name, const QVa
     auto *list = dialog.template findChild<QListWidget*>();
     require(list && list->count() == 29 && list->item(1)->data(Qt::UserRole).toInt() == 2, "blank index shifted");
     require(list->item(0)->checkState() == Qt::Checked && list->item(1)->checkState() == Qt::Checked, "load restore failed");
-    list->item(0)->setCheckState(Qt::Unchecked); list->item(2)->setCheckState(Qt::Checked);
+    auto *all = dialog.template findChild<QCheckBox*>("selectAllLoads");
+    require(all && all->checkState()==Qt::PartiallyChecked, "missing partial select-all state on restore");
+    all->click();
+    require(all->checkState()==Qt::Checked, "partial click did not select all");
+    for (int i=0;i<list->count();++i) require(list->item(i)->checkState()==Qt::Checked,"load missed by select all");
+    list->item(0)->setCheckState(Qt::Unchecked);
+    require(all->checkState()==Qt::PartiallyChecked,"individual edit not reflected in group checkbox");
+    list->item(0)->setCheckState(Qt::Checked);
+    require(all->checkState()==Qt::Checked,"selecting final load did not check group checkbox");
+    all->click();
+    require(all->checkState()==Qt::Unchecked,"group checkbox did not clear");
+    for (int i=0;i<list->count();++i) require(list->item(i)->checkState()==Qt::Unchecked,"load missed by clear all");
+    if (apply) all->click();
     require(dialog.windowTitle().contains("Group"), "group title missing");
     dialog.show(); QApplication::processEvents();
     require(list->verticalScrollBar()->maximum() > 0 && dialog.height() <= 900, "unbounded group layout");
@@ -50,7 +62,10 @@ template<class Dialog> void check(Dialog &dialog, const QString &name, const QVa
     if (!apply) {
         require(dialog.result() == QDialog::Rejected && dialog.config() == original, "Close changed settings"); return;
     }
-    require(dialog.result() == QDialog::Accepted && dialog.config()[key + "_indices"].toList() == QVariantList({2, 3}), "Apply lost multiselect");
+    QVariantList indices{0}; QStringList labels{"L1"};
+    for (int i=2;i<30;++i) { indices << i; labels << (i==2 ? "L3" : i==3 ? "L4" : QString("Load %1").arg(i+1)); }
+    require(dialog.result() == QDialog::Accepted && dialog.config()[key + "_indices"].toList()==indices &&
+            dialog.config()[key + "_labels"].toStringList()==labels,"Apply lost bulk selection or original order");
     if (period) require(dialog.config()["power_off_ms"].toInt()==2300 && dialog.config()["startup_ms"].toInt()==4700, "Apply lost transition waits");
     require(dialog.config()["ac_input_index"]==0 && dialog.config()["dc_input_index"]==0, "group Apply lost one input");
     TestSequenceModel model; DutRowData row; row.item = name;
@@ -72,6 +87,17 @@ int main(int argc, char **argv)
         const InputConditionOptions inputs{{"1phase/90/47/0"}, {"DC1"}};
         const QVector<RelayOption> relays{{"Short", {"ON", "OFF"}}, {"Discharge", {"OFF", "ON"}}};
         using Selection = LoadConditionSelector::Selection;
+        LoadConditionSelector empty({" ", ""}, "load", Selection::Group);
+        auto *emptyAll=empty.findChild<QCheckBox*>("selectAllLoads");
+        require(emptyAll && !emptyAll->isEnabled() && emptyAll->checkState()==Qt::Unchecked,"empty group should disable select all");
+        LoadConditionSelector single(loads,"load",Selection::Single);
+        require(!single.findChild<QCheckBox*>("selectAllLoads"),"single selector has group controls");
+        StaticDialog cleared(inputs, {"L1","","L3"}, {{"load_indices",QVariantList{0,2}}}, 1, nullptr, Selection::Group);
+        auto *all=cleared.findChild<QCheckBox*>("selectAllLoads");
+        require(all && all->checkState()==Qt::Checked,"restored all-selected state missing");
+        all->click(); cleared.findChild<QPushButton*>("applyBtn")->click();
+        require(cleared.result()==QDialog::Accepted && cleared.config()["load_indices"].toList().isEmpty() &&
+                cleared.config()["load_labels"].toStringList().isEmpty(),"Apply retained cleared loads");
         for (bool apply : {false, true}) {
             QVariantMap cfg{{"ac_input_index", 0}, {"dc_input_index", 0}, {"load_indices", QVariantList{0, 2}}, {"relay_index", 0}, {"discharge_index", 1}};
             auto basic = cfg; basic.remove("relay_index"); basic.remove("discharge_index");

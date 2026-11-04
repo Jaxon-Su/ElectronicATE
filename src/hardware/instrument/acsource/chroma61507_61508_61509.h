@@ -121,6 +121,7 @@ class Chroma61507_61508_61509 : public ACSource {
     double measureTotalApparentPower(); // MEASure:POWer:AC:TOTal:APParent?
 
   private:
+    bool usesScpiLineFraming() const override { return true; }
     const QString m_model;
     const QString m_logTag;
     static constexpr double kFreqMin = 15.0;

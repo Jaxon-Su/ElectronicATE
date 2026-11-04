@@ -1,5 +1,6 @@
 #include "chroma6310a.h"
 #include "chroma63107range.h"
+#include "chromacurrentrating.h"
 #include <QDebug>
 #include <QSet>
 #include <algorithm>
@@ -32,12 +33,13 @@ void Chroma6310A::setLoadMode(const QString& mode)
     write(QString("MODE %1").arg(mode));
 }
 
-QString Chroma6310A::currentMode(double current, double voltage, const QString &requestedMode) const
+QString Chroma6310A::currentMode(double current, double voltage, const QString &requestedMode, bool dynamic) const
 {
-    if (Chroma63107Range::applies(m_model))
-        return Chroma63107Range::select(realChannel(), current, voltage, requestedMode);
-    if ((m_model == "63123A" && voltage > 80) || (m_model == "63123A-120" && voltage > 120))
-        throw std::invalid_argument("Voltage exceeds the selected 63123A variant");
+    if (Chroma63107Range::applies(m_model)) {
+        const auto mode = checkedChromaCurrentRange(m_model, realChannel(), requestedMode, dynamic);
+        return Chroma63107Range::select(realChannel(), current, voltage, mode);
+    }
+    validateCurrent6310A(m_model, realChannel(), current, voltage, requestedMode, dynamic);
     return selectOptimalLoadMode6310A(m_model, current, voltage);
 }
 
@@ -50,11 +52,11 @@ void Chroma6310A::setStaticCurrent(const StaticCurrentParam& param)
     if (param.levels.isEmpty())
         return;
 
-    double maxCurrent = *std::max_element(param.levels.begin(), param.levels.end());
+    double maxCurrent = peakLoadCurrent(param.levels, param.enabledMask, getNumSegments());
     double voltage = param.expectedVoltage;
 
     const QString requestedMode = param.loadMode.trimmed().toUpper();
-    QString modeStr = currentMode(maxCurrent, voltage, requestedMode);
+    QString modeStr = currentMode(maxCurrent, voltage, requestedMode, false);
     if (requestedMode == "NO SETTING") {
         modeStr.clear();
     } else if (!requestedMode.isEmpty() && requestedMode != "AUTO RANGE") {
@@ -93,12 +95,12 @@ void Chroma6310A::setDynamicCurrent(const DynamicCurrentParam& param)
     if (param.levels.isEmpty())
         return;
 
-    double maxCurrent = *std::max_element(param.levels.begin(), param.levels.end());
+    double maxCurrent = peakLoadCurrent(param.levels, param.enabledMask, getNumSegments());
     double voltage = param.expectedVoltage;
 
     // 先查靜態 mode，再轉換為動態 mode
     const QString requestedMode = param.loadMode.trimmed().toUpper();
-    QString baseMode = currentMode(maxCurrent, voltage, requestedMode);
+    QString baseMode = currentMode(maxCurrent, voltage, requestedMode, true);
     QString modeStr = (baseMode == "CCH") ? "CCDH" : "CCDL";
     if (requestedMode == "NO SETTING") {
         modeStr.clear();

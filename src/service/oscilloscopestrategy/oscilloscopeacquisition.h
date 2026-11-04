@@ -34,6 +34,8 @@ struct VerticalScaleState {
     // Sparse diagnostics need the frozen waveform/channel list, without waiting
     // for measurements on a clipped record that will be reacquired.
     bool readCaptureMeasurements = true;
+    // Recalibration pilots read extrema at the NORMAL record's new scale.
+    bool fitDisplay = true;
 };
 
 // Optional output from the frozen record, before any vertical scale changes.
@@ -47,24 +49,25 @@ struct RecordExtremum {
 
 // Preserve legal NA, but capture transport/setup errors before another query clears them.
 double readMeasurementChecked(IScopeMeasurement *scope, int channel, ScopeMeasurement type);
-// Distinguish a disabled channel from a failed query before any later IO clears it.
-bool channelEnabledChecked(IScopeMeasurement *scope, int channel);
 
-// Reference-only AUTO/RUNSTOP: starts a fresh acquisition and freezes a new record.
+// Start RUNSTOP and freeze a new acquisition at the requested trigger mode.
 // Polling is bounded by the device's record budget and the caller's remaining phase;
 // synchronous I/O retains its transport timeout. Late records remain diagnostic only.
 enum class ReferenceMetrics { CaptureDefault, Quartet };
 using ReferenceLog = std::function<void(const QString &)>;
-AcquisitionResult acquireAutoRecord(IScopeMeasurement *scope, QAtomicInt &stop, int phaseRemainingMs,
-                                     QString &error, const ReferenceLog &log = {});
+AcquisitionResult acquireReferenceRecord(IScopeMeasurement *scope, QAtomicInt &stop, int phaseRemainingMs,
+                                     QString &error, const ReferenceLog &log = {},
+                                     ScopeTriggerMode triggerMode = ScopeTriggerMode::Auto);
+double readReadyMeasurement(IScopeMeasurement *scope, QAtomicInt &stop, int channel, ScopeMeasurement type,
+                            int timeoutMs);
 // Reads the frozen reference and restores STOP/NORMAL. Does not AutoSet.
 OscMeasureResult captureAutoReference(IScopeMeasurement *scope, QAtomicInt &stop, int timeoutMs,
                                       VerticalScaleState *vertical = nullptr,
                                       ReferenceMetrics metrics = ReferenceMetrics::CaptureDefault,
                                       const ReferenceLog &log = {}, bool detailedLog = false);
 
-// Recover clipping with 2x expansion; preserve Position and Offset.
-// Optional 10% top/bottom margin only expands; never centers or shrinks.
+// Recover clipping with 2x expansion. With 10% margin, align each unclipped
+// waveform by polarity and fit its span to the central 80%, preserving Offset.
 // Callers pass their remaining phase deadline. Expiry bounds measurement readiness,
 // but a completed record can still be archived before reporting failure.
 // Returns true when the caller must acquire a NEW record before measuring.

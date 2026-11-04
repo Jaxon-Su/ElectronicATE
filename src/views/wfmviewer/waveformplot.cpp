@@ -12,15 +12,16 @@ WaveformPlot::WaveformPlot(WfmViewerViewModel *viewModel, QWidget *parent)
     setObjectName("waveformPlot");
     setMinimumSize(320, 220);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    setContextMenuPolicy(Qt::PreventContextMenu);
     setInteractionMode(InteractionMode::ZoomRegion);
     connect(viewModel, &WfmViewerViewModel::traceChanged, this, [this] {
-        m_connectBounds = false; m_dragging = false; m_lastCursorClick.invalidate(); update();
+        m_connectBounds = false; cancelGesture(); update();
     });
     connect(viewModel, &WfmViewerViewModel::viewChanged, this, qOverload<>(&WaveformPlot::update));
     connect(viewModel, &WfmViewerViewModel::cursorsChanged, this, qOverload<>(&WaveformPlot::update));
     connect(viewModel, &WfmViewerViewModel::changed, this, [this] {
         if (m_viewModel->busy()) {
-            m_dragging = false; m_lastCursorClick.invalidate();
+            cancelGesture();
         }
         update();
     });
@@ -28,10 +29,32 @@ WaveformPlot::WaveformPlot(WfmViewerViewModel *viewModel, QWidget *parent)
 
 void WaveformPlot::setInteractionMode(InteractionMode mode)
 {
-    m_mode = mode; m_dragging = false;
-    m_lastCursorClick.invalidate();
-    setCursor(mode == InteractionMode::Pan ? Qt::OpenHandCursor : Qt::CrossCursor);
+    m_mode = mode;
+    cancelGesture();
     update();
+}
+
+WaveformPlot::InteractionMode WaveformPlot::dragMode() const
+{
+    return m_dragButton == Qt::RightButton ? InteractionMode::Pan : m_mode;
+}
+
+void WaveformPlot::cancelGesture()
+{
+    m_dragButton = Qt::NoButton;
+    m_lastCursorClick.invalidate();
+    setCursor(m_mode == InteractionMode::Pan ? Qt::OpenHandCursor : Qt::CrossCursor);
+}
+
+bool WaveformPlot::event(QEvent *event)
+{
+    if (m_dragButton != Qt::NoButton &&
+        (event->type() == QEvent::UngrabMouse || event->type() == QEvent::Hide ||
+         (event->type() == QEvent::EnabledChange && !isEnabled()))) {
+        cancelGesture();
+        update();
+    }
+    return QWidget::event(event);
 }
 
 QRectF WaveformPlot::plotArea() const
@@ -212,7 +235,7 @@ void WaveformPlot::paintEvent(QPaintEvent *)
         const double labelY = std::clamp(y - 22, area.top(), area.bottom() - 20);
         p.drawText(QRectF(area.right() - (cursor == 1 ? 66 : 32), labelY, 28, 20), QStringLiteral("Y%1").arg(cursor));
     }
-    if (m_dragging && m_mode == InteractionMode::ZoomRegion) {
+    if (m_dragButton == Qt::LeftButton && m_mode == InteractionMode::ZoomRegion) {
         p.setPen(QPen(QColor("#ffffff"), 1, Qt::DashLine)); p.setBrush(QColor(101, 186, 255, 40));
         p.drawRect(QRectF(m_start, m_current).normalized());
     }
@@ -221,7 +244,7 @@ void WaveformPlot::paintEvent(QPaintEvent *)
 
 void WaveformPlot::wheelEvent(QWheelEvent *event)
 {
-    if (!isEnabled() || m_viewModel->busy() || !m_viewModel->hasTrace() || m_dragging ||
+    if (!isEnabled() || m_viewModel->busy() || !m_viewModel->hasTrace() || m_dragButton != Qt::NoButton ||
         !plotArea().contains(event->position()) || event->angleDelta().y() == 0) return;
     const auto anchor = valuesAt(event->position());
     m_viewModel->zoom(event->angleDelta().y() > 0 ? .8 : 1.25, anchor.x(), anchor.y());
@@ -231,30 +254,31 @@ void WaveformPlot::wheelEvent(QWheelEvent *event)
 void WaveformPlot::mousePressEvent(QMouseEvent *event)
 {
     if (!isEnabled() || m_viewModel->busy() || !m_viewModel->hasTrace() ||
-        event->button() != Qt::LeftButton || !plotArea().contains(event->position())) return;
-    m_dragging = true; m_start = m_current = boundedPoint(event->position());
+        m_dragButton != Qt::NoButton || (event->button() != Qt::LeftButton && event->button() != Qt::RightButton) ||
+        !plotArea().contains(event->position())) return;
+    m_dragButton = event->button(); m_start = m_current = boundedPoint(event->position());
     m_lastCursorClick.invalidate();
-    if (m_mode == InteractionMode::Cursors) {
+    if (dragMode() == InteractionMode::Cursors) {
         m_activeTimeCursor = cursorNear(m_current, CursorAxis::Time);
         m_activeAmplitudeCursor = cursorNear(m_current, CursorAxis::Amplitude);
-        if (!m_activeTimeCursor && !m_activeAmplitudeCursor) { m_dragging = false; return; }
+        if (!m_activeTimeCursor && !m_activeAmplitudeCursor) { m_dragButton = Qt::NoButton; return; }
         m_beforeClick1 = m_viewModel->cursor1(); m_beforeClick2 = m_viewModel->cursor2();
         m_beforeAmplitude1 = m_viewModel->amplitudeCursor1(); m_beforeAmplitude2 = m_viewModel->amplitudeCursor2();
         moveGesture(m_current);
     }
-    if (m_mode == InteractionMode::Pan) setCursor(Qt::ClosedHandCursor);
+    if (dragMode() == InteractionMode::Pan) setCursor(Qt::ClosedHandCursor);
     update(); event->accept();
 }
 
 void WaveformPlot::moveGesture(QPointF position)
 {
     const auto next = boundedPoint(position);
-    if (m_mode == InteractionMode::Cursors) {
+    if (dragMode() == InteractionMode::Cursors) {
         const auto values = valuesAt(next);
         if (m_activeTimeCursor) m_viewModel->setCursor(m_activeTimeCursor, values.x());
         if (m_activeAmplitudeCursor) m_viewModel->setAmplitudeCursor(m_activeAmplitudeCursor, values.y());
     }
-    else if (m_mode == InteractionMode::Pan) {
+    else if (dragMode() == InteractionMode::Pan && next != m_current) {
         const auto previousValue = valuesAt(m_current), nextValue = valuesAt(next);
         m_viewModel->pan(previousValue.x() - nextValue.x(), previousValue.y() - nextValue.y());
     }
@@ -263,20 +287,22 @@ void WaveformPlot::moveGesture(QPointF position)
 
 void WaveformPlot::mouseMoveEvent(QMouseEvent *event)
 {
-    if (m_dragging && !m_viewModel->busy()) moveGesture(event->position());
+    if (m_dragButton != Qt::NoButton && !m_viewModel->busy() && event->buttons().testFlag(m_dragButton))
+        moveGesture(event->position());
 }
 
 void WaveformPlot::mouseReleaseEvent(QMouseEvent *event)
 {
-    if (!m_dragging || event->button() != Qt::LeftButton) return;
+    if (m_dragButton == Qt::NoButton || event->button() != m_dragButton) return;
+    const auto mode = dragMode();
     moveGesture(event->position());
     const QRectF selection = QRectF(m_start, m_current).normalized();
-    m_dragging = false;
-    if (m_mode == InteractionMode::Cursors &&
+    m_dragButton = Qt::NoButton;
+    if (mode == InteractionMode::Cursors &&
         (m_current - m_start).manhattanLength() <= QApplication::startDragDistance()) {
         m_lastCursorClick.start(); m_lastClickPoint = m_current;
     }
-    if (m_mode == InteractionMode::ZoomRegion && selection.width() >= 6 && selection.height() >= 6) {
+    if (mode == InteractionMode::ZoomRegion && selection.width() >= 6 && selection.height() >= 6) {
         const auto low = valuesAt(selection.bottomLeft()), high = valuesAt(selection.topRight());
         m_viewModel->zoomTo({low.x(), high.x(), low.y(), high.y()});
     }
@@ -286,7 +312,11 @@ void WaveformPlot::mouseReleaseEvent(QMouseEvent *event)
 
 void WaveformPlot::mouseDoubleClickEvent(QMouseEvent *event)
 {
-    if (!isEnabled() || m_viewModel->busy() || !m_viewModel->hasTrace()) return;
+    if (event->button() == Qt::RightButton) {
+        mousePressEvent(event);
+        return;
+    }
+    if (!isEnabled() || m_viewModel->busy() || !m_viewModel->hasTrace() || m_dragButton == Qt::RightButton) return;
     if (event->button() == Qt::LeftButton && plotArea().contains(event->position())) {
         // The first click of a real double-click already moved a cursor. Undo that
         // click so fitting the view preserves both absolute cursor times.
@@ -296,7 +326,6 @@ void WaveformPlot::mouseDoubleClickEvent(QMouseEvent *event)
             m_viewModel->setCursor(1, m_beforeClick1); m_viewModel->setCursor(2, m_beforeClick2);
             m_viewModel->setAmplitudeCursor(1, m_beforeAmplitude1); m_viewModel->setAmplitudeCursor(2, m_beforeAmplitude2);
         }
-        m_lastCursorClick.invalidate();
-        m_dragging = false; m_viewModel->fit(); update();
+        cancelGesture(); m_viewModel->fit(); update();
     }
 }

@@ -51,7 +51,7 @@ InstrumentOperationResult operation(const QString& label) {
 }
 class Scope : public MeasurementScopeFixture {
 public:
-    bool prepareSteadyAcquisition(QAtomicInt &stop, QString &error, bool startContinuous) override { return prepareMsoSteadyAcquisition(*this, stop, error, startContinuous); }
+    bool prepareSteadyAcquisition(QAtomicInt &stop, QString &error, bool startContinuous, bool preserveEdge) override { return prepareMsoSteadyAcquisition(*this, stop, error, startContinuous, preserveEdge); }
     QString getTriggerSource() override { return "CH1"; }
     int getTotalChannel() override { return 4; }
     bool isChannelEnabled(int channel) override { return channel == 1; }
@@ -129,8 +129,8 @@ bool adjustOscilloscopeAutoPeriod(IScopeAutoPeriod*,QAtomicInt&,QString& error,c
     g.trace<<"AUTO PERIOD";
     require(g.trace.contains("INPUT ON")&&g.trace.contains("LOAD ON"),"Auto Period ran before outputs");
     require(g.trace.contains("TRIGger:A:MODe AUTO"),"Auto Period started without AUTO mode");
-    require(g.trace.contains("TRIGger:A:LEVel:CH1 0.4"),"Missing positive Scale-based startup level");
-    require(g.trace.contains("TRIGger:A:EDGE:SLOpe RISE"),"Missing initial rising edge");
+    require(!g.trace.contains("TRIGger:A:LEVel:CH1 0.4") && !g.trace.contains("TRIGger:A:EDGE:SLOpe RISE"),
+            "Auto Period startup overwrote the incoming trigger level or slope");
     require(g.trace.contains("ACQuire:STOPAfter RUNSTop") && g.trace.contains("ACQuire:STATE RUN"),"Auto Period started while stopped");
     if(g.scenario=="auto_cancel")g.worker->stop();
     if(g.scenario=="auto_failure"){error="period unavailable";return false;}
@@ -211,7 +211,7 @@ int main(int argc,char**argv) {
         worker->prepareRun();if(g.scenario=="cancel_before")worker->stop();
         QVector<TaskPayload> tasks{task,next};
         if(g.scenario.startsWith("auto_")) {
-            tasks[0].settings["auto_period"] = g.scenario != "auto_off";
+            tasks[0].settings["auto_period"] = g.scenario != "auto_off" && g.scenario != "auto_level_failure";
             TaskPayload setup;setup.task.name="Write Oscilloscope";
             tasks.prepend(setup);
             if(g.scenario=="auto_off"||g.scenario=="auto_ignore") {
@@ -295,6 +295,9 @@ int main(int argc,char**argv) {
             const int index=(g.scenario=="auto_off"||g.scenario=="auto_ignore")?2:1;
             require(statuses.contains({index,fail?TaskStatus::Fail:TaskStatus::Pass}),"deferred Auto Period result");
             require(g.trace.count("AUTO PERIOD")== (g.scenario=="auto_off"||triggerFailed?0:1),"Auto Period setting lost");
+            if (g.scenario=="auto_off" || g.scenario=="auto_level_failure")
+                require(g.trace.contains("TRIGger:A:LEVel:CH1 0.4") && g.trace.contains("TRIGger:A:EDGE:SLOpe RISE"),
+                        "ordinary steady startup lost its rising edge or one-Step level");
             if(g.trace.contains("AUTO PERIOD"))require(g.trace.indexOf("LOAD ON")<g.trace.indexOf("AUTO PERIOD"),"period before load");
             require(g.measures==(fail?0:1),"measurement after period failure/cancel");
             require(g.trace.contains("INPUT OFF")&&g.trace.contains("LOAD OFF"),"period cleanup missing");

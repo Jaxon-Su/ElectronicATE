@@ -693,33 +693,47 @@ public:
     bool margin = false, changedRecord = false;
     double scales[3]{0, 1, 1};
     QVector<double> earlyLevels;
+    double firstValidEventLevel = NAN;
+    int firstRetryIndex = -1;
+    double scaleAfterEarlyRecord = 0;
     bool beginSingleAcquisition() override {
         changedRecord = false;
         return OnShortNoiseScope::beginSingleAcquisition();
     }
     ScopeTriggerState triggerState() override {
         if (earlyRecords >= repeats) return ScopeTriggerState::Ready;
+        if (mode=="after_event" && !std::isfinite(firstValidEventLevel)) return ScopeTriggerState::Ready;
         const int before = earlyRecords;
         const auto state = OnShortNoiseScope::triggerState();
-        if (earlyRecords != before) earlyLevels << level;
+        if (earlyRecords != before) {
+            earlyLevels << level;
+            if (firstRetryIndex<0) firstRetryIndex=int(levels.size());
+        }
         return state;
     }
     bool isClipping(int ch) override { return early && !margin && ch == adjustedChannel; }
     double getChannelScale(int ch) override { return scales[ch]; }
     bool setVerticalScale(int ch, double value, QString &e) override {
-        require(early && ch == adjustedChannel, "unexpected scale change outside pre-short record");
+        require(margin || (early && ch==adjustedChannel), "unexpected scale change outside pre-short record");
         if (fault == "scale_error") { e = "injected scale error"; return false; }
         scales[ch] = fault == "roundup" ? value * 1.25 : value;
-        changedRecord = true; ++changes;
+        changedRecord = true;
+        if (early && ch==adjustedChannel) ++changes;
+        if (early && earlyRecords==1) scaleAfterEarlyRecord=scales[1];
         if (fault == "stop_scale") stopFlag->storeRelease(1);
         return true;
     }
     bool readVerticalRange(int ch, ScopeVerticalRange &range, QString&) override {
-        // Normal event values fit; only the selected pre-short record requests margin.
-        range = {scales[ch], 0, early ? 10.0 : 1000.0, 0, -800, 800}; return true;
+        range = {scales[ch],0,10,positions.value(QString("CH%1").arg(ch)),-8,8}; return true;
     }
     double measureSignalPeak(int ch, const QString &metric) override {
-        if (!early) return Scope::measureSignalPeak(ch, metric);
+        if (!early) {
+            const double value=Scope::measureSignalPeak(ch,metric);
+            // A record sent back for fitting is not the prior valid event.
+            if (event && !autoMode && metric=="MEAN" && !std::isfinite(firstValidEventLevel))
+                firstValidEventLevel=level;
+            return value;
+        }
         require(!changedRecord, "baseline extremum read after changing its scale");
         require(metric != "RMS" && metric != "MEAN", "rescale baseline became an event quartet");
         if (ch == 1) {
@@ -790,10 +804,10 @@ static void onShortRescaleCase(bool falling, bool capture, int adjustedChannel, 
     const double sign = falling ? -1.0 : 1.0;
     const double oldLevel = sign * scope.earlyLevels.first();
     const double floor = std::max(oldLevel, adjustedChannel == 1 && !margin ? oldLevel : margin && adjustedChannel == 1 ? 4.8 : 2.0);
-    const int firstRetry = priorEvent ? 3 : 2; // AUTO, optional real event, pre-short, retry.
+    const int firstRetry = scope.firstRetryIndex;
     require(scope.levels.size() > firstRetry, "rescale did not acquire again");
     require(sign * scope.levels[firstRetry] > floor, "rescale revisited excluded pre-short level/extremum");
-    const double expectedStep = adjustedChannel == 1 ? (margin ? .0486075949367089 : .08) * (fault == "roundup" ? 1.25 : 1) : .04;
+    const double expectedStep = scope.scaleAfterEarlyRecord/25;
     const double retryLevel=sign * scope.levels[firstRetry];
     // The next grid point can be less than one Step from a non-grid floor.
     require(retryLevel-floor <= expectedStep+1e-9 &&
@@ -810,8 +824,13 @@ static void onShortRescaleCase(bool falling, bool capture, int adjustedChannel, 
         require(trial.channels[0].maximum == 7 && trial.channels[0].minimum == -3 &&
                 trial.channels[0].rms == 2 && trial.channels[0].mean == 1, "rescale contaminated event quartet");
     }
-    if (priorEvent) require(!result.trials.isEmpty() && result.trials.first().triggerLevel == scope.levels[1],
-                            "rescale discarded previous real event");
+    if (priorEvent) {
+        const double recorded=result.trials.isEmpty()?NAN:result.trials.first().triggerLevel;
+        require(std::abs(recorded-scope.firstValidEventLevel)<1e-9,
+                qPrintable(QString("rescale lost prior event: Fall=%1 Capture=%2 CH%3 margin=%4 first=%5 reported=%6")
+                    .arg(falling).arg(capture).arg(adjustedChannel).arg(margin)
+                    .arg(scope.firstValidEventLevel,0,'g',16).arg(recorded,0,'g',16)));
+    }
 }
 
 static void onShortRescale()

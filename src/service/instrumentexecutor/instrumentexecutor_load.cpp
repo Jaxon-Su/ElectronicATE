@@ -1,4 +1,5 @@
 #include "instrumentexecutor.h"
+#include "manualcurrentpreflight.h"
 
 #include "dcload.h"
 
@@ -210,6 +211,7 @@ InstrumentExecutor::Result InstrumentExecutor::runLoad(const InstrumentSetupConf
             qWarning() << "[runLoad] Load data not found for conditionIndex=" << conditionIndex;
             return {false, "Load data not found for index " + QString::number(conditionIndex), true};
         }
+        validateManualLoadCurrents(cfg, dataInfo.values, meta.ranges, meta.vo, false);
 
         MasterSlaveSyncPlan syncPlan;
         QString syncError;

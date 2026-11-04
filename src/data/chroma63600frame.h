@@ -5,10 +5,9 @@
 namespace Chroma63600Frame {
 inline int lastChannel(const QString &frame)
 {
-    if (frame == "63600-1") return 1;
-    if (frame == "63600-2") return 3;
-    if (frame == "63600-5") return 9;
-    if (frame == "63601-5") return 10;
+    if (frame == "63600-1") return 2;
+    if (frame == "63600-2") return 4;
+    if (frame == "63600-5" || frame == "63601-5") return 10;
     return 0;
 }
 
@@ -17,27 +16,33 @@ inline bool allows(const QString &frame, int channel, const QString &module)
     const int last = lastChannel(frame);
     if (!last) return true; // Not one of these four mainframes.
     if (channel < 1 || channel > last || !LoadCapabilityCatalog::Chroma63600Models.contains(module)) return false;
-    return channel % 2 == 1 || (channel == 10 && module == "63610-80-20");
+    return channel % 2 == 1 || (module == "63610-80-20" && (frame != "63601-5" || channel == 10));
 }
 
-// Check physical channel numbers, not logical output indices. CH9 and CH10 share a slot,
-// even if two Load rows refer to the same chassis address.
+// Each odd/even pair is one installed module, including across Load rows on the same chassis.
 inline QString mappingError(const InstrumentSetupConfig &setup, const InstrumentConfig &load, int slot)
 {
-    if (!lastChannel(load.modelName)) return {};
+    const bool is63600 = lastChannel(load.modelName) != 0;
     const int channel = load.channelNumbers.value(slot, -1);
     const QString &module = load.channels.at(slot).subModel;
-    if (!allows(load.modelName, channel, module))
+    if (is63600 && !allows(load.modelName, channel, module))
         return QString("%1: %2 is invalid on %3 CH%4").arg(load.name, module, load.modelName).arg(channel);
-    if (load.modelName != "63601-5" || (channel != 9 && channel != 10)) return {};
-    const int peer = channel == 9 ? 10 : 9;
+    const QString resource = load.getResourceString();
+    const int peer = channel % 2 ? channel + 1 : channel - 1;
+    int owners = 0;
     for (const auto &other : setup.instruments) {
-        if (!other.enabled || other.type != "Load" || other.modelName != load.modelName ||
-            other.getResourceString().compare(load.getResourceString(), Qt::CaseInsensitive) != 0) continue;
+        if (!other.enabled || other.type != "Load" || (!is63600 && !lastChannel(other.modelName)) ||
+            other.getResourceString().compare(resource, Qt::CaseInsensitive) != 0) continue;
         for (int i = 0; i < other.channels.size(); ++i) {
             const auto &sibling = other.channels[i];
-            if (other.channelNumbers.value(i, -1) == peer && !sibling.subModel.isEmpty() && sibling.subModel != module)
-                return load.name + ": 63601-5 CH9 and CH10 share a physical module; CH10 requires 63610-80-20";
+            if (sibling.index <= 0 && sibling.subModel.isEmpty()) continue;
+            if (other.modelName != load.modelName)
+                return load.name + ": conflicting load frames at " + resource;
+            const int physical = other.channelNumbers.value(i, -1);
+            if (physical == channel && sibling.index > 0 && ++owners > (load.channels[slot].index > 0 ? 1 : 0))
+                return QString("%1: duplicate hardware channel at %2 CH%3").arg(load.name, resource).arg(channel);
+            if ((physical == channel || physical == peer) && !sibling.subModel.isEmpty() && sibling.subModel != module)
+                return QString("%1: CH%2 and CH%3 share one module at %4").arg(load.name).arg(channel).arg(physical).arg(resource);
         }
     }
     return {};

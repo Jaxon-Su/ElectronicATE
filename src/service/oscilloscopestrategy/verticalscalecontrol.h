@@ -9,10 +9,26 @@
 #include <limits>
 
 namespace OscilloscopeAcquisition {
+// Distinguish a disabled channel from a failed query before later I/O clears the error.
+inline bool channelEnabledChecked(IScopeMeasurement *scope, int channel)
+{
+    const bool enabled = scope->isChannelEnabled(channel);
+    const QString error = scope->lastError();
+    if (!error.isEmpty())
+        throw std::runtime_error(QString("CH%1 display state query failed: %2").arg(channel).arg(error).toStdString());
+    return enabled;
+}
+
 // Bounded checked write/readback, shared by automatic expansion and explicit reset.
+class UnchangedFitScale : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
 inline double setScaleChecked(IScopeMeasurement *scope, QAtomicInt &stop,
                             int channel, double target, bool acceptLarger = false,
-                            QDeadlineTimer deadline = QDeadlineTimer(QDeadlineTimer::Forever))
+                            QDeadlineTimer deadline = QDeadlineTimer(QDeadlineTimer::Forever),
+                            double fitFrom = 0)
 {
     double actual = std::numeric_limits<double>::quiet_NaN();
     auto check = [&] {
@@ -30,9 +46,11 @@ inline double setScaleChecked(IScopeMeasurement *scope, QAtomicInt &stop,
     QElapsedTimer applied;
     applied.start();
     auto checkReadbackTime = [&] {
-        if (applied.elapsed() >= 2000)
-            throw std::runtime_error(QString("CH%1 scale readback timeout: requested=%2 actual=%3 units/div")
-                .arg(channel).arg(target,0,'g',16).arg(std::isfinite(actual)?QString::number(actual,'g',16):"unavailable").toStdString());
+        if (applied.elapsed() < 2000) return;
+        const auto message = QString("CH%1 scale readback timeout: requested=%2 actual=%3 units/div")
+            .arg(channel).arg(target,0,'g',16).arg(std::isfinite(actual)?QString::number(actual,'g',16):"unavailable").toStdString();
+        if (fitFrom > 0 && qFuzzyCompare(fitFrom,actual)) throw UnchangedFitScale(message);
+        throw std::runtime_error(message);
     };
     for (;;) {
         check();
@@ -44,8 +62,14 @@ inline double setScaleChecked(IScopeMeasurement *scope, QAtomicInt &stop,
         if (!std::isfinite(actual) || actual <= 0 || actual >= 1e20)
             throw std::runtime_error("Invalid channel scale readback");
         checkReadbackTime();
-        if (acceptLarger ? actual >= target * (1 - 1e-9) : std::abs(actual - target) <= target * 1e-9)
+        // A fit can be rounded in either direction. Require movement toward
+        // the request, then verify the display bounds on a fresh record.
+        if (fitFrom > 0) {
+            if ((target < fitFrom && actual < fitFrom*(1-1e-9)) ||
+                (target > fitFrom && actual > fitFrom*(1+1e-9))) return actual;
+        } else if (acceptLarger ? actual >= target*(1-1e-9) : std::abs(actual-target) <= target*1e-9) {
             return actual;
+        }
         QThread::msleep(20);
     }
 }

@@ -70,7 +70,7 @@ void prepareUnclippedReference(Execution &run, int &adjustments)
         for (;;) {
             run.check();
             QString error;
-            const auto status = OscilloscopeAcquisition::acquireAutoRecord(run.scope, run.stop,
+            const auto status = OscilloscopeAcquisition::acquireReferenceRecord(run.scope, run.stop,
                 qMax(0,run.ctx.phaseTimeoutMs-int(run.phase.elapsed())), error, run.ctx.log);
             if (!OscilloscopeAcquisition::hasCompletedRecord(status))
                 throw std::runtime_error(("Descent preflight: " + error).toStdString());

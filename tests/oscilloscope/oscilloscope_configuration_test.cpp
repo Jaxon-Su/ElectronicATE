@@ -63,6 +63,12 @@ public:
     QString horizontalMode = "AUTO", manualInputs = "RECORDLENGTH", readFailure;
     QStringList queries;
     QString source = "CH1";
+    QString slope = "RISE";
+    double triggerLevel = 7.25, minimum = -1, maximum = 1;
+    bool refuseLevel = false, pilot = false;
+    int pilots = 0;
+    QList<double> periodLevels;
+    QStringList periodSlopes;
     QString state = "1";
     QString failure;
     QString throwingCommand;
@@ -83,10 +89,10 @@ public:
     bool isClipping(int ch) override {
         if (throwClip) throw std::runtime_error("clipping query failed");
         if (cancelClip) cancelClip->storeRelease(1);
-        return ch == 2 && captures <= clippedCaptures;
+        return ch == 2 && captures + pilots <= clippedCaptures;
     }
     double getChannelScale(int) override { return verticalScale; }
-    double measureSignalPeak(int, const QString& type) override { return type=="MINimum"?-1:1; }
+    double measureSignalPeak(int, const QString& type) override { return type=="MINimum"?minimum:maximum; }
     QAtomicInt* cancel = nullptr;
     bool queryConfiguration(const QString& command, QString& response, QString& error) override {
         queries << command;
@@ -98,6 +104,9 @@ public:
         else if (command == "HORizontal:MODe:RECOrdlength?") response = QString::number(std::round(scale * 1e7));
         else if (command.startsWith("CH")) response = "0";
         else if (command == "TRIGger:A:EDGE:SOUrce?") response = source;
+        else if (command == "TRIGger:A:TYPe?") response = "EDGE";
+        else if (command == "TRIGger:A:EDGE:SLOpe?") response = slope;
+        else if (command == "TRIGger:A:LEVel:" + source + "?") response = QString::number(triggerLevel,'g',16);
         else if (command == "TRIGger:A:MODe?") response = "NORMAL";
         else if (command.startsWith("DISplay")) response = "1";
         else if (command == "HORizontal:DIVisions?") response = "10";
@@ -112,7 +121,7 @@ public:
         else if (command == "ACQuire:STOPAfter?") response = "RUNSTOP";
         else if (command == "MEASUrement:LIST?") response = ":MEASUREMENT:LIST MEAS1,MEAS3";
         else if (command.endsWith(":MEAN?")) {
-            require(captures > clippedCaptures, "PERIOD queried on clipped record");
+            require(!pilot && captures + pilots > clippedCaptures, "PERIOD queried on pilot/clipped record");
             ++periodReads;
             if(periodReads==delayPeriodRead)QThread::msleep(periodReadDelayMs);
             response = malformed ? "bad" : QString::number(((measurementDelayCaptures==0||captures<=measurementDelayCaptures)&&resultTimer.elapsed() < measurementDelayMs) ||
@@ -126,6 +135,9 @@ public:
         commands << command;
         if (command == throwingCommand && captures > 0) throw std::runtime_error("cleanup threw");
         if (command == failure) { error = "simulated reject"; return false; }
+        if (command.startsWith("TRIGger:A:EDGE:SLOpe ")) slope = command.section(' ',-1).toUpper();
+        if (command.startsWith("TRIGger:A:LEVel:" + source + " ") && !refuseLevel)
+            triggerLevel = command.section(' ',-1).toDouble();
         if (command.startsWith("HORizontal:SCAle ") && !rejectTimeScale) {
             scale = std::max(minimumTimeScale, command.section(' ', -1).toDouble());
             scaleReadbackPending = true;
@@ -134,15 +146,21 @@ public:
         return true;
     }
     bool beginSingleAcquisition() override {
-        require(commands.contains("MEASUrement:MEAS2:SOUrce1 CH1"), "PERIOD not configured before capture");
+        require(commands.contains("MEASUrement:MEAS2:SOUrce1 " + source), "PERIOD not configured before capture");
         ++captures; captureTimer.start();resultTimer.invalidate();return true;
     }
     QString getTriggerState() override { return "AUTO"; }
-    bool beginAutoReference(int &budget, QString &) override {
+    bool beginReferenceRecord(ScopeTriggerMode triggerMode, int &budget, QString &) override {
         budget = referenceBudgetMs;
-        return beginSingleAcquisition(); // Preserve the fake's timing hooks; driver protocol is tested separately.
+        pilot = triggerMode == ScopeTriggerMode::Auto;
+        if (pilot) {
+            ++pilots; captureTimer.start(); resultTimer.invalidate(); return true;
+        }
+        periodLevels << triggerLevel;
+        periodSlopes << slope;
+        return beginSingleAcquisition();
     }
-    ScopeReferenceStatus pollAutoReference(QString &state, QString &) override {
+    ScopeReferenceStatus pollReferenceRecord(QString &state, QString &) override {
         state = "fake AUTO reference";
         return getAcquisitionState() == "0" ? ScopeReferenceStatus::Completed : ScopeReferenceStatus::Pending;
     }
@@ -152,6 +170,118 @@ public:
         return "0";
     }
 };
+void testPeriodTrigger() {
+    class SwitchingWaveform : public PeriodScope {
+    public:
+        double measureSignalPeak(int ch, const QString &metric) override {
+            require(ch == 2, "extrema from wrong source");
+            return metric == "MINimum" ? -2 : 18;
+        }
+    };
+    for (const QString edge : {"RISE","FALL","EITHER"}) {
+        SwitchingWaveform scope; scope.source="CH2"; scope.scale=.0005; scope.verticalScale=2.5; scope.slope=edge;
+        QAtomicInt stop{0}; QString error;
+        require(adjustOscilloscopeAutoPeriod(&scope,stop,error), qPrintable(error));
+        const double expected = edge=="FALL" ? 0 : 16;
+        require(scope.pilots==1 && scope.periodLevels==QList<double>({expected,expected,expected}) &&
+                scope.periodSlopes==QStringList(3,edge=="FALL" ? "FALL" : "RISE"),
+                "three independent records were not edge-triggered at the calibrated level");
+        require(scope.triggerLevel==7.25 && scope.slope==edge,"temporary trigger settings leaked");
+    }
+    QAtomicInt stop{0}; QString error;
+    class PositionShift : public PeriodScope {
+    public:
+        QMap<int,double> positions;
+        bool readVerticalRange(int ch,ScopeVerticalRange &r,QString &) override {
+            r={1,0,10,positions.value(ch),-8,8}; return true;
+        }
+        bool setVerticalPosition(int ch,double value,QString &) override { positions[ch]=value; return true; }
+        double measureSignalPeak(int ch,const QString &kind) override {
+            if (!pilot && ch==2) return kind=="MINimum" ? 0 : 7.9;
+            return kind=="MINimum" ? -3.95 : 3.95;
+        }
+    } positionShift;
+    positionShift.scale=.0005;
+    VerticalScaleOptions fit; fit.margin=true;
+    require(adjustOscilloscopeAutoPeriod(&positionShift,stop,error,{},fit) && positionShift.pilots==1 &&
+            positionShift.captures==4 && std::abs(positionShift.positions[2]+3.95)<1e-9,
+            "display alignment restarted AUTO calibration or reused adjusted NORMAL record");
+    class TriggerSpanShift : public PeriodScope {
+        bool isChannelEnabled(int ch) override { return ch==1; }
+        double measureSignalPeak(int,const QString &kind) override {
+            const double amplitude=pilot?6:4;
+            return kind=="MINimum"?-amplitude:amplitude;
+        }
+        bool readVerticalRange(int,ScopeVerticalRange &r,QString &) override {
+            r={verticalScale,0,10,0,-8,8}; return true;
+        }
+        bool setVerticalScale(int,double value,QString &) override { verticalScale=value; return true; }
+    } spanShift;
+    spanShift.scale=.0005;
+    require(adjustOscilloscopeAutoPeriod(&spanShift,stop,error,{},fit) && spanShift.pilots==3 &&
+            spanShift.captures==4 && std::abs(spanShift.verticalScale-8/7.9)<1e-9,
+            "recalibration pilot undid NORMAL trigger channel fit");
+    class NewWindow : public TriggerSpanShift {
+        double measureSignalPeak(int,const QString &kind) override {
+            const double amplitude = scale < .00075 ? .02 : pilot ? 6 : 4;
+            return kind=="MINimum" ? -amplitude : amplitude;
+        }
+    } window;
+    window.scale=.001;
+    require(adjustOscilloscopeAutoPeriod(&window,stop,error,{},fit) &&
+            std::abs(window.scale-.0005)<1e-12 && std::abs(window.verticalScale-.04/7.9)<1e-12,
+            "new time window retained previous NORMAL fit and missed its narrow pilot");
+    for (const QString edge : {"RISE","FALL"}) {
+        PeriodScope s; s.slope=edge; s.minimum=-10.3; s.maximum=-.1; s.verticalScale=5; s.scale=.0005;
+        require(adjustOscilloscopeAutoPeriod(&s,stop,error),qPrintable(error));
+        require(std::abs(s.periodLevels.first()-(edge=="FALL" ? -9.2 : -1.2))<1e-12,
+                "negative trigger grid rounded outwards");
+    }
+    PeriodScope refused; refused.refuseLevel=true;
+    require(!adjustOscilloscopeAutoPeriod(&refused,stop,error) && error.contains("readback mismatch") &&
+            refused.captures==0 && refused.periodReads==0, "mismatched level used to read PERIOD");
+    PeriodScope flat; flat.minimum=flat.maximum=20; flat.scale=.000001;
+    require(!adjustOscilloscopeAutoPeriod(&flat,stop,error) && flat.captures==0 && flat.periodReads==0 &&
+            flat.pilots==7 && error.contains("adjustments=6/6"), "flat pilot accepted or expansion unbounded");
+    PeriodScope restore; restore.slope="EITHER"; restore.scale=.0005; restore.failure="TRIGger:A:LEVel:CH1 7.25";
+    require(!adjustOscilloscopeAutoPeriod(&restore,stop,error) && error.contains("cleanup") &&
+            restore.slope=="EITHER" && !restore.commands.contains("ACQuire:STATE RUN"),"failed trigger restore resumed RUN");
+    class SilentRestore : public PeriodScope {
+        bool writeConfigurationCommand(const QString &cmd, QString &e) override {
+            if (cmd=="TRIGger:A:LEVel:CH1 7.25" || cmd=="TRIGger:A:EDGE:SLOpe EITHER") return true;
+            return PeriodScope::writeConfigurationCommand(cmd,e);
+        }
+    } silent;
+    silent.scale=.0005; silent.slope="EITHER";
+    require(!adjustOscilloscopeAutoPeriod(&silent,stop,error) && error.contains("LEVel:CH1") &&
+            error.contains("SLOpe") && !silent.commands.contains("ACQuire:STATE RUN"),"silent restore mismatch resumed RUN");
+    for (const QString edge : {"RISE","FALL"}) {
+        PeriodScope narrow; narrow.scale=.000001; narrow.verticalScale=2.5; narrow.slope=edge;
+        narrow.minimum = edge=="RISE" ? .009 : -.101;
+        narrow.maximum = edge=="RISE" ? .101 : -.009;
+        require(!adjustOscilloscopeAutoPeriod(&narrow,stop,error) && narrow.pilots==7 && narrow.captures==0,
+                "narrow reference clamped back toward the extremum");
+    }
+    class Drift : public PeriodScope {
+    public:
+        bool vertical=false;
+        bool beginReferenceRecord(ScopeTriggerMode mode,int &budget,QString &e) override {
+            if (!PeriodScope::beginReferenceRecord(mode,budget,e)) return false;
+            if (mode==ScopeTriggerMode::Normal && captures==2) {
+                maximum=10;
+                if (vertical) verticalScale *= 2;
+                else scale=.0006;
+            }
+            return true;
+        }
+    };
+    for (bool changeVertical : {false,true}) {
+        Drift drift; drift.scale=.0005; drift.vertical=changeVertical;
+        require(adjustOscilloscopeAutoPeriod(&drift,stop,error) && drift.pilots==2 && drift.captures==5 &&
+                std::abs(drift.periodLevels.last()-8.88)<1e-12,
+                "mixed timebase or channel scales counted toward three stable records");
+    }
+}
 void savePeriodEvidence(const QString &name,const QStringList &log) {
     QFile file(TestEvidence::path("auto-period/"+name+".txt"));
     require(file.open(QIODevice::WriteOnly),"cannot save Auto Period evidence");
@@ -299,10 +429,10 @@ void testAutoPeriod() {
     PeriodScope scope;
     int archived=0;
     require(adjustOscilloscopeAutoPeriod(&scope, stop, error, [&](const ScopeCaptureRecord &record) {
-        require(record.phase=="Auto Period" && !record.clipped && record.channels.size()==2,
+        require((record.phase=="Auto Period" || record.phase=="Auto Period reference") && !record.clipped && record.channels.size()==2,
                 "Auto Period capture context missing"); ++archived;
     }), "auto period failed");
-    require(archived==scope.captures,"Auto Period completed records omitted");
+    require(archived==scope.captures+scope.pilots && scope.pilots==2,"Auto Period pilot or completed records omitted");
     require(scope.captures == 6 && std::abs(scope.scale - .0005) < 1e-12, "five cycle scale incorrect");
     require(scope.commands.contains("MEASUrement:ADDNew \"MEAS2\"")
         && !scope.commands.contains("MEASUrement:DELete \"MEAS1\""), "existing measurement overwritten");
@@ -339,9 +469,9 @@ void testAutoPeriod() {
     require(adjustOscilloscopeAutoPeriod(&clipped, stop, error, [&](const ScopeCaptureRecord &record) {
         ++allRecords; archivedClipped+=record.clipped;
     })
-        && clipped.captures == 13 && std::abs(clipped.verticalScale - 128) < 1e-6 && clipped.periodReads >= 6,
+        && clipped.captures == 6 && clipped.pilots==9 && std::abs(clipped.verticalScale - 128) < 1e-6 && clipped.periodReads >= 6,
         "vertical retries consumed period attempts or failed to reacquire");
-    require(allRecords==13 && archivedClipped==7,"Auto Period clipping diagnostics missing");
+    require(allRecords==15 && archivedClipped==7,"Auto Period clipping diagnostics missing");
     for (int failure = 0; failure < 4; ++failure) {
         PeriodScope failed; failed.clippedCaptures = 100;
         if (failure == 0) failed.stuckScale = true;
@@ -408,10 +538,12 @@ void testAutoPeriod() {
 int main(int argc,char** argv) {
     QCoreApplication app(argc,argv);
     try {
+        if(app.arguments().contains("--period-trigger")){testPeriodTrigger();return 0;}
         if(app.arguments().contains("--issue4-short-window")){testShortPeriodWindow();return 0;}
         if(app.arguments().contains("--issue4-delayed-result")){testDelayedPeriodResult();return 0;}
         if(app.arguments().contains("--issue4-late-result")){testLatePeriodResult();return 0;}
         if(app.arguments().contains("--issue4-late-readback")){testLateScaleReadback();return 0;}
+        testPeriodTrigger();
         testAcceptedPeriodWindow();
         if (app.arguments().contains("--window")) return 0;
         testAutoPeriod();

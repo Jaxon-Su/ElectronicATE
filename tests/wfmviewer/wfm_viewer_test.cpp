@@ -529,6 +529,49 @@ private slots:
         drag(pixel(.5,.5),pixel(.5,.5)+QPoint(2,2));QCOMPARE(vm.viewRange().from,selected.from);
         plot.setInteractionMode(WaveformPlot::InteractionMode::Pan);drag(pixel(.5,.5),pixel(.6,.6));
         QVERIFY(vm.viewRange().from<selected.from);QVERIFY(vm.viewRange().minimum>selected.minimum);
+        const auto tBefore1=vm.cursor1(), tBefore2=vm.cursor2();
+        const auto yBefore1=vm.amplitudeCursor1(), yBefore2=vm.amplitudeCursor2();
+        for (auto mode : {WaveformPlot::InteractionMode::Cursors, WaveformPlot::InteractionMode::Pan,
+                          WaveformPlot::InteractionMode::ZoomRegion}) {
+            vm.zoomTo(selected); plot.setInteractionMode(mode);
+            const QPoint start=pixel((tBefore1-selected.from)/(selected.to-selected.from),.5);
+            const QPoint end=start+QPoint(35,18);
+            QTest::mousePress(&plot,Qt::RightButton,Qt::NoModifier,start);
+            QTest::mouseClick(&plot,Qt::LeftButton,Qt::NoModifier,start);
+            QTest::mouseMove(&plot,end);
+            QVERIFY(vm.viewRange().from<selected.from && vm.viewRange().minimum>selected.minimum);
+            QTest::mouseRelease(&plot,Qt::RightButton,Qt::NoModifier,end);
+            const auto moved=vm.viewRange();
+            QVERIFY(moved.from<selected.from && moved.minimum>selected.minimum);
+            QVERIFY(std::abs((moved.to-moved.from)-(selected.to-selected.from)) < span*1e-10);
+            QVERIFY(std::abs((moved.maximum-moved.minimum)-(selected.maximum-selected.minimum)) < amp*1e-10);
+            QCOMPARE(vm.cursor1(),tBefore1); QCOMPARE(vm.cursor2(),tBefore2);
+            QCOMPARE(vm.amplitudeCursor1(),yBefore1); QCOMPARE(vm.amplitudeCursor2(),yBefore2);
+            QCOMPARE(plot.cursor().shape(), mode==WaveformPlot::InteractionMode::Pan ? Qt::OpenHandCursor : Qt::CrossCursor);
+            QTest::mouseClick(&plot,Qt::RightButton,Qt::NoModifier,end);
+            QCOMPARE(vm.viewRange().from,moved.from); QCOMPARE(vm.viewRange().minimum,moved.minimum);
+            // The platform delivers a double-click instead of the second press.
+            QTest::mouseDClick(&plot,Qt::RightButton,Qt::NoModifier,end);
+            QTest::mouseMove(&plot,start);
+            QTest::mouseRelease(&plot,Qt::RightButton,Qt::NoModifier,start);
+            QVERIFY(vm.viewRange().from>moved.from && vm.viewRange().minimum<moved.minimum);
+            QCOMPARE(vm.cursor1(),tBefore1); QCOMPARE(vm.amplitudeCursor1(),yBefore1);
+        }
+        // Zoom was selected before the shortcut. The next left drag still draws a region.
+        const auto beforeLeftZoom=vm.viewRange();
+        drag(pixel(.2,.2),pixel(.8,.8));
+        QVERIFY(vm.viewRange().to-vm.viewRange().from < beforeLeftZoom.to-beforeLeftZoom.from);
+        for (auto interruption : {QEvent::UngrabMouse,QEvent::EnabledChange,QEvent::Hide}) {
+            vm.zoomTo(selected);
+            QTest::mousePress(&plot,Qt::RightButton,Qt::NoModifier,pixel(.5,.5));
+            if (interruption==QEvent::EnabledChange) { plot.setEnabled(false); plot.setEnabled(true); }
+            else if (interruption==QEvent::Hide) { plot.hide(); plot.show(); }
+            else { QEvent lostGrab(interruption); QApplication::sendEvent(&plot,&lostGrab); }
+            QTest::mouseRelease(&plot,Qt::RightButton,Qt::NoModifier,pixel(.6,.6));
+            QCOMPARE(vm.viewRange().from,selected.from); QCOMPARE(vm.viewRange().minimum,selected.minimum);
+            drag(pixel(.2,.2),pixel(.8,.8));
+            QVERIFY(vm.viewRange().to-vm.viewRange().from < selected.to-selected.from);
+        }
         vm.fit();plot.setInteractionMode(WaveformPlot::InteractionMode::Cursors);
         drag(pixel(.25,.5),pixel(.4,.5));QVERIFY(std::abs((vm.cursor1()-full.from)/span-.4)<.003);
         drag(pixel(.75,.5),pixel(.6,.5));QVERIFY(std::abs(vm.deltaTime()/span-.2)<.003);

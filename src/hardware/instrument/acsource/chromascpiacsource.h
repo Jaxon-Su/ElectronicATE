@@ -18,8 +18,7 @@ class ChromaScpiACSource : public ACSource {
 
   protected:
     ChromaScpiACSource(const QString &model, ACSourceFamily family, ICommunication *comm);
-    int readTextResponse(QByteArray &reply, int limit) override
-    { return m_comm ? m_comm->readScpiText(reply, limit) : -1; }
+    bool usesScpiLineFraming() const override { return true; }
     void command(const QString &value);
     QString textReply(const QString &query);
     double scalar(const QString &query);

@@ -77,12 +77,12 @@ void referenceFailureContract()
     using namespace OscilloscopeAcquisition;
     class Reference : public Scope {
     public:
-        bool beginAutoReference(int &budget,QString &error) override {
+        bool beginReferenceRecord(ScopeTriggerMode, int &budget,QString &error) override {
             ++starts;budget=25;
             if(mode=="begin-error"){error="begin failure";return false;}
             return true;
         }
-        ScopeReferenceStatus pollAutoReference(QString &state,QString &error) override {
+        ScopeReferenceStatus pollReferenceRecord(QString &state,QString &error) override {
             state="mode=AUTO count=0";
             if(mode=="error"){error="query failure";return ScopeReferenceStatus::Error;}
             if(mode=="throw")throw std::runtime_error("query threw");
@@ -95,7 +95,7 @@ void referenceFailureContract()
     for(const QString mode:{"begin-error","error","throw","cancel","timeout","phase","late"}) {
         Reference scope;scope.mode=mode;QAtomicInt stop{0};scope.cancel=&stop;
         QString error;QElapsedTimer clock;clock.start();
-        const auto result=acquireAutoRecord(&scope,stop,mode=="phase"?5:100,error);
+        const auto result=acquireReferenceRecord(&scope,stop,mode=="phase"?5:100,error);
         const auto expected=mode=="late"?AcquisitionResult::CompletedAfterTimeout:
             mode=="cancel"?AcquisitionResult::Cancelled:
             mode=="timeout"||mode=="phase"?AcquisitionResult::CaptureTimeout:AcquisitionResult::CommError;
@@ -105,7 +105,7 @@ void referenceFailureContract()
         if(mode=="error")require(error.contains("query failure")&&error.contains("count=0"),"reference error lost cause/state");
     }
     Reference stopped;QAtomicInt stop{1};QString error;
-    require(acquireAutoRecord(&stopped,stop,100,error)==AcquisitionResult::Cancelled && stopped.starts==0,
+    require(acquireReferenceRecord(&stopped,stop,100,error)==AcquisitionResult::Cancelled && stopped.starts==0,
             "pre-cancelled reference started acquisition");
 }
 void triggerGridContract()
@@ -163,8 +163,8 @@ int main(int argc, char** argv) {
                 require(!autoMode,"AUTO DC reference incorrectly started Single");
                 ++starts;normalLevel=level;return true;
             }
-            bool beginAutoReference(int &budget,QString &) override { budget=30;referenceStarted=true;return true; }
-            ScopeReferenceStatus pollAutoReference(QString &state,QString &) override {
+            bool beginReferenceRecord(ScopeTriggerMode, int &budget,QString &) override { budget=30;referenceStarted=true;return true; }
+            ScopeReferenceStatus pollReferenceRecord(QString &state,QString &) override {
                 state="mode=AUTO stop-after=RUNSTOP acquisition=RUN count=0";
                 return stall?ScopeReferenceStatus::Pending:ScopeReferenceStatus::Completed;
             }
