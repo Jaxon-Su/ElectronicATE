@@ -99,7 +99,7 @@ class GroupedConditionsModel : public QAbstractTableModel
             if (m_kind == TableKind::Load && row == 0) {
                 snapshot.loadMeta.ranges.resize(m_outputs);
                 if (!m_vm->loadRangeOptions(output + 1, text).contains(snapshot.loadMeta.ranges[output]))
-                    snapshot.loadMeta.ranges[output] = "Auto Range";
+                    snapshot.loadMeta.ranges[output] = ConditionValues::DefaultLoadRange;
             }
         } else {
             const int record = row - metaRows();
@@ -324,7 +324,7 @@ class GroupedConditionsModel : public QAbstractTableModel
                                           : m_vm->loadRangeOptions(
                                                 output + 1, snapshot.loadMeta.modes.value(output, "CC"));
                         if (value.isEmpty())
-                            value = "Auto Range";
+                            value = ConditionValues::DefaultLoadRange;
                         if (!choices.contains(value))
                             choices << value;
                     }

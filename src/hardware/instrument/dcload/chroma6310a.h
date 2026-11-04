@@ -23,7 +23,8 @@
 class Chroma6310A : public Chroma6310 {
   public:
     // subModel: 如 "63103A"、"63123A"
-    explicit Chroma6310A(const QString& subModel, ICommunication* comm = nullptr) : Chroma6310(subModel, comm)
+    explicit Chroma6310A(const QString& subModel, ICommunication* comm = nullptr, bool legacyFrame = false)
+        : Chroma6310(subModel, comm), m_legacyFrame(legacyFrame)
     {
     }
 
@@ -39,4 +40,7 @@ class Chroma6310A : public Chroma6310 {
     // 識別
     QString model() const override { return "6310A"; }
     QString vendor() const override { return "Chroma"; }
+  private:
+    QString currentMode(double current, double voltage, const QString &requestedMode) const;
+    bool m_legacyFrame;
 };

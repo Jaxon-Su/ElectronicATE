@@ -1,4 +1,6 @@
 #include "instrumentcreator.h"
+#include "chroma63600frame.h"
+#include "chroma6310frame.h"
 #include "acsource.h"
 #include "dcload.h"
 #include "relay.h"
@@ -106,13 +108,16 @@ InstrumentCreator::DCLoadResult InstrumentCreator::createDCLoads(const Instrumen
                 }
                 ++mapped;
                 try {
+                    const auto frameError = Chroma6310Frame::isFrame(ic.modelName)
+                        ? Chroma6310Frame::mappingError(config, ic, i) : Chroma63600Frame::mappingError(config, ic, i);
+                    if (!frameError.isEmpty()) throw std::invalid_argument(frameError.toStdString());
                     if (forShutdown && ic.channelNumbers.value(i, -1) <= 0)
                         throw std::invalid_argument("Invalid hardware channel for Load OFF");
                     if (ch.subModel.isEmpty()) {
                         record(ic.name, "mapped channel has no model");
                         continue;
                     }
-                    auto load = std::unique_ptr<DCLoad>(DCLoadFactory::createDCLoad(ch.subModel, comm));
+                    auto load = std::unique_ptr<DCLoad>(DCLoadFactory::createDCLoad(ch.subModel, comm, ic.modelName));
                     if (!load) {
                         record(ic.name, "unsupported load model: " + ch.subModel);
                         continue;

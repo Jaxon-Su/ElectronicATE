@@ -192,13 +192,24 @@ endif()
 # 編譯時自動複製資源（給開發用）
 # ========================================
 
-# 複製 XML 資料夾到 build 目錄（開發測試用）
-add_custom_command(TARGET ElectronicATE POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_SOURCE_DIR}/XML
-        $<TARGET_FILE_DIR:ElectronicATE>/XML
-    COMMENT "Copying XML folder to build directory"
+# The app loads XML beside its executable. Refresh it even when no C++ target relinks.
+file(GLOB_RECURSE runtime_xml CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/XML"
+     "${CMAKE_CURRENT_SOURCE_DIR}/XML/*.xml")
+set(copy_xml_commands "")
+foreach(xml IN LISTS runtime_xml)
+    string(APPEND copy_xml_commands
+        "configure_file(\"${CMAKE_CURRENT_SOURCE_DIR}/XML/${xml}\" \"$<TARGET_FILE_DIR:ElectronicATE>/XML/${xml}\" COPYONLY)\n")
+endforeach()
+# Resolve the executable directory per configuration without making the copy depend on the linker.
+set(copy_xml_script "${CMAKE_CURRENT_BINARY_DIR}/sync-runtime-xml-$<CONFIG>.cmake")
+file(GENERATE OUTPUT "${copy_xml_script}" CONTENT "${copy_xml_commands}")
+add_custom_target(ElectronicATERuntimeXml
+    COMMAND "${CMAKE_COMMAND}" -P "${copy_xml_script}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/XML/Instrument.xml"
+    COMMENT "Synchronizing runtime XML"
+    VERBATIM
 )
+add_dependencies(ElectronicATE ElectronicATERuntimeXml)
 
 # ========================================
 # Windows 自動部署 Qt DLL / plugins

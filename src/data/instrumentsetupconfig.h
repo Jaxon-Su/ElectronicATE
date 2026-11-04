@@ -7,7 +7,7 @@
 
 struct ChannelSetting {
     QString subModel;
-    int index;
+    int index = 0;
     int syncType = -1; // -1=unspecified, 0=NONE, 1=MASTER, 2=SLAVE
 };
 

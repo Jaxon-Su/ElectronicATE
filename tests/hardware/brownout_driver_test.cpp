@@ -5,8 +5,9 @@
 #include "loadcapabilitycatalog.h"
 #include "brownoutio.h"
 #include "chroma61505.h"
-#include "chroma61509.h"
-#include "chroma6530.h"
+#include "acsourcefactory.h"
+#include "acinputvalidation.h"
+#include "scpilinereader.h"
 #include "chroma62000.h"
 #include <QCoreApplication>
 #include <QtEndian>
@@ -36,7 +37,8 @@ public:
     int timeoutMs()const override{return timeout;}void setTimeoutMs(int value)override{timeout=value;}
     QString last,fail,shortWrite;QStringList trace;bool consumed=false,throwRead=false;int timeout=1234;
     QMap<QString,QList<QByteArray>>queued;
-    QMap<QString,QByteArray>values{{"*ESR?","0"},{"*OPC?","1"},{"DISplay:GLObal:CH1:STATE?","ON"},
+    QMap<QString,QByteArray>values{{"SYSTem:ERRor?", "0,\"No error\""}, {"VOLTage:EPRogram?", "OFF"},
+        {"*ESR?","0"},{"*OPC?","1"},{"DISplay:GLObal:CH1:STATE?","ON"},
         {"DISplay:GLObal:CH2:STATE?","OFF"},{"DISplay:GLObal:CH3:STATE?","OFF"},{"DISplay:GLObal:CH4:STATE?","OFF"},
         {"HORizontal:FASTframe:STATE?","0"},{"HORizontal:RECOrdlength?","4"},{"CH1:SCAle?","1"},
         {"TRIGger:A:TYPe?","EDGE"},{"TRIGger:A:EDGE:SOUrce?","CH2"},{"TRIGger:A:EDGE:SLOpe?","RISE"},
@@ -129,6 +131,37 @@ void monitorTest(){
 }
 void monitor6310Test(bool seriesA)
 {
+    Transport transport;
+    const QString model07 = seriesA ? "63107A" : "63107";
+    std::unique_ptr<DCLoad> dual(DCLoadFactory::createDCLoad(model07, &transport, "6314"));
+    expect(bool(dual), "missing 63107 load");
+    dual->connect();
+    StaticCurrentParam params;
+    params.levels = {3}; params.expectedVoltage = 5;
+    dual->setRealChannel(1);
+    dual->setStaticCurrent(params);
+    expect(transport.trace.contains("MODE CCL"), "left 63107 used high range");
+    transport.trace.clear();
+    params.levels = {8};
+    bool rejected = false;
+    try { dual->setStaticCurrent(params); } catch (const std::invalid_argument &) { rejected = true; }
+    expect(rejected && transport.trace.isEmpty(), "63107 left channel accepted the right rating");
+    dual->setRealChannel(2);
+    dual->setStaticCurrent(params);
+    expect(transport.trace.contains("MODE CCH"), "right 63107 high range unavailable");
+    transport.trace.clear();
+    dual->setLoadMode("CPL");
+    expect(transport.trace.isEmpty(), "old frame issued an A-only mode");
+    if (seriesA) {
+        StaticCurrentParam voltageCheck; voltageCheck.levels = {1}; voltageCheck.expectedVoltage = 100;
+        for (const QString variant : {"63123A", "63123A-120"}) {
+            std::unique_ptr<DCLoad> load(DCLoadFactory::createDCLoad(variant, &transport, "6314A"));
+            load->connect();
+            bool blocked = false;
+            try { load->setStaticCurrent(voltageCheck); } catch (const std::invalid_argument &) { blocked = true; }
+            expect(blocked == (variant == "63123A"), "63123A voltage variant limits");
+        }
+    }
     const auto &models = seriesA ? LoadCapabilityCatalog::Chroma6310AModels : LoadCapabilityCatalog::Chroma6310Models;
     for (const auto &model : models) {
         Transport t;
@@ -249,12 +282,14 @@ void adapter6310Test(const QString &scenario)
     expect(io->shutdown(error) && off == 1 && source->trace.last() == "OUTPut?", "6310 path skipped source/load cleanup");
 }
 
-void adapterTest(const QString &scenario){
+void adapterTest(const QString &scenario, const QString &model = {}){
     TestSequenceExecutionContext c;c.inputs={{"3phase","90","50","0"}};c.loads={{"L1",{"1"}}};
-    InstrumentConfig ac;ac.name="ACSource";ac.type="InputSource";ac.modelName="61509";
+    InstrumentConfig ac;ac.name="ACSource";ac.type="InputSource";ac.modelName=model.isEmpty() ? "61509" : model;
     ac.commConfig=CommunicationConfig::fromResourceString("GPIB0::30::INSTR");
     ac.commConfig.timeout=321;
-    if(scenario=="adapter_6530"){ac.modelName="6530";c.inputs[0].phaseMode="1phase";}
+    if(scenario=="adapter_6530"){ac.modelName=model.isEmpty() ? "6530" : model;c.inputs[0].phaseMode="1phase";}
+    if(scenario=="new_single") c.inputs[0].phaseMode="1phase";
+    if(scenario=="new_three") c.inputs[0].vin="220"; // Two live wires, e.g. R–S, 220 Vrms.
     InstrumentConfig load;load.name="Load1";load.type="Load";load.modelName="63600-5";
     load.commConfig=CommunicationConfig::fromResourceString("GPIB0::1::INSTR");
     load.channels={{"63640-80-80",1}};load.channelNumbers={3};c.instrumentSetup.instruments={ac,load};
@@ -262,6 +297,17 @@ void adapterTest(const QString &scenario){
     int creates=0,on=0,off=0;Transport*source=nullptr;Transport*monitor=nullptr;bool stopped=false;
     InstrumentOperations ops;ops.load=[&](const auto&,const auto&,int,const auto&,LoadAction action,bool){if(action==LoadAction::LoadOn){++on;if(scenario=="adapter_cancel")stopped=true;}else if(action==LoadAction::LoadOff)++off;return InstrumentOperationResult{};};
     const auto create=[&](const QString&address)->ICommunication*{++creates;auto*t=new Transport;if(address.contains("30"))source=t;else monitor=t;return t;};
+    if (scenario=="adapter" && model.isEmpty()) {
+        auto alternate=c;
+        auto &frame=alternate.instrumentSetup.instruments[1];
+        frame.modelName="63601-5";frame.channelNumbers={10};
+        frame.channels[0].subModel="63610-80-20";
+        (void)prepareBrownOutIo(alternate,cfg,ops,create);
+        frame.channels[0].subModel="63640-80-80";
+        bool rejected=false;
+        try { (void)prepareBrownOutIo(alternate,cfg,ops,create); } catch (const std::invalid_argument &) {rejected=true;}
+        expect(rejected && creates==0,"Brown Out accepted CH10 on a single-channel module");
+    }
     auto factory=prepareBrownOutIo(c,cfg,ops,create);expect(creates==0,"preflight opened transport");
     auto io=factory();
     if(scenario=="adapter_cancel") {
@@ -271,6 +317,30 @@ void adapterTest(const QString &scenario){
     }
     io->start([] { return false; });expect(creates==2&&on==1,"Brown Out input/load setup failed");
     expect(source->timeout==321 && monitor->timeout==1000,"Brown Out lost configured timeout or operation cap");
+    if(scenario=="new_single" || scenario=="new_three") {
+        const bool compact = model.startsWith("64");
+        const bool three = scenario=="new_three";
+        const QStringList setup = source->trace;
+        if(compact) {
+            expect(setup.contains("VOLTage:RANGe 300") && !setup.join('|').contains("NPHase")
+                   && !setup.join('|').contains("ORELay") && !setup.join('|').contains("TPHase"),"wrong 6400 command set");
+        } else {
+            const auto topology = model=="6560" ? "NPHase PARALLEL" : three ? "NPHase THREE" : "NPHase SINGLE";
+            const int mode=setup.indexOf(topology), range=setup.indexOf("RANGe HIGH"), relay=setup.indexOf("ORELay ON");
+            expect(mode>setup.indexOf("OUTPut OFF") && range>mode && relay>range && setup.indexOf("OUTPut ON")>relay
+                   && !setup.contains("RANGe AUTO"),"6500 switched topology or enabled out of order");
+            expect(setup.contains("INSTrument:COUPle ALL")==three && setup.contains("INSTrument:NSELect 1")==three,
+                   "phase coupling/selection sent in the wrong mode");
+        }
+        expect(setup.contains(three ? "VOLTage 127.0" : "VOLTage 90.0"),"initial per-phase voltage wrong");
+        io->setVoltage(60);
+        auto ramp=source->trace.mid(setup.size());
+        expect(ramp.contains(compact?"VOLTage 60.0":three?"V 34.6":"V 60.0") && ramp.contains("VOLTage?")
+               && !ramp.join('|').contains("ORELay") && !ramp.contains("OUTPut ON") && !ramp.join('|').contains("RANG"),
+               "live ramp changed relay/range or used the wrong voltage");
+        QString error;expect(io->shutdown(error)&&off==1,qPrintable(error));
+        return;
+    }
     if(scenario=="adapter_6530") {
         const auto before=source->trace.size();io->setVoltage(60);
         expect(source->trace.mid(before)==QStringList{"V 60.0","VOLTage?"},"6530 ramp did not change live voltage without toggling output");
@@ -402,8 +472,76 @@ void dualAdapterTest(const QString &scenario) {
     expect(source->trace.contains("OUTPut OFF"),"AC OFF missing");
     for(int i=5;i<=7;++i) expect(ports[QString("GPIB0::%1::INSTR").arg(i)]->trace.last()=="CONF:OUTP?","DC cleanup skipped after failure");
 }
+void fragmentedAcReplies() {
+    class Stream : public Transport {
+      public:
+        QList<QByteArray> fragments;
+        ScpiLineReader reader;
+        int read(QByteArray &bytes,int) override {
+            if (fragments.isEmpty()) return -1;
+            bytes=fragments.takeFirst();return int(bytes.size());
+        }
+        int readScpiText(QByteArray &bytes,int maxLen) override {return reader.read(*this,bytes,maxLen);}
+    } stream;
+    std::unique_ptr<ACSource> source(ACSourceFactory::createACSource("6590",&stream));
+    source->connect();QString error;double volts=-1;
+    stream.fragments={"12","7.0\r","\n"};
+    expect(source->readVoltageSetting(volts,error) && volts==127.0 && stream.timeout==1234,"parsed partial serial voltage");
+    stream.fragments={"O","N\n"};
+    expect(source->outputEnabled(),"fragmented ON reply lost");
+    stream.fragments={"0",".1\n"};stream.trace.clear();bool rejected=false;
+    try { source->prepareOutput(true,127); } catch (const std::exception &) {rejected=true;}
+    expect(rejected && stream.trace==QStringList{"OUTPut?"},"partial 0 allowed a live relay switch");
+    stream.fragments={"12"};volts=77;
+    expect(!source->readVoltageSetting(volts,error) && volts==77 && stream.timeout==1234,"missing LF returned valid voltage");
+    stream.fragments={"3\n"};
+    expect(!source->readVoltageSetting(volts,error) && volts==77,"accepted stale tail after a serial timeout");
+    stream.reader.reset();stream.fragments={"24\r\n"};
+    expect(source->readVoltageSetting(volts,error) && volts==24,"port reopen did not restore clean text reads");
+}
+
+void newAcFailureCases() {
+    fragmentedAcReplies();
+    Transport t;
+    std::unique_ptr<ACSource> high(ACSourceFactory::createACSource("6590",&t));
+    high->connect();
+    auto rejects=[](auto action){try{action();}catch(const std::exception&){return true;}return false;};
+    t.values["OUTPut?"]="ON";
+    expect(rejects([&]{high->prepareOutput(true,120);}) && t.trace==QStringList{"OUTPut?"},
+           "live topology change touched hardware");
+    t.values["OUTPut?"]="OFF";t.trace.clear();
+    t.queued["SYSTem:ERRor?"]={"No error","Data range error"};
+    expect(rejects([&]{high->prepareOutput(true,120);}) && rejects([&]{high->setPowerOn();})
+           && !t.trace.contains("ORELay ON") && !t.trace.contains("OUTPut ON"), "rejected setup still allowed enable");
+    t.queued["SYSTem:ERRor?"]={"0,\"No error\"\nData range error"};t.trace.clear();
+    expect(rejects([&]{high->prepareOutput(true,120);}) && !t.trace.contains("NPHase THREE"),
+           "a second line in an error reply was silently ignored");
+    for (const auto query : {"INSTrument:COUPle?", "INSTrument:NSELect?", "RANGe?"}) {
+        t.queued[query]={"unexpected"};t.trace.clear();
+        expect(rejects([&]{high->prepareOutput(true,120);}) && rejects([&]{high->setPowerOn();})
+               && !t.trace.contains("ORELay ON"),"wrong phase/range readback allowed enable");
+    }
+    high->prepareOutput(true,120);
+    t.shortWrite="OUTPut ON";t.trace.clear();
+    expect(rejects([&]{high->setPowerOn();}) && t.trace.contains("OUTPut OFF") && t.trace.contains("ORELay OFF"),
+           "partial ON did not attempt OFF and open relay");
+    t.shortWrite.clear();t.fail="OUTPut OFF";t.trace.clear();
+    expect(rejects([&]{high->setPowerOff();}) && t.trace.contains("ORELay OFF") && t.trace.contains("OUTPut?"),
+           "failed OFF skipped relay or readback");
+    t.fail.clear();t.trace.clear();
+    expect(rejects([&]{high->setVoltageWhileOn(50);}) && t.trace.isEmpty(),"immediate voltage write sent while off");
+    std::unique_ptr<ACSource> low(ACSourceFactory::createACSource("6415",&t));
+    low->connect();t.values["VOLTage:EPRogram?"]="ON";
+    expect(rejects([&]{low->prepareOutput(false,100);}) && !t.trace.contains("VOLTage:RANGe 300"),"external control ignored");
+    t.values["MEASure:VOLTage:AC?"]="120";t.values["MEASure:CURRent:AC?"]="2.5";
+    t.values["MEASure:POWer:AC:REACtive?"]="36";t.values["MEASure:POWer:AC:APParent?"]="301";
+    expect(low->apparentPower()==300 && rejects([&]{low->reactivePower();}),"6400 returned unsupported raw power");
+    expect(high->reactivePower()==36 && high->apparentPower()==301,"6500 power query incorrect");
+}
+
 void sourceTest() {
-    Transport t;Chroma61505 a(&t);Chroma61509 b(&t);Chroma6530 c(&t);Chroma62000 d("62050H-40",&t);
+    newAcFailureCases();
+    Transport t;Chroma61505 a(&t);Chroma62000 d("62050H-40",&t);
     const auto check=[&](auto &source,const QString &query){
         source.connect();QString error;double value=0;t.values[query]="12.3";
         expect(source.readVoltageSetting(value,error)&&value==12.3&&t.trace.last()==query,"wrong model voltage-setting query");
@@ -416,6 +554,31 @@ void sourceTest() {
         t.throwRead=true;expect(!source.readVoltageSetting(value,error)&&value==99,"source read exception changed value");t.throwRead=false;
         expect(source.readVoltageSetting(value,error)&&value==0&&error.isEmpty()&&source.lastError().isEmpty(),"source query did not recover or clear error");
     };
-    check(a,"SOURce:VOLTage:AC?");check(b,"SOURce:VOLTage:AC?");check(c,"VOLTage?");check(d,"SOUR:VOLT?");
+    check(a,"SOURce:VOLTage:AC?");check(d,"SOUR:VOLT?");
+    const auto threePhase = ParameterParser::parseInputRow({"3phase", "480", "60", "0"});
+    for (const QString name : {"61507","61508","61509","6512","6520","6530"}) {
+        std::unique_ptr<ACSource> source(ACSourceFactory::createACSource(name, &t));
+        expect(source && source->model() == name, "factory lost the selected AC model");
+        const bool multiPhase = name.startsWith("615");
+        check(*source, multiPhase ? "SOURce:VOLTage:AC?" : "VOLTage?");
+        expect(validateAcParameters(name, threePhase).isEmpty() == multiPhase, "wrong AC phase preflight");
+        adapterTest(multiPhase ? "adapter" : "adapter_6530", name);
+    }
+    for (const QString name : {"6415","6420","6430","6560","6590"}) {
+        std::unique_ptr<ACSource> source(ACSourceFactory::createACSource(name,&t));
+        expect(source && source->model()==name,"new AC model selectable but not constructible");
+        check(*source,"VOLTage?");
+        const bool compact=name.startsWith("64");
+        const auto valid=[&](QString mode,QString v,QString f,QString angle){
+            return validateAcParameters(name,ParameterParser::parseInputRow({mode,v,f,angle})).isEmpty();
+        };
+        expect(valid("1phase","300","45","0") && !valid("1phase","301","60","0")
+               && !valid("1phase","120","44","0") && valid("1phase","120",compact?"500":"1000","0")
+               && !valid("1phase","120",compact?"501":"1001","0"),"new AC model rating limits incorrect");
+        expect(valid("3phase","480","60","0")==(name=="6590") && valid("1phase","120","60","90")==!compact,
+               "unsupported phase or start angle passed preflight");
+        adapterTest("new_single",name);
+        if(name=="6590") adapterTest("new_three",name);
+    }
 }
 int main(int argc,char**argv){QCoreApplication app(argc,argv);try{const auto s=app.arguments().value(1);if(s.startsWith("dual_"))dualAdapterTest(s);else if(s=="source")sourceTest();else if(s=="monitor")monitorTest();else if(s.startsWith("monitor_6310"))monitor6310Test(s.endsWith('a'));else if(s.startsWith("adapter_6310"))adapter6310Test(s);else if(s=="adapter_dc")dcAdapterTest();else if(s.startsWith("adapter"))adapterTest(s);else scopeTest(s);std::cout<<"OK\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

@@ -184,7 +184,7 @@ bool InstrumentWithCommBase::queryString(const QString &cmd, QString &result)
         return false;
     }
     QByteArray resp;
-    int n = read(resp, 256);
+    int n = readTextResponse(resp, 256);
     if (n <= 0) {
         m_lastError = QString("Read failed for: %1").arg(cmd);
         qWarning() << "[Instrument]" << m_lastError;
@@ -373,7 +373,7 @@ bool InstrumentWithCommBase::queryOutputEnabled(const QString &query)
     auto bytes = query.toUtf8();
     if (!bytes.endsWith('\n')) bytes += '\n';
     QByteArray response;
-    if (write(bytes) != bytes.size() || read(response, 256) <= 0)
+    if (write(bytes) != bytes.size() || readTextResponse(response, 256) <= 0)
         throw std::runtime_error(
             QString("%1: output state query failed (%2)").arg(model(), query).toStdString());
     const QString value = QString::fromUtf8(response).trimmed().toUpper();
@@ -393,7 +393,7 @@ void InstrumentWithCommBase::requireOutputOff(const QString &query)
         if (!bytes.endsWith('\n'))
             bytes += '\n';
         QByteArray response;
-        if (write(bytes) != bytes.size() || read(response, 256) <= 0)
+        if (write(bytes) != bytes.size() || readTextResponse(response, 256) <= 0)
             throw std::runtime_error(
                 QString("%1: output OFF readback failed (%2)").arg(model(), query).toStdString());
         const QString value = QString::fromUtf8(response).trimmed().toUpper();

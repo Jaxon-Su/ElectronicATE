@@ -2,6 +2,8 @@
 #include "instrumentsetupmodel.h"
 #include <QSet>
 #include "channelnumberpolicy.h"
+#include "chroma6310frame.h"
+#include "chroma63600frame.h"
 #include <QDebug>
 #include <QPointer>
 
@@ -14,9 +16,23 @@ InstrumentSetupViewModel::InstrumentSetupViewModel(InstrumentSetupModel* model, 
 
 // 查詢接口
 
-QStringList InstrumentSetupViewModel::subModels(const QString& modelName) const
+QStringList InstrumentSetupViewModel::subModels(const QString& modelName, int channel, const QMap<int, QString>& installed) const
 {
-    return m_model->getSubModelMap().value(modelName);
+    QStringList choices;
+    for (const auto &module : m_model->getSubModelMap().value(modelName)) {
+        if (!Chroma63600Frame::allows(modelName, channel, module)) continue;
+        if (modelName == "63601-5" && channel == 10 && !installed.value(9).isEmpty() && installed.value(9) != module) continue;
+        if (Chroma6310Frame::isFrame(modelName)) {
+            if (!Chroma6310Frame::allows(modelName, channel, module)) continue;
+            bool fits = true;
+            for (auto it = installed.cbegin(); it != installed.cend(); ++it)
+                if (it.key() != channel && !it.value().isEmpty() &&
+                    !Chroma6310Frame::canShareFrame(channel, module, it.key(), it.value())) { fits = false; break; }
+            if (!fits) continue;
+        }
+        choices << module;
+    }
+    return choices;
 }
 
 QSet<int> InstrumentSetupViewModel::channelsOfModel(const QString& modelName) const
@@ -95,10 +111,7 @@ void InstrumentSetupViewModel::buildTableRows(const InstrumentSetupConfig& cfg)
 
 void InstrumentSetupViewModel::buildChannelList()
 {
-    QSet<int> channelSet;
-    for (const auto& channelList : m_model->getChannelsMap())
-        channelSet.unite(ChannelNumberPolicy::parse(channelList));
-    m_channels = ChannelNumberPolicy::sorted(channelSet);
+    m_channels = m_model->catalogChannels();
 }
 
 // UI 配置變更處理
@@ -140,7 +153,21 @@ void InstrumentSetupViewModel::enrichConfigsWithChannelNumbers(QList<InstrumentC
 
 void InstrumentSetupViewModel::assignChannelNumbers(InstrumentConfig& inst) const
 {
-    inst.channelNumbers = ChannelNumberPolicy::assign(inst.channels.size(), m_channels);
+    if (inst.channels.isEmpty()) return;
+    if (m_channels.isEmpty()) {
+        if (inst.channelNumbers.isEmpty())
+            inst.channelNumbers = ChannelNumberPolicy::assign(inst.channels.size(), m_channels);
+        return;
+    }
+    if (inst.channelNumbers == m_channels) return;
+    const auto numbers = inst.channelNumbers.isEmpty() ? m_channels : inst.channelNumbers;
+    QList<ChannelSetting> aligned(m_channels.size(), ChannelSetting{});
+    for (int i = 0; i < inst.channels.size(); ++i) {
+        const int col = m_channels.indexOf(numbers.value(i, -1));
+        if (col >= 0) aligned[col] = inst.channels[i];
+    }
+    inst.channels = aligned;
+    inst.channelNumbers = m_channels;
 }
 
 // XML 序列化
@@ -167,7 +194,7 @@ bool InstrumentSetupViewModel::isChannelBasedType(const QString& type) const
 void InstrumentSetupViewModel::validateXml(QXmlStreamReader& reader) const
 {
     InstrumentSetupModel candidate;
-    candidate.loadXml(reader);
+    candidate.loadXml(reader, m_model);
 }
 
 void InstrumentSetupViewModel::publishXmlLoaded()

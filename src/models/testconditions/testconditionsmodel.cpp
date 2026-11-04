@@ -1,4 +1,5 @@
 #include "testconditionsmodel.h"
+#include "conditionvalues.h"
 #include <QDebug>
 #include <QSet>
 
@@ -20,8 +21,8 @@ void TestConditionsModel::resizeLoadOutputs(int count)
     resize(dynamicMeta.vo);
     resize(dynamicMeta.von);
     for (auto &mode : loadMeta.modes) if (mode.isEmpty()) mode = "CC";
-    for (auto &range : loadMeta.ranges) if (range.isEmpty()) range = "Auto Range";
-    for (auto &range : dynamicMeta.ranges) if (range.isEmpty()) range = "Auto Range";
+    for (auto &range : loadMeta.ranges) if (range.isEmpty()) range = ConditionValues::DefaultLoadRange;
+    for (auto &range : dynamicMeta.ranges) if (range.isEmpty()) range = ConditionValues::DefaultLoadRange;
 }
 
 void TestConditionsModel::resizeRelayOutputs(int count)

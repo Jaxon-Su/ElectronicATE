@@ -1,6 +1,7 @@
 
 #pragma once
 #include "icommunication.h"
+#include "scpilinereader.h"
 #include <QSerialPort>
 #include <QString>
 
@@ -18,6 +19,7 @@ class SerialCommunication : public ICommunication {
     void close() override;
     int write(const QByteArray& data) override;
     int read(QByteArray& data, int maxLen) override;
+    int readScpiText(QByteArray& data, int maxLen) override;
     bool isOpen() const override;
     QString lastError() const override { return m_error; }
     bool discardInput() override;
@@ -42,4 +44,5 @@ class SerialCommunication : public ICommunication {
     QSerialPort* m_port = nullptr;
     QString m_error;
     bool m_readTimedOut = false;
+    ScpiLineReader m_textReader;
 };

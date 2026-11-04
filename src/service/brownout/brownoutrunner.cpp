@@ -8,6 +8,7 @@
 #include <thread>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
 namespace {
@@ -312,7 +313,7 @@ MeasurementResult runBrownOut(const BrownOut::Settings &cfg, IScopeBrownOut &sco
         qint64 closedAt = -1;
         qint64 lastProgressAt = 0;
         int observedSteps = 0;
-        quint64 records = 0;
+        int records = 0;
         quint64 previousSequence = baseline.sequence;
         while (true) {
             check();
@@ -336,6 +337,7 @@ MeasurementResult runBrownOut(const BrownOut::Settings &cfg, IScopeBrownOut &sco
                     require(record.sequence > previousSequence && !record.channels.isEmpty(),
                             "Scope returned an old or empty event record");
                     previousSequence = record.sequence;
+                    require(records < std::numeric_limits<int>::max(), "Brown Out trial count exceeds int range");
                     ++records;
                     const double acquiredLevel = level;
                     // Validate the complete record before retaining any channel.

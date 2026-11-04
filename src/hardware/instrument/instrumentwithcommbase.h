@@ -35,6 +35,8 @@ class InstrumentWithCommBase : public InstrumentBase, public IInstrumentComm
     int write(const QByteArray &data);
 
     int read(QByteArray &data, int maxLen);
+    // Existing instruments may use other ASCII terminators. Drivers opt into SCPI framing.
+    virtual int readTextResponse(QByteArray &data, int maxLen) { return read(data, maxLen); }
 
     QString m_lastError;
     void requireOutputOff(const QString &query);

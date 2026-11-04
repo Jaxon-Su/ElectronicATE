@@ -1,4 +1,5 @@
 #include "instrumentsetupviewmodel.h"
+#include "chroma6310frame.h"
 #include <QCoreApplication>
 #include <QPointer>
 #include <iostream>
@@ -16,10 +17,70 @@ QString currentXml(int outputs = 1)
     return xml;
 }
 
+void checkLoadMainframes()
+{
+    InstrumentSetupModel model;
+    InstrumentSetupViewModel vm(&model);
+    require(model.loadBaseXml(INSTRUMENT_CATALOG), "missing shipped catalog");
+    const auto old = vm.subModels("6314", 1), modern = vm.subModels("6314A", 1);
+    require(old.size() == 16 && old.contains("63107") && old.contains("63107A") &&
+            !old.contains("63110A") && !old.contains("63115A"), "old frame module choices");
+    require(modern.size() == 13 && modern.contains("63123A-120") && !modern.contains("63103"),
+            "A frame module choices");
+    require(vm.subModels("6314A", 8) == QStringList{"63102A", "63107A", "63110A"} &&
+            vm.subModels("6314A", 8, {{7, "63107A"}}) == QStringList{"63107A"} &&
+            vm.subModels("6314A", 2, {{1, "63103A"}}).isEmpty(), "dual slot choices");
+    require(vm.subModels("6314", 3, {{1, "63106"}}).isEmpty() &&
+            !vm.subModels("6314", 7).contains("63106") &&
+            vm.subModels("6314A", 7, {{1, "63112A"}}).isEmpty(), "wide module overlap");
+
+    InstrumentConfig load;
+    load.name = "Load1"; load.type = "Load"; load.modelName = "63601-5";
+    load.commConfig = CommunicationConfig::fromResourceString("GPIB0::8::INSTR");
+    load.channels.resize(8); // Old global columns: 1,2,3,4,5,7,9,10.
+    load.channels[5] = {"63640-80-80", 1, 2};
+    load.channels[7] = {"63610-80-20", 2};
+    InstrumentSetupModel legacy;
+    legacy.setInstrumentConfigs({load});
+    QString oldXml; QXmlStreamWriter oldWriter(&oldXml); legacy.writeXml(oldWriter);
+    QXmlStreamReader reader(oldXml); reader.readNextStartElement(); vm.loadXml(reader);
+    const auto checkRestored = [&] {
+        const auto restored = vm.currentConfig().instruments.first();
+        require(restored.channels[restored.channelNumbers.indexOf(7)].index == 1 &&
+                restored.channels[restored.channelNumbers.indexOf(7)].syncType == 2 &&
+                restored.channels[restored.channelNumbers.indexOf(10)].index == 2 &&
+                restored.channels[restored.channelNumbers.indexOf(6)].index == 0, "physical CH renumbered");
+    };
+    require(!reader.hasError(), "legacy channel XML rejected");
+    checkRestored();
+    QString numbered; QXmlStreamWriter writer(&numbered); vm.writeXml(writer);
+    require(numbered.contains("schemaVersion=\"3\"") && numbered.contains("number=\"7\""), "missing physical CH");
+    QXmlStreamReader next(numbered); next.readNextStartElement(); vm.loadXml(next);
+    require(!next.hasError(), "numbered channel XML rejected");
+    checkRestored();
+    auto missing = numbered;
+    missing.remove("number=\"7\"");
+    QXmlStreamReader partial(missing); partial.readNextStartElement(); vm.loadXml(partial);
+    require(partial.hasError(), "missing physical CH accepted");
+    numbered.replace("number=\"8\"", "number=\"7\"");
+    QXmlStreamReader duplicate(numbered); duplicate.readNextStartElement(); vm.loadXml(duplicate);
+    require(duplicate.hasError(), "duplicate physical CH accepted");
+
+    load.modelName = "6314"; load.channelNumbers = {1}; load.channels = {{"63106", 1}};
+    auto peer = load; peer.name = "Load2"; peer.channelNumbers = {3}; peer.channels = {{"63103", 2}};
+    InstrumentSetupConfig shared; shared.instruments = {load, peer};
+    require(!Chroma6310Frame::mappingError(shared, peer, 0).isEmpty(), "shared address slot overlap");
+    shared.instruments[0].channels = {{"63107", 1}};
+    shared.instruments[1].channels = {{"63107", 2}};
+    shared.instruments[1].channelNumbers = {2};
+    require(Chroma6310Frame::mappingError(shared, shared.instruments[1], 0).isEmpty(), "valid dual channel rejected");
+}
+
 int main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
     try {
+        checkLoadMainframes();
         InstrumentSetupModel model;
         InstrumentSetupConfig config;
         config.loadOutputs = 7;

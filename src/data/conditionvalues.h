@@ -4,6 +4,8 @@
 #include <cmath>
 
 namespace ConditionValues {
+inline constexpr char DefaultLoadRange[] = "No Setting";
+
 inline bool finiteNumber(const QString &text, double &value)
 {
     bool ok = false;

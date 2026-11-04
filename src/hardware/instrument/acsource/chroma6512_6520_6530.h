@@ -2,7 +2,7 @@
 #include "acsource.h"
 #include "icommunication.h"
 
-//  Chroma 6530 Programmable AC Source Driver
+//  Chroma 6512/6520/6530 Programmable AC Source Driver
 //  Protocol : GPIB / RS-232C (SCPI)
 //  Manual   : 6530/6520/6512 User's Manual v1.8 (2021-03)
 //
@@ -21,11 +21,11 @@
 //    - 無 DC 電壓輸出 (純 AC 機型)
 //    - setPhaseOn 對應 TPHase（暫態相位角）
 //    - setPhaseOff 在此機型不支援，呼叫將產生警告
-class Chroma6530 : public ACSource {
+class Chroma6512_6520_6530 : public ACSource {
   public:
     bool readVoltageSetting(double &, QString &) override;
-    explicit Chroma6530(ICommunication* comm = nullptr);
-    ~Chroma6530() override;
+    explicit Chroma6512_6520_6530(const QString &modelName, ICommunication* comm = nullptr);
+    ~Chroma6512_6520_6530() override;
 
     // InstrumentBase
     QString model() const override;
@@ -58,7 +58,7 @@ class Chroma6530 : public ACSource {
 
     double freQuency() override; // MEASure:FREQuency?
 
-    // Chroma 6530 專屬功能
+    // Chroma 6512/6520/6530 專屬功能
 
     // 輸出電壓檔位 (LOW=150V / HIGH=300V / AUTO)
     enum class VoltageRange { Low, High, Auto };
@@ -130,6 +130,8 @@ class Chroma6530 : public ACSource {
     void setLocalMode();  // SYSTem:LOCal
 
   private:
+    const QString m_model;
+    const QString m_logTag;
     static constexpr double kFreqMin = 15.0;
     static constexpr double kFreqMax = 2000.0;
 };

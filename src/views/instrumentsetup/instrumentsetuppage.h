@@ -102,6 +102,7 @@ class InstrumentSetupPage : public QWidget {
 
     // 事件處理
     void connectModelChangeHandler(int row, const TableRowInfo& rowInfo, QComboBox* modelCb);
+    void refreshModuleChoices(int row, const QString &type);
     void updateSubModelComboBox(int row, int col, bool enable, const QStringList& subList);
     void updateIndexComboBox(int row, int col, bool enable, const QString& type);
     void updateSyncRoleComboBox(int row, int col, bool enable, const QString& type);

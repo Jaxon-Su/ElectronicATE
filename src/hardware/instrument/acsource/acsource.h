@@ -12,6 +12,8 @@ class ACSource : public InstrumentWithCommBase {
     virtual ~ACSource() = default;
 
     // AC Source專屬介面
+    // Called before programming a condition. phaseVoltage is the RMS setting per output.
+    virtual bool prepareOutput(bool threePhase, double /*phaseVoltage*/) { return !threePhase; }
     virtual void setVoltage(double v) = 0;
     // Update an already enabled output without toggling its relay or restarting the test.
     virtual void setVoltageWhileOn(double v) { setVoltage(v); }

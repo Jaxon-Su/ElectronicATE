@@ -26,10 +26,12 @@ class ConditionRowsModel : public QAbstractTableModel
     }
     QVariant headerData(int section, Qt::Orientation orientation, int role) const override
     {
+        if (orientation == Qt::Horizontal && role == Qt::ToolTipRole && m_kind == TableKind::Input && section == 3)
+            return tr("填待測物兩端的有效值：單相填輸出電壓，三相填兩條火線之間的線間電壓。例如 R–S 目標 220 Vac 就填 220。");
         if (role != Qt::DisplayRole || orientation != Qt::Horizontal)
             return {};
         if (m_kind == TableKind::Input)
-            return QStringList{"Seq", "AC Input", "Mode", "Vin", "Frequency", "Phase"}.value(section);
+            return QStringList{"Seq", "AC Input", "Mode", "Vin (Vrms)", "Frequency", "Phase"}.value(section);
         return section == 0   ? QString("Seq")
                : section == 1 ? QString("Relay")
                               : QString("Index%1").arg(section - 1);

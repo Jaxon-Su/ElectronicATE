@@ -219,12 +219,13 @@ QStringList TestConditionsViewModel::loadRangeOptions(int outputIndex, const QSt
         if (!inst.enabled || inst.type != "Load")
             continue;
 
-        for (const auto &ch : inst.channels) {
+        for (int i = 0; i < inst.channels.size(); ++i) {
+            const auto &ch = inst.channels[i];
             if (ch.index != outputIndex || ch.subModel.trimmed().isEmpty())
                 continue;
 
             const QStringList manualModes =
-                LoadCapabilityCatalog::supportedManualModes(ch.subModel.trimmed(), baseMode);
+                LoadCapabilityCatalog::supportedManualModes(ch.subModel.trimmed(), baseMode, inst.channelNumbers.value(i));
             for (const auto &mode : manualModes) {
                 if (!options.contains(mode))
                     options << mode;
@@ -247,12 +248,13 @@ QStringList TestConditionsViewModel::dynamicRangeOptions(int outputIndex) const
         if (!inst.enabled || inst.type != "Load")
             continue;
 
-        for (const auto &ch : inst.channels) {
+        for (int i = 0; i < inst.channels.size(); ++i) {
+            const auto &ch = inst.channels[i];
             if (ch.index != outputIndex || ch.subModel.trimmed().isEmpty())
                 continue;
 
             const QStringList manualModes =
-                LoadCapabilityCatalog::supportedDynamicManualModes(ch.subModel.trimmed());
+                LoadCapabilityCatalog::supportedDynamicManualModes(ch.subModel.trimmed(), inst.channelNumbers.value(i));
             for (const auto &mode : manualModes) {
                 if (!options.contains(mode))
                     options << mode;

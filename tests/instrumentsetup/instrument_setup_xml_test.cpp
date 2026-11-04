@@ -8,10 +8,33 @@ void require(bool condition, const char* message)
     if (!condition) throw std::runtime_error(message);
 }
 
+static void checkAcModelChoices()
+{
+    InstrumentSetupModel setup;
+    require(setup.loadBaseXml(INSTRUMENT_CATALOG), "cannot load the shipped instrument catalog");
+    const auto choices = setup.getXmlModelMap().value("ACSource");
+    for (const QString name : {"DE-A3000AB", "61505", "61507", "61508", "61509", "6415", "6420", "6430",
+                               "6512", "6520", "6530", "6560", "6590"}) {
+        require(choices.count(name) == 1, "AC model missing or duplicated in the setup list");
+        InstrumentConfig selected;
+        selected.name = "ACSource"; selected.type = "InputSource"; selected.modelName = name;
+        selected.commConfig = CommunicationConfig::fromResourceString("GPIB0::7::INSTR");
+        setup.setInstrumentConfigs({selected});
+        QByteArray xml;
+        QXmlStreamWriter writer(&xml); setup.writeXml(writer);
+        InstrumentSetupModel restored;
+        QXmlStreamReader reader(xml); reader.readNextStartElement(); restored.loadXml(reader);
+        const auto &instruments = restored.getConfig().instruments;
+        require(!reader.hasError() && instruments.size() == 1 && instruments.first().modelName == name,
+                "AC model number changed during save/load");
+    }
+}
+
 int main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
     try {
+        checkAcModelChoices();
         InstrumentSetupModel model;
         model.setLoadOutputs(7);
         int updates = 0;

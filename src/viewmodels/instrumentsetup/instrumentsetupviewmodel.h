@@ -22,7 +22,7 @@ class InstrumentSetupViewModel : public QObject, public IXmlSerializable {
     int dcInputs() const { return m_model ? m_model->getConfig().dcInputs : 1; }
     int relayOutputs() const { return m_model ? m_model->relayOutputs() : 1; }
 
-    QStringList subModels(const QString& modelName) const;
+    QStringList subModels(const QString& modelName, int channel, const QMap<int, QString>& installed = {}) const;
     QSet<int> channelsOfModel(const QString& modelName) const;
     bool hasChannelInterface(const QString& instName) const;
 

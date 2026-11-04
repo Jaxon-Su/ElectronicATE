@@ -20,12 +20,16 @@ static QMap<QString, std::function<ChromaLoadSpec()>> createSpecMap6310A = {
 
 std::optional<PowerRangeSpec> findPowerRange6310A(const QString& subModel, double currval)
 {
-    if (!createSpecMap6310A.contains(subModel)) {
+    const auto specName = subModel == "63123A-120" ? QStringLiteral("63123A") : subModel;
+    if (!createSpecMap6310A.contains(specName)) {
         qWarning() << "[Chroma6310ASpec] Unknown subModel:" << subModel;
         return std::nullopt;
     }
 
-    ChromaLoadSpec spec = createSpecMap6310A[subModel]();
+    ChromaLoadSpec spec = createSpecMap6310A[specName]();
+    if (subModel == "63123A") {
+        for (auto &range : spec.ranges) range.voltageSpec.maxVoltage = 80.0;
+    }
 
     for (const auto& range : spec.ranges) {
         if (currval <= range.currentSpec.maxCurrent) {

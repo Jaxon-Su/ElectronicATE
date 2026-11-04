@@ -63,6 +63,7 @@ add_test(NAME taskstatus_queued_delivery COMMAND taskstatus_test)
 set_tests_properties(taskstatus_queued_delivery PROPERTIES TIMEOUT 10)
 
 add_executable(instrument_setup_xml_test instrumentsetup/instrument_setup_xml_test.cpp)
+target_compile_definitions(instrument_setup_xml_test PRIVATE INSTRUMENT_CATALOG="${CMAKE_CURRENT_SOURCE_DIR}/../XML/Instrument.xml")
 target_link_libraries(instrument_setup_xml_test PRIVATE ElectronicATEModels)
 add_test(NAME instrument_setup_xml_error_handling COMMAND instrument_setup_xml_test)
 set_tests_properties(instrument_setup_xml_error_handling PROPERTIES TIMEOUT 10)
@@ -147,6 +148,7 @@ add_test(NAME test_conditions_viewmodel_without_widgets COMMAND test_conditions_
 set_tests_properties(test_conditions_viewmodel_without_widgets PROPERTIES TIMEOUT 10)
 
 add_executable(instrument_setup_viewmodel_test instrumentsetup/instrument_setup_viewmodel_test.cpp)
+target_compile_definitions(instrument_setup_viewmodel_test PRIVATE INSTRUMENT_CATALOG="${CMAKE_CURRENT_SOURCE_DIR}/../XML/Instrument.xml")
 target_link_libraries(instrument_setup_viewmodel_test PRIVATE ElectronicATEInstrumentSettings)
 add_test(NAME instrument_setup_viewmodel_without_widgets COMMAND instrument_setup_viewmodel_test)
 set_tests_properties(instrument_setup_viewmodel_without_widgets PROPERTIES TIMEOUT 10)
@@ -633,9 +635,10 @@ add_executable(local_five_test integration/local_five_test.cpp
     ../src/views/instrumentsetup/dialogs/communicationconfigdialog.h
     ../src/service/oscilloscope/oscilloscopeconfiguration.cpp)
 target_include_directories(local_five_test PRIVATE ../src/views/instrumentsetup/dialogs)
+target_compile_definitions(local_five_test PRIVATE INSTRUMENT_CATALOG="${CMAKE_CURRENT_SOURCE_DIR}/../XML/Instrument.xml")
 target_link_libraries(local_five_test PRIVATE ElectronicATEInstrumentSettings ElectronicATEDrivers ElectronicATEConnectionTest ElectronicATEScopeSession
     ElectronicATEOperations ElectronicATEModels Qt6::Widgets Qt6::SerialPort)
-foreach(scenario connection retirement rules outputs serial instrument_setup_serial tcp)
+foreach(scenario connection retirement rules outputs serial instrument_setup_serial tcp ac_catalog load_frames)
     add_test(NAME local_five_${scenario} COMMAND local_five_test ${scenario})
     set_tests_properties(local_five_${scenario} PROPERTIES TIMEOUT 20 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endforeach()

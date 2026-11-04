@@ -39,6 +39,7 @@ bool SerialCommunication::open()
         qWarning() << "[SerialCommunication]" << m_error;
         return false;
     }
+    m_textReader.reset();
 
     // 記錄成功開啟的參數
     qDebug() << "[SerialCommunication] Opened:" << m_portName << "Baud:" << m_baudRate
@@ -113,6 +114,13 @@ int SerialCommunication::read(QByteArray& data, int maxLen)
     data = buf;
     m_error.clear();
     return buf.size();
+}
+
+int SerialCommunication::readScpiText(QByteArray& data, int maxLen)
+{
+    const int n = m_textReader.read(*this, data, maxLen);
+    if (n < 0) m_error = "Incomplete serial SCPI reply; reconnect before trusting further readings";
+    return n;
 }
 
 bool SerialCommunication::isOpen() const

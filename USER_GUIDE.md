@@ -16,7 +16,7 @@
 | WaveformOcr：Waveform OCR | 本機 Ollama 批次辨識圖片中的 Max／Min／RMS／Mean，可對照原圖修改數值，依來源資料夾匯出 Excel。 |
 | WfmViewer：WFM Viewer | 開啟 Tektronix 類比 WFM、區域縮放、時間／振幅游標及完整原始波形 CSV 匯出。 |
 
-InstrumentSetup／TestConditions／ManualControl／CommandConsole／TestSequence 設定可透過 XML 保存與載入，僅支援目前完整格式，不轉換舊版設定。WaveformOcr 的辨識結果與核對狀態屬於當次分析，請另匯出 Excel 保存。正常關閉時若有未匯出變更，會提供匯出／放棄／取消；取消或匯出失敗保留資料。Scan Resources 僅列舉 VISA／COM 資源，不代表儀器已回應，也不發送控制指令。ManualControl 的其他儀器可在示波器未連線時獨立操作。
+InstrumentSetup／TestConditions／ManualControl／CommandConsole／TestSequence 設定可透過 XML 保存與載入，各頁使用各自的 XML 格式。InstrumentSetup 可讀取第 2 版及第 3 版設定。WaveformOcr 的辨識結果與核對狀態屬於當次分析，請另匯出 Excel 保存。正常關閉時若有未匯出變更，會提供匯出／放棄／取消；取消或匯出失敗保留資料。Scan Resources 僅列舉 VISA／COM 資源，不代表儀器已回應，也不發送控制指令。ManualControl 的其他儀器可在示波器未連線時獨立操作。
 
 TestSequence 尚未設定的任務可作草稿保存，包括新加入的 Write Oscilloscope。XML 載入失敗時保留原有任務與報表設定；草稿在 Run 前仍須通過完整設定檢查。
 
@@ -96,7 +96,13 @@ Apply 只保存設定；任務執行時設定兩個獨立值，再讀回實際 T
 
 InstrumentSetup 的 `MASTER`／`SLAVE`／`NONE` 保存同步角色；編輯設定時不會直接操作硬體。ManualControl 手動控制與 TestSequence 自動測試共用 InstrumentExecutor，在執行 Load／Dynamic Load 動作時套用設定。
 
-啟用同步時，程式先建立與檢查同步群組，再依動作暫停同步、寫入負載參數、恢復角色及切換輸出。同步成員由 Master 控制，獨立成員分別控制；63640／63600-5 的 `1,3,5,7,9` 通道各自參與群組判定。實際同步能力與時序仍須依儀器接線及型號驗證。
+啟用同步時，程式先建立與檢查同步群組，再依動作暫停同步、寫入負載參數、恢復角色及切換輸出。同步成員由 Master 控制，獨立成員分別控制。實際同步能力與時序仍須依儀器接線及型號驗證。
+
+在 Instrument Setup 的 Load 列，Model 選機框，CH 欄選已安裝的模組。`63600-1` 開放 CH1；`63600-2` 開放 CH1、3；`63600-5` 開放 CH1、3、5、7、9。`63601-5` 另有 CH10，與 CH9 共用最後一槽；只有裝雙通道模組 `63610-80-20` 才能用 CH10。
+
+`6314`、`6314A` 的四個插槽依序對應 CH1/2、CH3/4、CH5/6、CH7/8。單通道模組選奇數 CH，雙通道模組兩路可各自指派 Index。裝寬模組時，選最左槽的奇數 CH。選 `63107` 或 `63107A` 時，左路為 30 W／5 A，右路為 250 W／40 A。`63123A` 對應 80 V 版，120 V 版請選 `63123A-120`。新款 A 模組請依手冊 §2.3 核對機框韌體版本。
+
+新版設定檔會記錄實體 CH，可讀取舊版設定。若要在另一台電腦開啟新版儲存的設定檔，請先更新該電腦的 ElectronicATE。
 
 ## 圖片展示
 
@@ -105,6 +111,8 @@ InstrumentSetup 的 `MASTER`／`SLAVE`／`NONE` 保存同步角色；編輯設�
 ![InstrumentSetup](screenshots/instrumentsetup.png)
 
 ### TestConditions：測試條件表格
+
+AC 的 **Vin 填待測物兩端的有效值（Vrms），不填峰值**。`1phase` 填單相輸出電壓；6560 使用並聯單相模式，目標 220 Vac 就填 220。`3phase` 填兩條火線（R–S、S–T 或 T–R）之間的線間電壓。例如在 6590 設 `3phase / 220 V`，程式會替各相設定約 127.0 Vrms（220 ÷ √3）。相位與接線限制見[支援儀器](SUPPORTED_INSTRUMENTS.md)。
 
 ![TestConditions](screenshots/testconditions.png)
 

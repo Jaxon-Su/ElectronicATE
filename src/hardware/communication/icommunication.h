@@ -13,6 +13,15 @@ class ICommunication
     virtual void close() = 0;                           // 關閉連線
     virtual int write(const QByteArray &data) = 0;      // 寫入資料
     virtual int read(QByteArray &data, int maxLen) = 0; // 讀取資料
+    // Short SCPI replies on message-oriented transports end at EOI or a terminator.
+    // A full buffer cannot prove the message is complete. Serial overrides this for LF framing.
+    virtual int readScpiText(QByteArray &data, int maxLen)
+    {
+        const int n = read(data, maxLen);
+        if (n > 0 && n == data.size() && n < maxLen) return n;
+        data.clear();
+        return -1;
+    }
     virtual bool isOpen() const = 0;                    // 狀態查詢
     virtual QString lastError() const = 0;
 
