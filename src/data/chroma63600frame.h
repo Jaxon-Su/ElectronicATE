@@ -31,7 +31,7 @@ inline QString mappingError(const InstrumentSetupConfig &setup, const Instrument
     const int peer = channel % 2 ? channel + 1 : channel - 1;
     int owners = 0;
     for (const auto &other : setup.instruments) {
-        if (!other.enabled || other.type != "Load" || (!is63600 && !lastChannel(other.modelName)) ||
+        if (other.type != "Load" || (!is63600 && !lastChannel(other.modelName)) ||
             other.getResourceString().compare(resource, Qt::CaseInsensitive) != 0) continue;
         for (int i = 0; i < other.channels.size(); ++i) {
             const auto &sibling = other.channels[i];

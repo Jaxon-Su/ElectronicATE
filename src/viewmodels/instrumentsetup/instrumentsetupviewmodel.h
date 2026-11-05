@@ -34,6 +34,7 @@ class InstrumentSetupViewModel : public QObject, public IXmlSerializable {
     std::function<void()> captureXmlRollback() override;
 
   public slots:
+    void setLoadRowVisible(const QString& name, bool visible);
     void setLoadOutputs(int value);
     void setRelayOutputs(int value);
     void onUiConfigChanged(const QList<InstrumentConfig>& configs, int loadOutputs, int relayOutputs,

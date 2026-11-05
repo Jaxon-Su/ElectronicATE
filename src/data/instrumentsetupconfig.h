@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <QString>
 #include <QList>
 #include <QStringList>
@@ -12,12 +13,19 @@ struct ChannelSetting {
 };
 
 struct InstrumentConfig {
-    bool enabled = true; // checkbox
+    bool enabled = true; // Load checkbox stores row visibility.
     QString name;        // Load1, Source, etc.
     QString type;        // Load, Relay, InputSource, etc.
     QString modelName;   // 6304, DPO7000, etc.
 
     CommunicationConfig commConfig;
+
+    bool hasLoadOutputAssignment() const
+    {
+        // Zero is unassigned. Keep invalid negative indices visible to validation.
+        return type == "Load" && std::any_of(channels.cbegin(), channels.cend(),
+            [](const ChannelSetting &channel) { return channel.index != 0; });
+    }
 
     QString getResourceString() const
     {

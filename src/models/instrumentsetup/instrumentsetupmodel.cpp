@@ -11,7 +11,7 @@ namespace {
 QString frameMappingError(const InstrumentSetupConfig &config)
 {
     for (const auto &load : config.instruments) {
-        if (!load.enabled || load.type != "Load" || !Chroma63600Frame::lastChannel(load.modelName) ||
+        if (load.type != "Load" || !Chroma63600Frame::lastChannel(load.modelName) ||
             load.getResourceString().isEmpty() || load.channelNumbers.isEmpty()) continue;
         for (int slot = 0; slot < load.channels.size(); ++slot) {
             if (load.channels[slot].index <= 0 || load.channels[slot].subModel.isEmpty()) continue;

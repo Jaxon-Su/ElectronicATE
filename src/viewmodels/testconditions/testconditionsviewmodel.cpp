@@ -216,7 +216,7 @@ QStringList TestConditionsViewModel::loadRangeOptions(int outputIndex, const QSt
         return options;
 
     for (const auto &inst : m_instrumentSetupConfig.instruments) {
-        if (!inst.enabled || inst.type != "Load")
+        if (!inst.hasLoadOutputAssignment())
             continue;
 
         for (int i = 0; i < inst.channels.size(); ++i) {
@@ -245,7 +245,7 @@ QStringList TestConditionsViewModel::dynamicRangeOptions(int outputIndex) const
         return options;
 
     for (const auto &inst : m_instrumentSetupConfig.instruments) {
-        if (!inst.enabled || inst.type != "Load")
+        if (!inst.hasLoadOutputAssignment())
             continue;
 
         for (int i = 0; i < inst.channels.size(); ++i) {

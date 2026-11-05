@@ -251,7 +251,7 @@ BrownOutIoFactory prepareBrownOutIo(const TestSequenceExecutionContext &context,
             "Initial Vin must exceed minimum Vin");
     int matches = 0;
     for (const auto &load : context.instrumentSetup.instruments) {
-        if (!load.enabled || load.type != "Load") continue;
+        if (!load.hasLoadOutputAssignment()) continue;
         for (int slot = 0; slot < load.channels.size(); ++slot) {
             if (load.channels[slot].index != cfg.monitorOutput) continue;
             const auto frameError = Chroma6310Frame::isFrame(load.modelName)

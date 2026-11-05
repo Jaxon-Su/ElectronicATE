@@ -53,6 +53,12 @@ void checkLoadMainframes()
     };
     require(!reader.hasError(), "legacy channel XML rejected");
     checkRestored();
+    int configUpdates = 0;
+    QObject::connect(&vm, &InstrumentSetupViewModel::configUpdated, &vm, [&] { ++configUpdates; });
+    vm.setLoadRowVisible("Load1", false);
+    require(!vm.currentConfig().instruments.first().enabled && configUpdates == 0,
+            "hiding a load must only update row visibility");
+    checkRestored();
     auto duplicateLoad = vm.currentConfig().instruments.first();
     duplicateLoad.name = "Load2";
     duplicateLoad.channels[duplicateLoad.channelNumbers.indexOf(7)].index = 3;

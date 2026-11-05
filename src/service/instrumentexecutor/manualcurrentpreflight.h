@@ -10,7 +10,7 @@ inline void validateManualLoadCurrents(const InstrumentSetupConfig &setup, const
                                        const QVector<QString> &ranges, const QVector<QString> &vo, bool dynamic)
 {
     for (const auto &load : setup.instruments) {
-        if (!load.enabled || load.type != "Load") continue;
+        if (!load.hasLoadOutputAssignment()) continue;
         for (int i = 0; i < load.channels.size(); ++i) {
             const auto &channel = load.channels[i];
             const bool seriesA = LoadCapabilityCatalog::Chroma6310AModels.contains(channel.subModel);

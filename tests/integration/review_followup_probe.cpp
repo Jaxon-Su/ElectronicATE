@@ -97,7 +97,7 @@ int main(int argc, char **argv) {
                                      : InstrumentExecutor::runLoad(loads, {}, -1, {}, LoadAction::LoadOff);
             require(trace.contains(loads.instruments[0].getResourceString() + ":OFF") &&
                     trace.contains(loads.instruments[2].getResourceString() + ":OFF"), "Load cleanup skipped healthy devices");
-            require(off.success == (mode == "valid"), "Load cleanup incomplete configuration classification");
+            require(off.success == valid, "Load cleanup incomplete configuration classification");
             std::cout << "Load dynamic=" << dynamic << ' ' << mode.toStdString() << " passed\n";
         }
         return 0;

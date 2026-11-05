@@ -52,6 +52,18 @@ bool InstrumentSetupViewModel::hasChannelInterface(const QString& instName) cons
 
 // Outputs 設置
 
+void InstrumentSetupViewModel::setLoadRowVisible(const QString& name, bool visible)
+{
+    auto instruments = m_model->getConfig().instruments;
+    for (auto& instrument : instruments) {
+        if (instrument.type == "Load" && instrument.name == name) {
+            instrument.enabled = visible;
+            m_model->setInstrumentConfigs(instruments);
+            return;
+        }
+    }
+}
+
 void InstrumentSetupViewModel::setLoadOutputs(int value)
 {
     if (!m_model || value == m_model->loadOutputs())

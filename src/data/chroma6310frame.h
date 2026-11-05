@@ -41,7 +41,7 @@ inline QString mappingError(const InstrumentSetupConfig &setup, const Instrument
     if (!allows(load.modelName, channel, module))
         return QString("%1: %2 is invalid on %3 CH%4").arg(load.name, module, load.modelName).arg(channel);
     for (const auto &other : setup.instruments) {
-        if (!other.enabled || other.type != "Load" ||
+        if (other.type != "Load" ||
             other.getResourceString().compare(load.getResourceString(), Qt::CaseInsensitive) != 0) continue;
         for (int i = 0; i < other.channels.size(); ++i) {
             const int peer = other.channelNumbers.value(i, -1);

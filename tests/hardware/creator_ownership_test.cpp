@@ -73,6 +73,21 @@ int main(){try{
     allowDrivers=true;
     InstrumentSetupConfig config;InstrumentConfig load;load.type="Load";load.name="Load1";load.modelName="test";load.commConfig.protocol=ProtocolType::GPIB;
     load.channels.resize(1);load.channels[0].subModel="fake";load.channels[0].index=1;load.channelNumbers={1};config.instruments={load};
+    for (int mask = 0; mask < 32; ++mask) {
+        config.instruments = {load};
+        config.instruments[0].enabled = mask & 1;
+        for (int row = 1; row < 5; ++row) {
+            InstrumentConfig empty;
+            empty.name = QString("Load%1").arg(row + 1);
+            empty.type = "Load";
+            empty.enabled = mask & (1 << row);
+            config.instruments.append(empty);
+        }
+        auto on = InstrumentCreator::createDCLoads(config, TableKind::Load);
+        auto off = InstrumentCreator::createDCLoadsForShutdown(config, TableKind::Load);
+        if (!on.success || !off.success || on.dcLoads().size() != 1 || off.dcLoads().size() != 1)
+            return 15;
+    }
     auto first=InstrumentCreator::createDCLoads(config,TableKind::Load);
     if(!first.success || first.dcLoads().size()!=1)return 11;
     auto second=std::move(first);

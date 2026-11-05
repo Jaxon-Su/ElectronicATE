@@ -90,7 +90,7 @@ void validateMeasurementConditions(const TestSequenceExecutionContext &context, 
     int mapped = 0;
     QSet<QString> physicalChannels;
     for (const auto &instrument : context.instrumentSetup.instruments) {
-        if (!instrument.enabled || instrument.type != "Load") continue;
+        if (!instrument.hasLoadOutputAssignment()) continue;
         const auto resource = instrument.getResourceString().trimmed();
         require(!resource.isEmpty() && !instrument.modelName.isEmpty(), instrument.name + ": configure Load model/address");
         require(!inputResources.contains(resource, Qt::CaseInsensitive), "Input and load must use distinct addresses");

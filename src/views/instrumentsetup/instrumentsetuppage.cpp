@@ -173,11 +173,20 @@ void InstrumentSetupPage::setupCheckboxes(const QMap<QString, bool>& enabledMap)
 
     for (const auto& r : viewModel->rows()) {
         auto* cb = new QCheckBox(r.instrument, this);
+        if (r.type == "Load")
+            cb->setToolTip(tr("Show or hide this row. Assigned output indices determine which load channels are controlled."));
         bool checked = enabledMap.value(r.instrument, true);
         cb->setChecked(checked);
         checkboxLayout->addWidget(cb);
         instrumentCheckboxes[r.instrument] = cb;
-        connect(cb, &QCheckBox::checkStateChanged, this, &InstrumentSetupPage::onInstrumentToggled);
+        if (r.type == "Load") {
+            connect(cb, &QCheckBox::toggled, this, [this, name = r.instrument](bool visible) {
+                updateInstrumentVisibility(name, visible);
+                viewModel->setLoadRowVisible(name, visible);
+            });
+        } else {
+            connect(cb, &QCheckBox::checkStateChanged, this, &InstrumentSetupPage::onInstrumentToggled);
+        }
     }
 }
 
@@ -748,7 +757,7 @@ bool InstrumentSetupPage::refreshSharedLoadSlots(const QList<InstrumentConfig> &
     using Chassis = QPair<QString, QString>;
     QMap<Chassis, QSet<int>> singleSlots;
     for (const auto &load : loads) {
-        if (!load.enabled || load.type != "Load" || !Chroma63600Frame::lastChannel(load.modelName)) continue;
+        if (load.type != "Load" || !Chroma63600Frame::lastChannel(load.modelName)) continue;
         const auto address = load.getResourceString().toUpper();
         if (address.isEmpty()) continue;
         for (int i = 0; i < load.channels.size(); ++i) {
@@ -760,7 +769,7 @@ bool InstrumentSetupPage::refreshSharedLoadSlots(const QList<InstrumentConfig> &
     }
     bool changed = false;
     for (const auto &load : loads) {
-        if (!load.enabled || load.type != "Load" || !Chroma63600Frame::lastChannel(load.modelName)) continue;
+        if (load.type != "Load" || !Chroma63600Frame::lastChannel(load.modelName)) continue;
         const auto widgets = m_instrumentWidgets.value(load.name);
         const auto occupied = singleSlots.value({load.getResourceString().toUpper(), load.modelName});
         const auto active = viewModel->channelsOfModel(load.modelName);
@@ -969,7 +978,7 @@ void InstrumentSetupPage::refreshIndexChoices()
     setup.instruments = collectAllInstrumentConfigs();
     for (const auto &load : setup.instruments) {
         if (load.type != "Load") continue;
-        const bool checkFrame = load.enabled && Chroma63600Frame::lastChannel(load.modelName) && !load.getResourceString().isEmpty();
+        const bool checkFrame = Chroma63600Frame::lastChannel(load.modelName) && !load.getResourceString().isEmpty();
         const auto &boxes = m_instrumentWidgets.value(load.name).indexCbs;
         for (int i = 0; i < boxes.size(); ++i) {
             auto *box = boxes[i];
