@@ -117,13 +117,21 @@ struct State {
 };
 class Scope : public Oscilloscope {
 public:
+    int source = 1;
     explicit Scope(State &state) : s(state) {}
     QString vendor() const override { return "Offline"; }
     QString model() const override { return "MSOSeries456"; }
     bool isConnected() const override { return true; }
     int getTotalChannel() override { return 2; }
     bool isChannelEnabled(int) override { return true; }
-    bool prepareSteadyAcquisition(QAtomicInt&, QString&, bool startContinuous) override {
+    bool selectEdgeTrigger(QString&) override { s.trace << "edge"; return true; }
+    bool setEdgeTriggerChannel(int channel, QString& error) override {
+        if (channel < 1 || channel > getTotalChannel()) { error = "invalid trigger source"; return false; }
+        source = channel; s.trace << QString("source CH%1").arg(channel); return true;
+    }
+    int triggerChannel() override { return source; }
+    bool prepareSteadyAcquisition(QAtomicInt&, QString&, bool startContinuous, bool preserveEdge) override {
+        require(preserveEdge == (s.mode != "no_period"), "Auto Period edge not preserved on group startup");
         require(startContinuous != s.mode.startsWith("capture"), "Capture preparation started continuous acquisition");
         require(s.trace.last() == "settled", "startup before settle");
         ++s.starts; s.trace << "startup"; return true;
@@ -217,7 +225,7 @@ void runCase(const QString &mode)
         require(name == "Dynamic Test" && cfg && cfg->target == s.direction, "group did not use single Dynamic strategy/direction");
         return std::make_unique<Strategy>(s);
     });
-    deps.autoPeriod = [&](IScopeAutoPeriod*, QAtomicInt&, QString &error, const OscCaptureObserver&, const VerticalScaleOptions&) {
+    deps.autoPeriod = [&](IScopeAutoPeriod*, QAtomicInt&, QString &error, const OscCaptureObserver&, const VerticalScaleOptions&,const std::function<void(const QString&)>&) {
         require(s.trace.last() == "startup", "period before new acquisition startup");
         ++s.periods; s.trace << "period";
         if (s.mode == "period_failure" && s.current == 2) { error = "period failure"; return false; }

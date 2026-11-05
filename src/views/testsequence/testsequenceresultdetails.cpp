@@ -26,9 +26,16 @@ TestSequenceResultDetails::TestSequenceResultDetails(TestSequenceResultsModel *m
     mode->addItems({tr("Summary"), tr("Trials")});
     mode->setToolTip(tr("Per channel: Rise selects the highest Max; Fall selects the lowest Min. "
                        "All four values come from the same record. Ties keep the earlier record. "
-                       "Turn off uses a labeled steady reference when a direction has no event."));
+                       "Turn off uses a labeled steady reference when a direction has no event. "
+                       "Turn off (descent) defaults to Trials, showing each Level / Trial."));
     filters->addWidget(mode);
     connect(mode, &QComboBox::currentIndexChanged, model, [model](int index) { model->setSummary(index == 0); });
+    const auto syncMode = [mode](bool summary) {
+        QSignalBlocker blocked(mode);
+        mode->setCurrentIndex(summary ? 0 : 1);
+    };
+    connect(model, &TestSequenceResultsModel::summaryChanged, mode, syncMode);
+    syncMode(model->summary());
     for (const auto &entry : QList<QPair<QString, int>>{{tr("Attempt"), TestSequenceResultsModel::AttemptFilter},
                                                       {tr("Load"), TestSequenceResultsModel::LoadFilter},
                                                       {tr("Direction"), TestSequenceResultsModel::DirectionFilter},

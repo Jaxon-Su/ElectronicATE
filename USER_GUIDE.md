@@ -16,7 +16,7 @@
 | WaveformOcr：Waveform OCR | 本機 Ollama 批次辨識圖片中的 Max／Min／RMS／Mean，可對照原圖修改數值，依來源資料夾匯出 Excel。 |
 | WfmViewer：WFM Viewer | 開啟 Tektronix 類比 WFM、區域縮放、時間／振幅游標及完整原始波形 CSV 匯出。 |
 
-InstrumentSetup／TestConditions／ManualControl／CommandConsole／TestSequence 設定可透過 XML 保存與載入，僅支援目前完整格式，不轉換舊版設定。WaveformOcr 的辨識結果與核對狀態屬於當次分析，請另匯出 Excel 保存。正常關閉時若有未匯出變更，會提供匯出／放棄／取消；取消或匯出失敗保留資料。Scan Resources 僅列舉 VISA／COM 資源，不代表儀器已回應，也不發送控制指令。ManualControl 的其他儀器可在示波器未連線時獨立操作。
+InstrumentSetup／TestConditions／ManualControl／CommandConsole／TestSequence 設定可透過 XML 保存與載入，各頁使用各自的 XML 格式。InstrumentSetup 可讀取第 2 版及第 3 版設定。WaveformOcr 的辨識結果與核對狀態屬於當次分析，請另匯出 Excel 保存。正常關閉時若有未匯出變更，會提供匯出／放棄／取消；取消或匯出失敗保留資料。Scan Resources 僅列舉 VISA／COM 資源，不代表儀器已回應，也不發送控制指令。ManualControl 的其他儀器可在示波器未連線時獨立操作。
 
 TestSequence 尚未設定的任務可作草稿保存，包括新加入的 Write Oscilloscope。XML 載入失敗時保留原有任務與報表設定；草稿在 Run 前仍須通過完整設定檢查。
 
@@ -41,7 +41,7 @@ RTU 的「測試連線」只開啟並關閉串口，不發送 SCPI 或 Modbus �
 
 按 **Open WFM…** 開啟 Tektronix WFM v3 的單筆類比 YT 波形。支援 Sample 與 Peak Detect 的 Min/Max 成對記錄，時間與取樣間隔由檔頭自動解析，不限定 Time/div 或取樣率。最多 1,000 萬儲存數值（Min/Max 為 500 萬組）、512 MiB 檔案；FastFrame、summary frame、digital、IQ、histogram、XY、roll 及舊版格式會明確提示不支援。
 
-使用 **Cursor／Pan／Zoom** 三個互斥按鈕選擇操作，預設 **Zoom**：拖曳方框，放大選取的時間與振幅區域；**Pan** 拖曳平移；**Cursor** 直接拖曳 T1／T2 垂直時間線或 Y1／Y2 水平振幅線，不須切換軸。靠近交點拖曳可同時移動一條時間線與一條振幅線；距離線超過 8 個畫面邏輯像素時不會跳動游標，同軸重合時優先選 1。滾輪向上放大、向下縮小指標所在區域，**Fit** 或雙擊恢復全貌。
+使用 **Cursor／Pan／Zoom** 三個按鈕選擇左鍵操作。預設 **Zoom** 可框選時間與振幅區域來放大，**Pan** 可拖曳平移，**Cursor** 可拖曳 T1／T2 時間線或 Y1／Y2 振幅線。任何模式都可在波形區**按住右鍵拖曳**平移，放開後繼續使用原工具。游標在距離線 8 個畫面邏輯像素內可選取，靠近交點可同時移動兩軸，同軸重合時優先選 1。滾輪向上放大、向下縮小指標所在區域，**Fit** 或左鍵雙擊恢復全貌。
 
 檔案路徑在頂列右側，可選取複製；過長時可用方向鍵水平瀏覽，滑鼠停留顯示完整路徑。狀態放在操作列右側，滑鼠停留在波形或目前模式按鈕可查看操作提示。
 
@@ -53,10 +53,15 @@ Peak Detect 預設只畫每組 Min–Max 垂直範圍線；勾選 **上下界連
 
 ### 自動測試項目
 
-- **Single／Group Test（單組／群組測試）**：Static、Dynamic、Turn on、Turn off、Short then turn on、Turn on then short；Group 依序測試多個負載條件，逐負載列出結果。每筆有效 Trial 均保存 Max／Min／RMS／Mean，並分 Rise／Fall 選出完整四值代表結果。
+Static／Dynamic／Turn on／Turn off／Short then turn on／Turn on then short（含 Group）可在 Dialog 選 **Trigger source**，按 Apply 保存。每次測試、Group 成員及重試開始前先設定並確認所選來源，再上電／量測；該通道須事先啟用，量測仍涵蓋已啟用通道。新測項預設 CH1；舊設定缺少此欄位時顯示 **Keep current source**，保留示波器原來源，選擇 CH 後才改變。
+
+- 兩種 Short（含 Group）及 Turn on then short (descent) 退出時，Input OFF 後仍保留原 300 ms；確認 Short ON 後等 1 秒才放電，解除放電後等 1 秒才解除短路，解除短路後再等 2 秒才繼續。這些是固定保護間隔，Stop 仍完成退出；Settle 與 Discharge time 各自保留原用途。
+- **Single／Group Test（單組／群組測試）** 包含 Static、Dynamic、Turn on、Turn off、Short then turn on、Turn on then short。Group 的負載條件清單上方可勾選 **Select all** 全選，再點一次可全部取消。部分選取時顯示橫線，點擊即可全選。按 **Apply** 保存，執行時依 TestConditions 順序逐負載列出結果。每筆有效 Trial 均保存 Max／Min／RMS／Mean，並分 Rise／Fall 選出完整四值代表結果。
 - Turn on／Short then turn on／Turn on then short（含 Group）每次事件 Single 成功後等待 **3000 ms**，再走原 READY／Baseline 檢查；提前觸發後重新 Single 也等待。Stop 可中斷，時間計入 Phase time limit；原 Level 避讓、短路退出及 Rise／Fall 保留，AUTO 參考不加等待。
 - **Descent 單組測試**：Turn off (descent)、Turn on then short (descent)。Trigger CH 選負緣觸發 Channel，量測沿用已啟用的示波器通道。Turn off (descent) 另有 **Enable**（預設勾選），只控制觸發 CH 的顯示／量測，未勾選仍使用該 CH 觸發；其他 CH 不變。若關閉觸發 CH，WFM／CSV Capture 須另選已啟用 CH，PNG 不受此限制。Trigger levels 可新增、刪除與編輯，依列順序執行；每次重新上電後觸發，依序保存四值與 Level。原有 Rise／Fall 追蹤保持不變，詳細流程見 [量測策略](MEASUREMENT_STRATEGIES.md)。
-- 兩種 descent 每個 Level／Trial 的 Single 後固定等待 **3000 ms**，再確認 READY 才關電或短路；Stop 可中斷，等待計入 Phase time limit。等待不保證 READY，若仍為 SAVE 等錯誤狀態則回報失敗並清理。
+- Turn off (descent) 上電穩定後自動檢查啟用通道，截波則將該通道 V/div ×2 並重新擷取；正式事件仍截波時重做同一組 Level／Trial，結束後保留實際 V/div。原固定 Trigger source／Level 保留，重試受次數與 Phase time limit 限制。
+- 兩種 descent 每個 Level／Trial 的正式事件 Single 後固定等待 **3000 ms**，再確認 READY 才關電或短路；Stop 可中斷，等待計入 Phase time limit。AUTO 預檢不加此等待。Turn off (descent) 若確認在關機前已觸發且自然完成，該筆 Fail，清理與診斷保存成功後跳過同 Level 剩餘 Trials，接著測下一列 Level；整體仍 Fail。未確認完成、通訊、逾時、Stop 或清理失敗均中止，short descent 保持原流程。
+- Turn off (descent) 的 Detail 預設 **Trials**，逐筆列出 Level／Trial 與完整四值；可切回 Summary。Fail／Skipped 列保留原因，沒有有效事件的四值為 NA；Excel Trials 同樣保留每筆，Results 保留代表值及失敗／略過記錄。
 - Brown Out 初次事件 Single／RUN 後等待 **3000 ms** 再確認 READY；Track＋Capture 每次重新 Single 也等待後才恢復降壓。等待可 Stop，Vout 監測持續；未開 Capture 的連續 RUN 後續 Level 更新不增加等待。
 - **Dell/HP Test**：Brown Out 降壓測試，流程見 [TestSequence：量測策略](MEASUREMENT_STRATEGIES.md)。
 - **輔助任務**：Relay、Write Oscilloscope、Delay。
@@ -66,6 +71,10 @@ Peak Detect 預設只畫每組 Min–Max 垂直範圍線；勾選 **上下界連
 Tasks 顯示摘要；選取一項 Task 後，在下方 **Detail** 切換 Summary／Trials，並篩選 Attempt、Load、Direction、CH。Single 顯示實際負載條件，Group 依 TestConditions 行號及名稱分列。Rise 選 Max 最高那筆，Fall 選 Min 最低那筆，四值整組保留；Excel 的 **Results／Trials** 分別保存代表值與逐次資料。未選方向為 Not run，沒有有效值為 NA，重試各自保存。舊版單表報表請另用新檔名。
 
 原 **Turn off／Turn on then short（均含 Group）** 若某方向正常搜尋完成卻沒有暫態觸發，Detail 與 Excel 兩表改顯示該方向的穩態參考四值，Note／提示標示 `Steady reference (no transient trigger)`。有暫態事件時仍優先使用事件結果；穩態參考不計入 Trial 次數。
+
+### 垂直餘量選項
+
+Static／Dynamic／Turn on／Turn off／Short then turn on／Turn on then short（含 Group）可勾選 **Vertical margin (10% top/bottom)**，預設關閉。勾選後，每列測試先將啟用通道的 Position 歸零，再依波形縮小或擴大 Scale，讓振幅接近全畫面的 80%（目標 79%，接受 76～80%）。跨零波形置中，全正波形的最高點靠上，全負波形的最低點靠下，兩側各留至少 10%。直線只定位；若示波器的位置或刻度限制可用範圍，Log 會顯示實際占比與原因。截波時先以 Scale ×2 重抓。Group 共用本列調整。Pass、Fail 或按 Stop，示波器都保留最後的 Scale 與 Position，方便查看畫面。下一筆從現有 V/div 開始；若該筆也勾選餘量，會在首次擷取前重新歸零 Position；未勾選只在截波時以 ×2 重試。
 
 ### Write Oscilloscope 設定
 
@@ -87,7 +96,17 @@ Apply 只保存設定；任務執行時設定兩個獨立值，再讀回實際 T
 
 InstrumentSetup 的 `MASTER`／`SLAVE`／`NONE` 保存同步角色；編輯設定時不會直接操作硬體。ManualControl 手動控制與 TestSequence 自動測試共用 InstrumentExecutor，在執行 Load／Dynamic Load 動作時套用設定。
 
-啟用同步時，程式先建立與檢查同步群組，再依動作暫停同步、寫入負載參數、恢復角色及切換輸出。同步成員由 Master 控制，獨立成員分別控制；63640／63600-5 的 `1,3,5,7,9` 通道各自參與群組判定。實際同步能力與時序仍須依儀器接線及型號驗證。
+啟用同步時，程式先建立與檢查同步群組，再依動作暫停同步、寫入負載參數、恢復角色及切換輸出。同步成員由 Master 控制，獨立成員分別控制。實際同步能力與時序仍須依儀器接線及型號驗證。
+
+在 Instruments 的 Load 列，先選機框，再按實際插槽選模組及輸出 Index。`63600-1` 可用 CH1～2，`63600-2` 可用 CH1～4，`63600-5` 可用 CH1～10。`63601-5` 限 CH1、3、5、7、9、10。
+
+每對奇偶通道共用一個插槽。例如在 `63600-2` 第二槽安裝雙通道模組 `63610-80-20`，可分別將 CH3 和 CH4 指派給兩個 Index，也可只用 CH4。改選單通道模組後只保留奇數 CH。兩個啟用的 Load 列共用同一儀器位址時，每個實體 CH 只能指派一次。
+
+手動靜態／動態負載 ON 或 Change 會先檢查 6310A 與 63600 各選用通道的電流與額定值。Vo 是預期工作電壓，用於檢查功率。例如 `63123A-120` 設 10 V、35 A 已達 350 W，設為 36 A 會被拒絕。Vo 留白時只能檢查電流與已知條件。
+
+`6314`、`6314A` 的四個插槽依序對應 CH1/2、CH3/4、CH5/6、CH7/8。單通道模組選奇數 CH，雙通道模組兩路可各自指派 Index。裝寬模組時，選最左槽的奇數 CH。選 `63107` 或 `63107A` 時，左路為 30 W／5 A，右路為 250 W／40 A。`63123A` 對應 80 V 版，120 V 版請選 `63123A-120`。新款 A 模組請依手冊 §2.3 核對機框韌體版本。
+
+新版設定檔會記錄實體 CH，可讀取舊版設定。若要在另一台電腦開啟新版儲存的設定檔，請先更新該電腦的 ElectronicATE。
 
 ## 圖片展示
 
@@ -96,6 +115,8 @@ InstrumentSetup 的 `MASTER`／`SLAVE`／`NONE` 保存同步角色；編輯設�
 ![InstrumentSetup](screenshots/instrumentsetup.png)
 
 ### TestConditions：測試條件表格
+
+AC 的 **Vin 填待測物兩端的有效值（Vrms），不填峰值**。`1phase` 填單相輸出電壓；6560 使用並聯單相模式，目標 220 Vac 就填 220。`3phase` 填兩條火線（R–S、S–T 或 T–R）之間的線間電壓。例如在 6590 設 `3phase / 220 V`，程式會替各相設定約 127.0 Vrms（220 ÷ √3）。相位與接線限制見[支援儀器](SUPPORTED_INSTRUMENTS.md)。
 
 ![TestConditions](screenshots/testconditions.png)
 

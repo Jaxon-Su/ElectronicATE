@@ -24,7 +24,10 @@ inline QVariantMap testSequenceDefaultSettings(const QString &name)
         return {{"brownOut", settings}};
     }
     const auto single = TestSequenceTaskKind::singleKind(kind);
-    if (!TestSequenceTaskKind::isDescent(kind)) settings["vertical_margin"] = false;
+    if (!TestSequenceTaskKind::isDescent(kind)) {
+        settings["vertical_margin"] = false;
+        settings[TaskSettingRules::triggerChannel.key] = TaskSettingRules::triggerChannel.initial;
+    }
     if (TestSequenceTaskKind::isSteady(kind)) {
         settings[TaskSettingRules::powerOffWait.key] = TaskSettingRules::powerOffWait.initial;
         settings[TaskSettingRules::startupWait.key] = TaskSettingRules::startupWait.initial;

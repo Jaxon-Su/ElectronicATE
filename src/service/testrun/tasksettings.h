@@ -82,6 +82,7 @@ struct Measurement {
     Direction searchDirection;
     bool captureEnabled;
     bool verticalMargin;
+    std::optional<int> triggerChannel;
     Capture captureSettings;
     explicit Measurement(const QVariantMap &values, bool dynamic = false)
         : inputs(values),
@@ -89,6 +90,8 @@ struct Measurement {
           settleMs(bounded(values, TaskSettingRules::settle)), searchDirection(direction(values)),
           captureEnabled(boolean(values, "capture_enabled")),
           verticalMargin(boolean(values, "vertical_margin")),
+          triggerChannel(values.contains(TaskSettingRules::triggerChannel.key)
+                             ? std::optional<int>{bounded(values, TaskSettingRules::triggerChannel)} : std::nullopt),
           captureSettings(captureEnabled ? Capture(values.value("capture_settings").toMap(), true)
                                          : Capture{})
     {

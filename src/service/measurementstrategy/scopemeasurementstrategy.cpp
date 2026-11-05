@@ -20,6 +20,7 @@ MeasurementResult ScopeMeasurementStrategy::execute(QAtomicInt &stop)
     result.error = values.errorMessage;
     result.trials = values.trials;
     result.steadyReferences = values.steadyReferences;
+    result.trialIssues = values.trialIssues;
     result.channels.reserve(values.channels.size());
     for (const auto &channel : values.channels)
         result.channels.append({channel.channel, {}, channel.maxVal, channel.minVal,

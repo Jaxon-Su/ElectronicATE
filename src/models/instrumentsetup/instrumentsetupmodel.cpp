@@ -1,8 +1,27 @@
 #include "instrumentsetupmodel.h"
+#include "channelnumberpolicy.h"
+#include "chroma6310frame.h"
+#include "chroma63600frame.h"
 #include <QFile>
 #include <QDomDocument>
 #include <QDebug>
 #include <QSet>
+
+namespace {
+QString frameMappingError(const InstrumentSetupConfig &config)
+{
+    for (const auto &load : config.instruments) {
+        if (load.type != "Load" || !Chroma63600Frame::lastChannel(load.modelName) ||
+            load.getResourceString().isEmpty() || load.channelNumbers.isEmpty()) continue;
+        for (int slot = 0; slot < load.channels.size(); ++slot) {
+            if (load.channels[slot].index <= 0 || load.channels[slot].subModel.isEmpty()) continue;
+            const auto error = Chroma63600Frame::mappingError(config, load, slot);
+            if (!error.isEmpty()) return error;
+        }
+    }
+    return {};
+}
+}
 
 InstrumentSetupModel::InstrumentSetupModel(QObject* parent) : QObject(parent)
 {
@@ -45,8 +64,17 @@ bool InstrumentSetupModel::loadBaseXml(const QString& fileName)
 
 void InstrumentSetupModel::writeXml(QXmlStreamWriter& writer) const
 {
+    const auto error = frameMappingError(m_config);
+    if (!error.isEmpty()) {
+        writer.raiseError(error);
+        return;
+    }
     writer.writeStartElement("InstrumentSetup");
-    writer.writeAttribute("schemaVersion", "2");
+    // Older applications interpret physical CH by list position. Prevent them from
+    // loading a numbered layout as if the added CH6/8 were the old CH7/9.
+    const bool numbered = std::any_of(m_config.instruments.cbegin(), m_config.instruments.cend(),
+        [](const InstrumentConfig &ic) { return !ic.channelNumbers.isEmpty() && ic.channelNumbers.first() > 0; });
+    writer.writeAttribute("schemaVersion", numbered ? "3" : "2");
     writer.writeTextElement("LoadOutputs", QString::number(m_config.loadOutputs));
     writer.writeTextElement("RelayOutputs", QString::number(m_config.relayOutputs));
     writer.writeTextElement("DcInputs", QString::number(m_config.dcInputs));
@@ -54,13 +82,28 @@ void InstrumentSetupModel::writeXml(QXmlStreamWriter& writer) const
     writer.writeEndElement(); // InstrumentSetup
 }
 
-void InstrumentSetupModel::loadXml(QXmlStreamReader& reader)
+QList<int> InstrumentSetupModel::catalogChannels(bool legacy) const
+{
+    QSet<int> all;
+    for (auto it = channelsMap.cbegin(); it != channelsMap.cend(); ++it) {
+        auto numbers = ChannelNumberPolicy::parse(it.value());
+        if (legacy && Chroma6310Frame::isFrame(it.key()))
+            numbers.intersect(QSet<int>{1, 3, 5, 7});
+        if (legacy && Chroma63600Frame::lastChannel(it.key()) && it.key() != "63601-5")
+            numbers.intersect(QSet<int>{1, 3, 5, 7, 9}); // Unnumbered XML predates the even CH columns.
+        all.unite(numbers);
+    }
+    return ChannelNumberPolicy::sorted(all);
+}
+
+void InstrumentSetupModel::loadXml(QXmlStreamReader& reader, const InstrumentSetupModel* catalog)
 {
     if (!reader.isStartElement() || reader.name() != QStringLiteral("InstrumentSetup")) {
         reader.raiseError(QStringLiteral("Expected InstrumentSetup element"));
         return;
     }
-    if (reader.attributes().value("schemaVersion") != "2") {
+    const auto version = reader.attributes().value("schemaVersion").toString();
+    if (version != "2" && version != "3") {
         reader.raiseError("Unsupported InstrumentSetup schema; create a new configuration.");
         return;
     }
@@ -92,7 +135,7 @@ void InstrumentSetupModel::loadXml(QXmlStreamReader& reader)
                 return;
             }
         } else if (reader.name() == "Instruments") {
-            loadInstrumentsFromXml(reader, config);
+            loadInstrumentsFromXml(reader, config, version == "3");
         } else {
             reader.raiseError("Unexpected InstrumentSetup field");
             return;
@@ -112,6 +155,30 @@ void InstrumentSetupModel::loadXml(QXmlStreamReader& reader)
         return;
     }
     QSet<QString> dcSources;
+    const auto &source = catalog ? *catalog : *this;
+    const auto available = source.catalogChannels();
+    const auto legacy = source.catalogChannels(true);
+    for (auto &ic : config.instruments) {
+        if (ic.channels.isEmpty() || available.isEmpty()) continue;
+        if (ic.channelNumbers.isEmpty()) {
+            if (ic.channels.size() > legacy.size()) {
+                reader.raiseError("Cannot reconstruct physical channels from the legacy instrument catalog");
+                return;
+            }
+            ic.channelNumbers = legacy.first(ic.channels.size());
+        }
+        for (int ch : ic.channelNumbers) {
+            if (!available.contains(ch)) {
+                reader.raiseError(QString("Physical CH%1 is missing from the current instrument catalog").arg(ch));
+                return;
+            }
+        }
+    }
+    const auto error = frameMappingError(config);
+    if (!error.isEmpty()) {
+        reader.raiseError(error);
+        return;
+    }
     for (const auto& instrument : config.instruments) {
         if (instrument.type != "InputDCSource")
             continue;
@@ -293,8 +360,13 @@ void InstrumentSetupModel::writeInstrument(QXmlStreamWriter& writer, const Instr
 void InstrumentSetupModel::writeChannels(QXmlStreamWriter& writer, const InstrumentConfig& ic) const
 {
     writer.writeStartElement("Channels");
-    for (const auto& ch : ic.channels) {
+    if (!ic.channels.isEmpty() && ic.channelNumbers.value(0) <= 0)
+        writer.writeAttribute("layout", "legacy");
+    for (int i = 0; i < ic.channels.size(); ++i) {
+        const auto &ch = ic.channels[i];
         writer.writeStartElement("Channel");
+        if (ic.channelNumbers.value(i) > 0)
+            writer.writeAttribute("number", QString::number(ic.channelNumbers[i]));
         writer.writeAttribute("subModel", ch.subModel);
         writer.writeAttribute("index", QString::number(ch.index));
         if (ch.syncType >= 0 && ch.syncType <= 2) {
@@ -308,19 +380,19 @@ void InstrumentSetupModel::writeChannels(QXmlStreamWriter& writer, const Instrum
 
 // Private Helper Methods for loadXml
 
-void InstrumentSetupModel::loadInstrumentsFromXml(QXmlStreamReader& reader, InstrumentSetupConfig& config)
+void InstrumentSetupModel::loadInstrumentsFromXml(QXmlStreamReader& reader, InstrumentSetupConfig& config, bool numbered)
 {
     while (!reader.atEnd() && !(reader.isEndElement() && reader.name() == "Instruments")) {
         reader.readNext();
 
         if (reader.isStartElement() && reader.name() == "Instrument") {
-            InstrumentConfig ic = loadInstrumentFromXml(reader);
+            InstrumentConfig ic = loadInstrumentFromXml(reader, numbered);
             config.instruments.append(ic);
         }
     }
 }
 
-InstrumentConfig InstrumentSetupModel::loadInstrumentFromXml(QXmlStreamReader& reader)
+InstrumentConfig InstrumentSetupModel::loadInstrumentFromXml(QXmlStreamReader& reader, bool numbered)
 {
     InstrumentConfig ic;
     QSet<QString> fields;
@@ -347,7 +419,7 @@ InstrumentConfig InstrumentSetupModel::loadInstrumentFromXml(QXmlStreamReader& r
         } else if (elementName == "CommunicationConfig") {
             ic.commConfig.readXml(reader);
         } else if (elementName == "Channels") {
-            loadChannelsFromXml(reader, ic);
+            loadChannelsFromXml(reader, ic, numbered);
         } else {
             reader.raiseError("Unexpected Instrument field: " + elementName);
             return ic;
@@ -359,13 +431,27 @@ InstrumentConfig InstrumentSetupModel::loadInstrumentFromXml(QXmlStreamReader& r
     return ic;
 }
 
-void InstrumentSetupModel::loadChannelsFromXml(QXmlStreamReader& reader, InstrumentConfig& ic)
+void InstrumentSetupModel::loadChannelsFromXml(QXmlStreamReader& reader, InstrumentConfig& ic, bool numbered)
 {
+    const bool requireNumber = numbered && reader.attributes().value("layout") != "legacy";
     while (!reader.atEnd() && !(reader.isEndElement() && reader.name() == "Channels")) {
         reader.readNext();
 
         if (reader.isStartElement() && reader.name() == "Channel") {
             ChannelSetting ch;
+            if (requireNumber && !reader.attributes().hasAttribute("number")) {
+                reader.raiseError("Missing physical channel number");
+                return;
+            }
+            if (reader.attributes().hasAttribute("number")) {
+                bool ok = false;
+                int number = reader.attributes().value("number").toInt(&ok);
+                if (!ok || number <= 0 || ic.channelNumbers.contains(number)) {
+                    reader.raiseError("Invalid or duplicate physical channel number");
+                    return;
+                }
+                ic.channelNumbers.append(number);
+            }
             ch.subModel = reader.attributes().value("subModel").toString();
             ch.index = reader.attributes().value("index").toInt();
             const QString syncType = reader.attributes().value("syncType").toString().trimmed().toUpper();
@@ -383,4 +469,6 @@ void InstrumentSetupModel::loadChannelsFromXml(QXmlStreamReader& reader, Instrum
             reader.skipCurrentElement();
         }
     }
+    if (!ic.channelNumbers.isEmpty() && ic.channelNumbers.size() != ic.channels.size())
+        reader.raiseError("Incomplete physical channel numbering");
 }

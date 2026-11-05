@@ -7,12 +7,24 @@ class SteadyScope : public Scope {
 public:
     QString traceTarget;
     bool miss = false, always = false, invalidNormal = false, secondaryNaN = false;
+    int directionArms = 0;
+    bool faultInjected = false;
+    bool writeConfigurationCommand(const QString &command, QString &error) override {
+        if(command.startsWith("TRIGger:A:EDGE:SLOpe "))directionArms=0;
+        return Scope::writeConfigurationCommand(command,error);
+    }
+    bool beginSingleAcquisition() override {
+        if(!autoMode)++directionArms;
+        return Scope::beginSingleAcquisition();
+    }
     bool isClipping(int ch) override { return !autoMode && Scope::isClipping(ch); }
     QString getAcquisitionState() override {
         if (onState) onState();
         if (commError) return "invalid";
         if (autoMode) return "0";
-        return !miss && (always || (negative ? level >= -2 : level <= 2)) ? "0" : "1";
+        // Compare lifecycle on the same acquired records. Level policy has an
+        // independent golden test; it must not bypass read/Stop fault injection here.
+        return !miss && (always || directionArms <= (clipped ? 4 : 2)) ? "0" : "1";
     }
     double measureSignalPeak(int ch, const QString &type) override {
         // Single-direction searches now read the opposite extremum as well.
@@ -69,9 +81,9 @@ Observation observe(const QString &scenario, const QString &target, bool legacy)
     if (scenario == "comm_reference") s.commError = true;
     if (scenario == "comm_search") s.onState = [&] { if (!s.autoMode) s.commError = true; };
     if (scenario == "stop_wait") s.onState = [&] { if (!s.autoMode) stop.storeRelease(1); };
-    if (scenario == "stop_read") s.onRead = [&] { if (!s.autoMode) stop.storeRelease(1); };
-    if (scenario == "read_throw") s.onRead = [&] { if (!s.autoMode) throw std::runtime_error("read failed"); };
-    if (scenario == "read_unknown") s.onRead = [&] { if (!s.autoMode) throw 42; };
+    if (scenario == "stop_read") s.onRead = [&] { if (!s.autoMode) {s.faultInjected=true;stop.storeRelease(1);} };
+    if (scenario == "read_throw") s.onRead = [&] { if (!s.autoMode) {s.faultInjected=true;throw std::runtime_error("read failed");} };
+    if (scenario == "read_unknown") s.onRead = [&] { if (!s.autoMode) {s.faultInjected=true;throw 42;} };
     if (scenario == "stop_level") s.onWrite = [&](const QString &cmd) {
         if (cmd.startsWith("TRIGger:A:LEVel")) stop.storeRelease(1);
     };
@@ -97,7 +109,23 @@ Observation observe(const QString &scenario, const QString &target, bool legacy)
       catch (...) { observation.exception = "unknown"; }
     observation.trace = s.trace;
     observation.levels = s.levels;
+    if(target!="INVALID" && (scenario=="stop_read"||scenario=="read_throw"||scenario=="read_unknown"))
+        require(s.faultInjected,"comparison skipped the injected Normal read fault");
     return observation;
+}
+
+QStringList controlTrace(const QStringList &trace, bool checkGrid, double scale)
+{
+    QStringList result;
+    for(const auto &line:trace) {
+        if(line.startsWith("CH1:SCAle "))scale=line.section(' ',-1).toDouble();
+        if(line.startsWith("TRIGger:A:LEVel")) {
+            const double level=line.section(' ',-1).toDouble();
+            if(checkGrid)require(std::abs(level/(scale/25)-std::round(level/(scale/25)))<1e-8,"non-grid steady Level");
+            result<<line.section(' ',0,0)+" <Level>";
+        } else result<<line;
+    }
+    return result;
 }
 
 bool equalNumber(double a, double b) { return a == b || (std::isnan(a) && std::isnan(b)); }
@@ -125,8 +153,15 @@ int main(int argc, char **argv)
             scenario = name;
             const auto a = observe(scenario, argv[1], true);
             const auto b = observe(scenario, argv[1], false);
-            require(a.trace == b.trace, "command/read/Capture order changed");
-            require(a.levels == b.levels, "thresholds changed");
+            const double initialScale=scenario=="rescale"||scenario=="scale_clamp"?1:10;
+            require(controlTrace(a.trace,false,initialScale) == controlTrace(b.trace,true,initialScale), "command/read/Capture order changed");
+            require(a.levels.size() == b.levels.size(), "acquisition sequence changed");
+            if(scenario=="success" && QString(argv[1])!="INVALID") {
+                const QVector<double> expected=QString(argv[1])=="MAX"?QVector<double>{.4,2.4,2.8,3.2}:
+                    QString(argv[1])=="MIN"?QVector<double>{.4,-2.4,-2.8,-3.2}:QVector<double>{.4,2.4,2.8,3.2,-2.4,-2.8,-3.2};
+                require(b.levels.size()==expected.size(),"steady golden Level count");
+                for(int i=0;i<expected.size();++i)require(std::abs(b.levels[i]-expected[i])<1e-10,"steady golden Level");
+            }
             require(a.exception == b.exception && a.result.success == b.result.success
                     && a.result.cleanupFailed == b.result.cleanupFailed
                     && a.result.errorMessage == b.result.errorMessage, "status/error changed");
@@ -138,7 +173,7 @@ int main(int argc, char **argv)
                 compareChannels(a.captures[i].channels, b.captures[i].channels);
             }
         }
-        std::cout << "27 scenarios match legacy behavior\n";
+        std::cout << "27 scenarios preserve control/read/Capture contracts; Level grid checked separately\n";
         return 0;
     } catch (const std::exception &e) {
         std::cerr << scenario.toStdString() << ": " << e.what() << "\n";

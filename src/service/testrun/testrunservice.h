@@ -41,8 +41,11 @@ class TestRunService : public QObject
 
   private:
     VerticalScaleOptions verticalScaleOptions(bool margin);
-    bool restoreVerticalScales();
-    QMap<int, double> m_originalScales;
+    void prepareVerticalMargin(const VerticalScaleOptions &options);
+    bool m_verticalMarginPrepared = false;
+    std::shared_ptr<VerticalFitHistory> m_verticalFitHistory;
+    bool stopAfterVerticalChanges();
+    bool m_verticalSettingsTouched = false;
     std::shared_ptr<StrategyWaveformCapture> prepareStrategyCapture(bool enabled, const CaptureOptions &settings,
                                                                    InputSelection inputs, const QString &name);
     std::shared_ptr<StrategyWaveformCapture> prepareStrategyCapture(const TaskSettings::Measurement &cfg,
@@ -72,6 +75,7 @@ class TestRunService : public QObject
     ShortCircuitProtection m_shortCircuit;
     bool prepareSteadyOutputs(const TaskSettings::Steady &cfg, bool dynamic,
                                InputSelection inputs, const QString &name);
+    bool prepareMeasurementTrigger(const TaskSettings::Measurement &cfg, const QString &name);
     void prepareSteadyScope(const TaskSettings::Steady &cfg, const QString &name,
                             const ScopeMeasurementRequest &request, bool allowInitialAuto);
     bool cleanupSteadyOutputs(InputSelection inputs, int load, bool dynamic, bool stopScope = true);

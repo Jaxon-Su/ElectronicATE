@@ -1,4 +1,6 @@
 #include "instrumentcreator.h"
+#include "chroma63600frame.h"
+#include "chroma6310frame.h"
 #include "acsource.h"
 #include "dcload.h"
 #include "relay.h"
@@ -73,7 +75,7 @@ InstrumentCreator::DCLoadResult InstrumentCreator::createDCLoads(const Instrumen
     QMap<QString, int> timeouts;
     auto record = [&](const QString &name, const QString &error) { errors << name + ": " + error; };
     for (const auto &ic : config.instruments) {
-        if (!ic.enabled || ic.type != "Load") continue;
+        if (!ic.hasLoadOutputAssignment()) continue;
         try {
             const QString resource = ic.getResourceString();
             if (ic.modelName.isEmpty() || resource.isEmpty()) {
@@ -97,22 +99,23 @@ InstrumentCreator::DCLoadResult InstrumentCreator::createDCLoads(const Instrumen
                 timeouts[resource] = ic.commConfig.timeout;
                 comm->setTimeoutMs(ic.commConfig.timeout);
             }
-            int mapped = 0;
             for (int i = 0; i < ic.channels.size(); ++i) {
                 const auto &ch = ic.channels[i];
                 if (ch.index <= 0) {
                     if (ch.index < 0) record(ic.name, "invalid output index");
                     continue;
                 }
-                ++mapped;
                 try {
+                    const auto frameError = Chroma6310Frame::isFrame(ic.modelName)
+                        ? Chroma6310Frame::mappingError(config, ic, i, forShutdown) : Chroma63600Frame::mappingError(config, ic, i);
+                    if (!frameError.isEmpty()) throw std::invalid_argument(frameError.toStdString());
                     if (forShutdown && ic.channelNumbers.value(i, -1) <= 0)
                         throw std::invalid_argument("Invalid hardware channel for Load OFF");
                     if (ch.subModel.isEmpty()) {
                         record(ic.name, "mapped channel has no model");
                         continue;
                     }
-                    auto load = std::unique_ptr<DCLoad>(DCLoadFactory::createDCLoad(ch.subModel, comm));
+                    auto load = std::unique_ptr<DCLoad>(DCLoadFactory::createDCLoad(ch.subModel, comm, ic.modelName));
                     if (!load) {
                         record(ic.name, "unsupported load model: " + ch.subModel);
                         continue;
@@ -133,7 +136,6 @@ InstrumentCreator::DCLoadResult InstrumentCreator::createDCLoads(const Instrumen
                     if (!forShutdown) break;
                 }
             }
-            if (forShutdown && !mapped) record(ic.name, "no mapped load channels");
         } catch (const std::exception &ex) {
             record(ic.name, QString::fromUtf8(ex.what()));
         } catch (...) {

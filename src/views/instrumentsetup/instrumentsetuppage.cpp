@@ -1,5 +1,7 @@
 #include "instrumentsetuppage.h"
 #include "outputindexpolicy.h"
+#include "chroma6310frame.h"
+#include "chroma63600frame.h"
 #include "instrumentsetupviewmodel.h"
 #include <QLabel>
 #include <QSpinBox>
@@ -14,6 +16,7 @@
 #include <QVBoxLayout>
 #include <QMap>
 #include <QEvent>
+#include <QSignalBlocker>
 #include "communicationconfigdialog.h"
 
 /* ──────────────────────────────────────────────────────────────── */
@@ -170,11 +173,20 @@ void InstrumentSetupPage::setupCheckboxes(const QMap<QString, bool>& enabledMap)
 
     for (const auto& r : viewModel->rows()) {
         auto* cb = new QCheckBox(r.instrument, this);
+        if (r.type == "Load")
+            cb->setToolTip(tr("Show or hide this row. Assigned output indices determine which load channels are controlled."));
         bool checked = enabledMap.value(r.instrument, true);
         cb->setChecked(checked);
         checkboxLayout->addWidget(cb);
         instrumentCheckboxes[r.instrument] = cb;
-        connect(cb, &QCheckBox::checkStateChanged, this, &InstrumentSetupPage::onInstrumentToggled);
+        if (r.type == "Load") {
+            connect(cb, &QCheckBox::toggled, this, [this, name = r.instrument](bool visible) {
+                updateInstrumentVisibility(name, visible);
+                viewModel->setLoadRowVisible(name, visible);
+            });
+        } else {
+            connect(cb, &QCheckBox::checkStateChanged, this, &InstrumentSetupPage::onInstrumentToggled);
+        }
     }
 }
 
@@ -290,6 +302,7 @@ void InstrumentSetupPage::setupBasicColumns(int row, const TableRowInfo& rowInfo
 
     // Model ComboBox (欄位 1)
     widgets.modelCb = createModelComboBox(rowInfo.modelCandidates, ic.modelName);
+    if (!rowInfo.hasChannels) autoSyncOnWidgetChanged(widgets.modelCb);
     tableWidget->setCellWidget(row, 1, widgets.modelCb);
 
     widgets.addrCb = createAddressComboBox(ic);
@@ -313,19 +326,31 @@ int InstrumentSetupPage::setupChannelRow(int startRow, const TableRowInfo& rowIn
     tableWidget->setSpan(startRow, 3, 3, 1); // Config Button
 
     QSet<int> validChannels = viewModel->channelsOfModel(ic.modelName);
-    QStringList validSubModels = viewModel->subModels(ic.modelName);
     const auto channels = viewModel->channels();
+    QMap<int, QString> installed;
+    for (int i = 0; i < channels.size(); ++i)
+        installed.insert(channels[i], ic.channels.value(i).subModel);
 
     RowWidgets& widgets = m_instrumentWidgets[rowInfo.instrument];
 
     for (int c = 0; c < channels.size(); ++c) {
         int col = 4 + c;
-        bool chEnabled = validChannels.contains(channels[c]);
+        const auto validSubModels = viewModel->subModels(ic.modelName, channels[c], installed);
+        bool chEnabled = validChannels.contains(channels[c]) &&
+            (!(Chroma6310Frame::isFrame(ic.modelName) || Chroma63600Frame::lastChannel(ic.modelName)) ||
+             !validSubModels.isEmpty());
 
         // 上排 subModel
         auto* subModelCb = createSubModelComboBox(ic, c, chEnabled, validSubModels);
         widgets.subModelCbs.append(subModelCb);
         tableWidget->setCellWidget(startRow, col, subModelCb);
+        connect(subModelCb, &QComboBox::currentTextChanged, this,
+                [this, startRow, type = rowInfo.type]() {
+                    if (type == "Load") refreshModuleChoices(startRow, type);
+                    syncUIToViewModel();
+                    enforceUniqueIndices();
+                    refreshIndexChoices();
+                });
 
         // 下排 index
         auto* indexCb = createIndexComboBox(ic, c, rowInfo.type, chEnabled);
@@ -378,7 +403,6 @@ QComboBox* InstrumentSetupPage::createModelComboBox(const QStringList& candidate
         cb->setCurrentIndex(0);
 
     applyComboBoxStyle(cb);
-    autoSyncOnWidgetChanged(cb);
     return cb;
 }
 
@@ -418,7 +442,10 @@ QComboBox* InstrumentSetupPage::createAddressComboBox(const InstrumentConfig& ic
         cb->setCurrentIndex(0);
     }
 
-    autoSyncOnWidgetChanged(cb);
+    connect(cb, &QComboBox::currentTextChanged, this, [this] {
+        refreshIndexChoices();
+        syncUIToViewModel();
+    });
     return cb;
 }
 
@@ -441,18 +468,6 @@ QComboBox* InstrumentSetupPage::createSubModelComboBox(const InstrumentConfig& i
     cb->setEnabled(enabled);
 
     applyComboBoxStyle(cb);
-
-    // SubModel 改變時需要執行去重和刷新
-    connect(cb, &QComboBox::currentTextChanged, this, [this](const QString&) {
-        // 1. 同步到 ViewModel
-        syncUIToViewModel();
-
-        // 2. 執行 Index 唯一性檢查
-        enforceUniqueIndices();
-
-        // 3. 刷新 Index 下拉選單的可用選項
-        refreshIndexChoices();
-    });
 
     return cb;
 }
@@ -537,68 +552,81 @@ bool InstrumentSetupPage::eventFilter(QObject* obj, QEvent* event)
 
 void InstrumentSetupPage::connectModelChangeHandler(int row, const TableRowInfo& rowInfo, QComboBox* modelCb)
 {
-    const auto channels = viewModel->channels();
-
     connect(modelCb, &QComboBox::currentTextChanged, this,
-            [this, row, rowInfo, channels](const QString& mName) {
-                QSet<int> active = viewModel->channelsOfModel(mName);
-                QStringList subList = viewModel->subModels(mName);
-
-                for (int c = 0; c < channels.size(); ++c) {
-                    int col = 4 + c;
-                    bool enable = active.contains(channels[c]);
-
-                    updateSubModelComboBox(row, col, enable, subList);
-                    updateIndexComboBox(row + 1, col, enable, rowInfo.type);
-                    updateSyncRoleComboBox(row + 2, col, enable, rowInfo.type);
-                }
+            [this, row, rowInfo]() {
+                refreshModuleChoices(row, rowInfo.type);
                 enforceUniqueIndices();
+                refreshIndexChoices();
+                syncUIToViewModel();
             });
 }
 
-void InstrumentSetupPage::updateSyncRoleComboBox(int row, int col, bool enable, const QString& type)
+void InstrumentSetupPage::refreshModuleChoices(int row, const QString &type)
 {
-    auto* cb = qobject_cast<QComboBox*>(tableWidget->cellWidget(row, col));
+    const auto frame = qobject_cast<QComboBox*>(tableWidget->cellWidget(row, 1))->currentText();
+    const auto widgets = m_instrumentWidgets.value(tableWidget->item(row, 0)->text());
+    const auto channels = viewModel->channels();
+    const auto active = viewModel->channelsOfModel(frame);
+    QMap<int, QString> installed;
+    for (int i = 0; i < channels.size(); ++i) {
+        const auto module = qobject_cast<QComboBox*>(tableWidget->cellWidget(row, i + 4))->currentText();
+        if (active.contains(channels[i]) && viewModel->subModels(frame, channels[i]).contains(module))
+            installed.insert(channels[i], module);
+    }
+    for (int i = 0; i < channels.size(); ++i) {
+        const auto choices = viewModel->subModels(frame, channels[i], installed);
+        const bool enabled = active.contains(channels[i]) &&
+            (!(Chroma6310Frame::isFrame(frame) || Chroma63600Frame::lastChannel(frame)) ||
+             !choices.isEmpty());
+        updateSubModelComboBox(widgets.subModelCbs[i], enabled, choices);
+        updateIndexComboBox(widgets.indexCbs[i], enabled, type);
+        updateSyncRoleComboBox(widgets.syncRoleCbs[i], enabled, type);
+    }
+}
+
+void InstrumentSetupPage::updateSyncRoleComboBox(QComboBox *cb, bool enable, const QString& type)
+{
     if (!cb)
         return;
 
     const QString cur = cb->currentText();
+    const QSignalBlocker blocker(cb);
     cb->clear();
     cb->addItem("");
     cb->addItems({"MASTER", "SLAVE", "NONE"});
-    cb->setCurrentText(cur);
+    if (enable) cb->setCurrentText(cur);
     cb->setEnabled(enable && type == "Load");
     applyComboBoxStyle(cb);
 }
 
-void InstrumentSetupPage::updateSubModelComboBox(int row, int col, bool enable, const QStringList& subList)
+void InstrumentSetupPage::updateSubModelComboBox(QComboBox *cb, bool enable, const QStringList& subList)
 {
-    auto* cb = qobject_cast<QComboBox*>(tableWidget->cellWidget(row, col));
     if (!cb)
         return;
 
-    // cb->blockSignals(true);
+    const QSignalBlocker blocker(cb);
+    const QString cur = cb->currentText();
     cb->clear();
     cb->addItem("");
 
-    if (enable)
+    if (enable) {
         cb->addItems(subList);
+        if (subList.contains(cur)) cb->setCurrentText(cur);
+    }
 
     cb->setEnabled(enable);
-    // cb->blockSignals(false);
     applyComboBoxStyle(cb);
 }
 
-void InstrumentSetupPage::updateIndexComboBox(int row, int col, bool enable, const QString& type)
+void InstrumentSetupPage::updateIndexComboBox(QComboBox *cb, bool enable, const QString& type)
 {
-    auto* cb = qobject_cast<QComboBox*>(tableWidget->cellWidget(row, col));
     if (!cb)
         return;
 
     QString cur = cb->currentText();
     int maxOutputs = (type == "Load") ? viewModel->loadOutputs() : viewModel->relayOutputs();
 
-    // cb->blockSignals(true);
+    const QSignalBlocker blocker(cb);
     cb->clear();
     cb->addItem("");
 
@@ -613,7 +641,6 @@ void InstrumentSetupPage::updateIndexComboBox(int row, int col, bool enable, con
         cb->setEnabled(false);
     }
 
-    // cb->blockSignals(false);
     applyComboBoxStyle(cb);
 }
 
@@ -714,12 +741,53 @@ void InstrumentSetupPage::onInstrumentToggled(int state)
 
 void InstrumentSetupPage::syncUIToViewModel()
 {
-    // qDebug() << "syncUIToViewModel()";
     QList<InstrumentConfig> configs = collectAllInstrumentConfigs();
-    // void InstrumentSetup::syncUIToViewModel() emit uiConfigChanged 後記憶體洩漏，查找後續相關signal slot
-    // 頻繁操作submodel、address 會崩潰
+    if (refreshSharedLoadSlots(configs)) {
+        refreshIndexChoices();
+        configs = collectAllInstrumentConfigs();
+    }
     emit uiConfigChanged(configs, spinBox_Load_Outputs->value(), spinBox_Relay_Outputs->value(),
                          spinBox_DcInputs->value());
+}
+
+bool InstrumentSetupPage::refreshSharedLoadSlots(const QList<InstrumentConfig> &loads)
+{
+    // A single-channel module on the odd half occupies the whole slot, even
+    // when the two halves of a chassis are edited on different Load rows.
+    using Chassis = QPair<QString, QString>;
+    QMap<Chassis, QSet<int>> singleSlots;
+    for (const auto &load : loads) {
+        if (load.type != "Load" || !Chroma63600Frame::lastChannel(load.modelName)) continue;
+        const auto address = load.getResourceString().toUpper();
+        if (address.isEmpty()) continue;
+        for (int i = 0; i < load.channels.size(); ++i) {
+            const int ch = load.channelNumbers.value(i);
+            const auto &module = load.channels[i].subModel;
+            if (ch % 2 == 1 && Chroma63600Frame::allows(load.modelName, ch, module) && module != "63610-80-20")
+                singleSlots[{address, load.modelName}].insert(ch);
+        }
+    }
+    bool changed = false;
+    for (const auto &load : loads) {
+        if (load.type != "Load" || !Chroma63600Frame::lastChannel(load.modelName)) continue;
+        const auto widgets = m_instrumentWidgets.value(load.name);
+        const auto occupied = singleSlots.value({load.getResourceString().toUpper(), load.modelName});
+        const auto active = viewModel->channelsOfModel(load.modelName);
+        for (int i = 0; i < widgets.subModelCbs.size(); ++i) {
+            const int ch = load.channelNumbers.value(i);
+            if (ch % 2 || !active.contains(ch) || !Chroma63600Frame::allows(load.modelName, ch, "63610-80-20")) continue;
+            const bool ownSingle = i > 0 && load.channelNumbers[i-1] == ch-1 &&
+                                   !load.channels[i-1].subModel.isEmpty() && load.channels[i-1].subModel != "63610-80-20";
+            const auto choices = viewModel->subModels(load.modelName, ch);
+            const bool enable = !ownSingle && !occupied.contains(ch-1) && !choices.isEmpty();
+            if (widgets.subModelCbs[i]->isEnabled() == enable) continue;
+            updateSubModelComboBox(widgets.subModelCbs[i], enable, choices);
+            updateIndexComboBox(widgets.indexCbs[i], enable, load.type);
+            updateSyncRoleComboBox(widgets.syncRoleCbs[i], enable, load.type);
+            changed = true;
+        }
+    }
+    return changed;
 }
 
 // 收集所有儀器配置
@@ -775,6 +843,7 @@ InstrumentConfig InstrumentSetupPage::collectSingleInstrumentConfig(int& row, co
     // 收集 Channel 設置
     if (info.hasChannels) {
         ic.channels = collectChannelSettings(row);
+        ic.channelNumbers = viewModel->channels();
         row += 3;
     } else {
         row += 1;
@@ -905,6 +974,27 @@ void InstrumentSetupPage::refreshIndexChoices()
 {
     auto [loadUsed, relayUsed] = collectUsedIndices();
     updateAllComboBoxOptions(loadUsed, relayUsed);
+    InstrumentSetupConfig setup;
+    setup.instruments = collectAllInstrumentConfigs();
+    for (const auto &load : setup.instruments) {
+        if (load.type != "Load") continue;
+        const bool checkFrame = Chroma63600Frame::lastChannel(load.modelName) && !load.getResourceString().isEmpty();
+        const auto &boxes = m_instrumentWidgets.value(load.name).indexCbs;
+        for (int i = 0; i < boxes.size(); ++i) {
+            auto *box = boxes[i];
+            QString error;
+            if (checkFrame && box->isEnabled()) {
+                error = load.channels.value(i).subModel.isEmpty() ? tr("Select a load module first")
+                                                                 : Chroma63600Frame::mappingError(setup, load, i);
+            }
+            box->setToolTip(error);
+            if (!error.isEmpty()) {
+                auto *model = qobject_cast<QStandardItemModel*>(box->model());
+                for (int choice = 1; choice < box->count(); ++choice)
+                    model->item(choice)->setEnabled(false); // Blank remains available for repair.
+            }
+        }
+    }
 }
 
 // 收集所有已使用的 index
@@ -1103,6 +1193,7 @@ void InstrumentSetupPage::openCommConfigDialog(const QString& instName)
             }
         }
 
+        refreshIndexChoices();
         syncUIToViewModel();
     }
 }

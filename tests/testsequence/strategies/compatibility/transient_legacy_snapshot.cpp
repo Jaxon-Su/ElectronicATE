@@ -85,7 +85,7 @@ OscMeasureResult runLegacyTransientStrategy(TransientKind kind, const TransientC
         if (!shortExitNeeded) return true;
         log("Short exit: Input OFF -> wait -> discharge -> release short");
         if (!finishShortCircuit([&](QString& e) { return ctx.power(false, e); }, ctx.relays,
-                                shortMayBeOn, ctx.powerOffMs, ctx.dischargeMs, shortExitError)) {
+                                shortMayBeOn, ctx.powerOffMs, ctx.dischargeMs, shortExitError, ctx.shortExitDelays)) {
             shortExitFailed = true;
             result.success = false;
             result.cleanupFailed = true;

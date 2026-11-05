@@ -99,7 +99,7 @@ WfmViewerPage::WfmViewerPage(WfmViewerViewModel *viewModel, QWidget *parent)
         if (mode == WaveformPlot::InteractionMode::ZoomRegion) hint = tr("Drag a rectangle to zoom time and amplitude.");
         else if (mode == WaveformPlot::InteractionMode::Pan) hint = tr("Drag to pan time and amplitude.");
         else hint = tr("Drag near T1 / T2 or Y1 / Y2. Drag their intersection to move both axes. Δt = |T2 − T1|; ΔY = |Y2 − Y1|.");
-        hint += tr("  Wheel: zoom · Double-click: fit");
+        hint += tr("  Right-drag: pan · Wheel: zoom · Double-click: fit");
         m_plot->setToolTip(hint);
         m_modes->checkedButton()->setToolTip(hint);
         refresh();

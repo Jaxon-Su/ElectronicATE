@@ -11,7 +11,13 @@ int main(int argc, char **argv) {
         GroupedConditionsModel load(&vm, TableKind::Load), dynamic(&vm, TableKind::DyLoad), dc(&vm, TableKind::Dc);
         load.append(); dynamic.append(); dc.append();
         check(load.rowCount()==6 && dynamic.rowCount()==4 && dc.rowCount()==2,"group geometry");
+        check(load.data(load.index(1, 2)).toString() == "No Setting"
+                  && dynamic.data(dynamic.index(0, 2)).toString() == "No Setting", "initial range display");
+        auto saved = vm.conditions();
+        saved.loadMeta.ranges[0] = "CCL";
+        vm.setConditions(saved);
         check(load.setData(load.index(0,2),"CV") && vm.loadMeta().modes[0]=="CV","mode commit");
+        check(vm.loadMeta().ranges[0] == "No Setting", "incompatible range after mode change");
         check(!load.setData(load.index(0,2),"bad") && !load.setData(load.index(5,4),"editable power"),"readonly/invalid accepted");
         check(load.setData(load.index(5,2),"12V/2A") && load.setData(load.index(5,3),"3"),"load values");
         check(load.setData(load.index(3,3),"10"),"voltage metadata");

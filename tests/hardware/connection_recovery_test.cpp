@@ -24,7 +24,7 @@ static QByteArray frame(QByteArray bytes) {
 }
 class Comm : public ICommunication {
 public:
-    QString resource, last; bool opened = false; QByteArray response;
+    QString resource, last; bool opened = false; QByteArray response, acVolts = "0";
     explicit Comm(QString value) : resource(std::move(value)) {}
     int timeout = 3000;
     void setTimeoutMs(int value) override { timeout = value; }
@@ -69,7 +69,13 @@ public:
             } else if (last == "OUTPut OFF" || last == "LOAD OFF" || last == "CONF:OUTP OFF") {
                 if (bad && fault == "off") return -1;
                 enabledSources.remove(resource);
-            } else if (last.contains("SYNC:TYPE?")) response = "0";
+            } else if (last.startsWith("VOLTage ")) acVolts = last.mid(8).trimmed().toLatin1();
+            else if (last == "VOLTage?") response = acVolts;
+            else if (last == "VOLTage:EPRogram?") response = "0";
+            else if (last == "VOLTage:RANGe?") response = "300";
+            else if (last == "RANGe?") response = "HIGH";
+            else if (last == "SYSTem:ERRor?") response = "No error";
+            else if (last.contains("SYNC:TYPE?")) response = "0";
         }
         return bytes.size();
     }
@@ -142,10 +148,113 @@ static void relayProbe() {
     reset(); check(relay(cfg).success, "valid relay failed");
     check(relay(cfg, RelayAction::RelayOff).confirmedOutput == false, "valid relay OFF failed");
 }
+static void loadFrameRoutingTest() {
+    auto run = [](const QString &frame, int channel, const QString &module, bool dynamic = false) {
+        reset();
+        InstrumentSetupConfig cfg;
+        auto i=instrument("Load",frame,1);
+        i.channels={{module,1,0}};i.channelNumbers={channel};cfg.instruments={i};
+        if(!dynamic) return InstrumentExecutor::runLoad(cfg, {{"L1",{"1"}}}, 0, {}, LoadAction::LoadOn);
+        DynamicMetaRow meta;meta.t1t2={"1~1"};
+        return InstrumentExecutor::runDynamicLoad(cfg,{{"D1",{"1~2"}}},0,meta,DynamicLoadAction::LoadOn);
+    };
+    for (bool dynamic : {false,true}) {
+        auto ok=run("63601-5",10,"63610-80-20",dynamic);
+        check(ok.success && trace.join('|').contains(":CHAN 10"),"logical output 1 did not address physical CH10: "+ok.errorMessage);
+        for (auto bad : {std::make_pair(QString("63600-1"),3),std::make_pair(QString("63600-2"),5),
+                         std::make_pair(QString("63600-5"),10),std::make_pair(QString("63601-5"),10)}) {
+            auto result=run(bad.first,bad.second,"63640-80-80",dynamic);
+            check(!result.success && trace.isEmpty(),"invalid frame/channel/submodel issued a command");
+        }
+    }
+    reset();
+    InstrumentSetupConfig cfg;
+    auto first=instrument("Load","63601-5",1);
+    first.channels={{"63640-80-80",1,0}};first.channelNumbers={9};
+    auto second=first;second.name="Load2";second.channels={{"63610-80-20",2,0}};second.channelNumbers={10};
+    cfg.instruments={first,second};
+    auto conflict=InstrumentExecutor::runLoad(cfg,{{"L1",{"1","1"}}},0,{},LoadAction::LoadOn);
+    check(!conflict.success && trace.isEmpty(),"two Load rows assigned different modules to the same slot");
+}
 static void sourceProbe() {
+    for (bool dynamic : {false, true}) {
+        reset();
+        auto load = instrument("Load","6314A",1);
+        load.channels = {{"63123A-120",1,0},{"63123A-120",2,0}}; load.channelNumbers={1,3};
+        InstrumentSetupConfig cfg; cfg.instruments={load}; cfg.loadOutputs=2;
+        LoadMetaRow meta; meta.vo={"10","10"};
+        DynamicMetaRow dm; dm.vo=meta.vo; dm.t1t2={"1~1"};
+        for (bool change : {false,true}) {
+            trace.clear();
+            const auto result = dynamic
+                ? InstrumentExecutor::runDynamicLoad(cfg, {{"L",{"1~2","2~80"}}}, 0, dm,
+                      change ? DynamicLoadAction::Change : DynamicLoadAction::LoadOn)
+                : InstrumentExecutor::runLoad(cfg, {{"L",{"1","80"}}}, 0, meta,
+                      change ? LoadAction::Change : LoadAction::LoadOn);
+            check(!result.success && result.outputUnchanged && trace.isEmpty(),
+                  "overrated second channel wrote to the first channel or allowed ON/Change");
+        }
+        for (auto model : {"63123A-120","63630-80-60","63107A"}) {
+            cfg.instruments[0].modelName = QString(model).startsWith("636") ? "63600-2" : "6314A";
+            cfg.instruments[0].channels = {{model,1,0}};
+            cfg.instruments[0].channelNumbers = {1};
+            meta.ranges={"CCDL"}; dm.ranges={"CCL"};
+            trace.clear();
+            auto badMode = dynamic ? InstrumentExecutor::runDynamicLoad(cfg, {{"L",{"1~2"}}}, 0, dm, DynamicLoadAction::Change)
+                                   : InstrumentExecutor::runLoad(cfg, {{"L",{"1"}}}, 0, meta, LoadAction::Change);
+            check(!badMode.success && badMode.outputUnchanged && trace.isEmpty(),"wrong operation range programmed a fallback");
+        }
+        meta.ranges.clear(); dm.ranges.clear();
+        load.modelName="63600-2"; load.channels={{"63610-80-20",1,0}}; load.channelNumbers={2};
+        auto peer=load; peer.name="Load2"; peer.channels[0].index=2;
+        cfg.instruments={load,peer};
+        const auto act=[&](bool off) {
+            if(dynamic) return InstrumentExecutor::runDynamicLoad(cfg, {{"L",{"1~2","2~3"}}}, 0, dm,
+                off ? DynamicLoadAction::LoadOff : DynamicLoadAction::LoadOn);
+            return InstrumentExecutor::runLoad(cfg, {{"L",{"1","2"}}}, 0, meta,
+                off ? LoadAction::LoadOff : LoadAction::LoadOn);
+        };
+        trace.clear();
+        check(!act(false).success && trace.isEmpty(),"duplicate physical CH was programmed");
+        auto other=instrument("Load","63600-2",3); other.channels={{"63640-80-80",3,0}};other.channelNumbers={3};
+        cfg.instruments.append(other);
+        const auto off=act(true);
+        check(!off.success && !off.confirmedOutput.has_value() && trace.filter("LOAD OFF").size()==1
+              && trace.contains(other.getResourceString()+":LOAD OFF"),"ambiguous CH was addressed or independent OFF skipped");
+        cfg.instruments.removeLast();
+        cfg.instruments[1].channelNumbers[0]=1;
+        trace.clear();
+        check(act(false).success && trace.filter(":CHAN 2").size()>0 && trace.filter(":CHAN 1").size()>0,
+              "valid dual module could not program both physical channels");
+    }
+    for (bool dynamic : {false, true}) {
+        reset();
+        InstrumentSetupConfig cfg;
+        auto load = instrument("Load", "6314A", 1);
+        load.channels = {{"63103A", 1, 0}, {"63103A", 2, 0}};
+        load.channelNumbers = {1, 8};
+        cfg.instruments = {load};
+        const auto run = [&](bool on) {
+            if (dynamic)
+                return InstrumentExecutor::runDynamicLoad(cfg, {}, 0, {}, on ? DynamicLoadAction::LoadOn : DynamicLoadAction::LoadOff);
+            return InstrumentExecutor::runLoad(cfg, {}, 0, {}, on ? LoadAction::LoadOn : LoadAction::LoadOff);
+        };
+        check(!run(true).success && trace.isEmpty(), "invalid peer permitted ON");
+        const auto off = run(false);
+        check(!off.success && off.errorMessage.contains("CH8") && !off.confirmedOutput.has_value()
+                  && trace.filter(":CHAN 1").size() > 0 && trace.filter("LOAD OFF").size() == 1
+                  && trace.filter(":CHAN 8").isEmpty(), "invalid CH8 prevented independent CH1 shutdown");
+        // An invalid even channel in the same physical slot must not authorize CH1.
+        cfg.instruments[0].channelNumbers[1] = 2;
+        cfg.instruments[0].channels[1].subModel = "63106A";
+        trace.clear();
+        check(!run(false).success && trace.filter("LOAD OFF").isEmpty(), "shutdown addressed an ambiguous slot");
+    }
+    loadFrameRoutingTest();
     sharedTimeoutCleanup("Load");
     for (const QString type : {"AC", "DC", "DCGroup", "Load", "Dynamic"}) {
-        QStringList models = type == "AC" ? QStringList{"61505", "61509", "6530", "DE-A3000AB"} :
+        QStringList models = type == "AC" ? QStringList{"61505", "61509", "6512", "6520", "6530", "DE-A3000AB",
+                                                        "6415", "6420", "6430", "6560", "6590"} :
             (type == "DC" || type == "DCGroup") ? QStringList{"62050H-40"} :
             QStringList{"63102", "63102A", "63640-80-80", "63202A-150-200", "63804"};
         for (const auto &model : models) {

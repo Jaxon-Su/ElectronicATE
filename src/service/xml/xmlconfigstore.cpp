@@ -32,7 +32,7 @@ XmlOperationResult XmlConfigStore::saveAllToXml(const QString& fileName,
 
     if (writer.hasError()) {
         file.cancelWriting();
-        return {XmlOperationResult::Error::Write, QStringLiteral("XML serialization failed")};
+        return {XmlOperationResult::Error::Write, writer.errorString()};
     }
     if (!file.commit())
         return {XmlOperationResult::Error::Write, file.errorString()};
@@ -114,15 +114,16 @@ XmlOperationResult XmlConfigStore::loadAllFromXml(const QString& fileName,
     for (auto* page : pages) {
         if (!page)
             continue;
-        QByteArray snapshot;
-        QXmlStreamWriter writer(&snapshot);
-        page->writeXml(writer);
-        if (writer.hasError())
-            return {XmlOperationResult::Error::Write,
-                    QStringLiteral("Cannot snapshot current configuration")};
-        backups.insert(page, snapshot);
-        if (auto rollback = page->captureXmlRollback())
+        if (auto rollback = page->captureXmlRollback()) {
             runtimeRollbacks.insert(page, std::move(rollback));
+        } else {
+            QByteArray snapshot;
+            QXmlStreamWriter writer(&snapshot);
+            page->writeXml(writer);
+            if (writer.hasError())
+                return {XmlOperationResult::Error::Write, QStringLiteral("Cannot snapshot current configuration")};
+            backups.insert(page, snapshot);
+        }
         if (auto* object = dynamic_cast<QObject*>(page)) {
             owners.insert(page, object);
             blockers.push_back(std::make_unique<QSignalBlocker>(object));

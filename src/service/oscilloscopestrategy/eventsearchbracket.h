@@ -1,4 +1,5 @@
 #pragma once
+#include "../measurement/triggerlevelgrid.h"
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -20,6 +21,7 @@ class EventSearchBracket
             throw std::invalid_argument("Invalid search step");
         m_expansion = step;
         m_tolerance = step;
+        m_candidate = TriggerLevelGrid(step).atOrAbove(m_candidate);
         m_haveHit = m_haveMiss = false;
         m_inwardAttempts = 0;
     }
@@ -27,7 +29,7 @@ class EventSearchBracket
     {
         if (m_haveHit)
             throw std::runtime_error("Baseline changed inside event search bracket");
-        const double next = floor + m_tolerance;
+        const double next = TriggerLevelGrid(m_tolerance).above(floor);
         if (m_haveMiss && next >= m_miss)
             return Progress::NoEvent;
         m_candidate = next;
@@ -35,6 +37,7 @@ class EventSearchBracket
     }
     Progress observe(bool captured, double observedPeak, double baselineFloor)
     {
+        const TriggerLevelGrid grid(m_tolerance);
         const double previous = m_candidate;
         if (captured) {
             m_hit = m_candidate;
@@ -48,17 +51,21 @@ class EventSearchBracket
         if (bounded()) {
             if (m_miss <= m_hit)
                 throw std::runtime_error("Inconsistent event trigger bracket");
-            if (m_miss - m_hit <= m_tolerance)
+            const double hitIndex = grid.ceilIndex(m_hit), missIndex = grid.ceilIndex(m_miss);
+            if (missIndex - hitIndex <= 1)
                 return Progress::Converged;
-            m_candidate = m_hit + (m_miss - m_hit) / 2.0;
+            m_candidate = grid.valueAt(std::floor(hitIndex + (missIndex - hitIndex) / 2));
         } else if (m_haveHit) {
-            m_candidate = std::max(m_hit + m_expansion, observedPeak + m_tolerance);
+            m_candidate = std::max(grid.atOrAbove(m_hit + m_expansion), grid.above(observedPeak));
             m_expansion *= 2.0;
         } else {
             if (++m_inwardAttempts >= 8)
                 return Progress::NoEvent;
             const double inner = std::isfinite(baselineFloor) ? baselineFloor : 0.0;
-            m_candidate = inner + (m_miss - inner) / 2.0;
+            const double innerIndex = grid.floorIndex(inner), missIndex = grid.ceilIndex(m_miss);
+            if (missIndex - innerIndex <= 1)
+                return Progress::NoEvent;
+            m_candidate = grid.valueAt(std::floor(innerIndex + (missIndex - innerIndex) / 2));
         }
         if (!std::isfinite(m_candidate) || std::abs(m_candidate) >= 1e30 || m_candidate == previous)
             throw std::runtime_error("Search threshold cannot advance");

@@ -152,6 +152,7 @@ ChromaLoadSpec createChroma63123ASpec();
  *         型號不存在時回傳 nullopt
  */
 std::optional<PowerRangeSpec> findPowerRange6310A(const QString& subModel, double currval);
+void validateCurrent6310A(const QString &model, int channel, double amps, double volts, const QString &range, bool dynamic);
 
 /**
  * @brief 為 6310A 選擇最佳靜態負載模式（CCL / CCH）

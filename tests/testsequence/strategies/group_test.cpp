@@ -3,6 +3,7 @@
 #undef main
 
 struct GroupState : State {
+    QStringList diagnosticLogs;
     bool armed = false, event = false;
     double level = 0;
     ScopeTriggerMode triggerMode = ScopeTriggerMode::Normal;
@@ -15,14 +16,18 @@ struct GroupState : State {
     QMap<int, int> earlyByLoad;
     bool falling = false;
     double triggerScale = 1;
-    int scaleRestores = 0;
     QMap<int, int> scaleExpansions;
     QMap<QString, double> excludedLevels;
+    int referenceAcquisitions = 0;
 };
 class GroupScope : public Scope {
 public:
     explicit GroupScope(GroupState &state) : Scope(state), g(state) {}
-    int triggerChannel() override { return 1; }
+    bool beginReferenceRecord(ScopeTriggerMode, int &budget,QString &) override {budget=10000;return beginSingleAcquisition();}
+    ScopeReferenceStatus pollReferenceRecord(QString &state,QString &) override {
+        state="fake group AUTO reference";
+        return acquisitionState()==ScopeAcquisitionState::Completed?ScopeReferenceStatus::Completed:ScopeReferenceStatus::Pending;
+    }
     bool isClipping(int) override { return g.mode == "pre_short_rescale" && g.early; }
     bool isChannelEnabled(int channel) override { return channel == 1; }
     bool selectEdgeTrigger(QString&) override { g.trace << "edge"; return true; }
@@ -37,10 +42,10 @@ public:
     }
     double getChannelScale(int) override { return g.triggerScale; }
     bool setVerticalScale(int ch, double value, QString&) override {
-        const bool restoring = value == 1 && !g.armed && !g.inputOn && !g.dcOn;
-        require(ch == 1 && (g.early || restoring) && g.mode == "pre_short_rescale", "Group unexpected scale change");
+        require(ch == 1 && g.early && g.mode == "pre_short_rescale" && value == g.triggerScale * 2,
+                "Group rewrote scale outside clipping recovery");
         g.triggerScale = value;
-        if (restoring) ++g.scaleRestores; else ++g.scaleExpansions[g.current];
+        ++g.scaleExpansions[g.current];
         g.trace << QString("scale %1").arg(value); return true;
     }
     double getTriggerLevel() override { return g.level; }
@@ -49,12 +54,17 @@ public:
         if (g.mode == "pre_short_rescale" && g.triggerMode == ScopeTriggerMode::Normal && g.excludedLevels.contains(key))
             require((g.falling ? -g.level : g.level) > g.excludedLevels[key], "Group rearmed excluded pre-short level after rescale");
         g.armed = true; g.event = false; g.trace << "arm";
+        if(g.triggerMode==ScopeTriggerMode::Auto)g.referenceAcquisitions=0;
+        else ++g.referenceAcquisitions;
         g.checkingShort = false;
         g.early = g.mode == "pretrigger" && std::abs(g.level) < .10;
         if (g.early) ++g.earlyByLoad[g.current];
         return true;
     }
     ScopeAcquisitionState acquisitionState() override {
+        if(g.mode=="worst_reference")
+            return g.triggerMode==ScopeTriggerMode::Auto || (!g.event && g.referenceAcquisitions<=2)
+                ? ScopeAcquisitionState::Completed : ScopeAcquisitionState::Running;
         if (g.early) return ScopeAcquisitionState::Completed;
         if (g.base == "Static Test" || g.base == "Dynamic Test") return ScopeAcquisitionState::Completed;
         return g.triggerMode == ScopeTriggerMode::Auto ||
@@ -80,9 +90,19 @@ public:
         require(!TestSequenceTaskKind::isTransient(TestSequenceTaskKind::fromName(g.base)) ||
                     (g.event && g.triggerMode != ScopeTriggerMode::Auto) ||
                     ((g.base == "Turn off" || g.base == "Turn on then short") && g.triggerMode == ScopeTriggerMode::Auto) ||
+                    (g.base=="Turn off" && g.mode=="worst_reference") ||
                     (metric != ScopeMeasurement::Rms && metric != ScopeMeasurement::Mean),
                 "transient reference/Baseline queried RMS/Mean");
         require(acquisitionState() == ScopeAcquisitionState::Completed, "stale waveform read");
+        if(g.mode=="worst_reference" && g.triggerMode==ScopeTriggerMode::Normal) {
+            const double extra=g.referenceAcquisitions*10;
+            switch(metric) {
+            case ScopeMeasurement::Maximum:return (g.current==0?4:3)+extra;
+            case ScopeMeasurement::Minimum:return (g.current==0?-1:-3)-extra;
+            case ScopeMeasurement::Rms:return 1+g.current+extra;
+            case ScopeMeasurement::Mean:return .5+g.current+extra;
+            }
+        }
         switch (metric) {
         case ScopeMeasurement::Maximum: return g.current == 0 ? 4 : 3;
         case ScopeMeasurement::Minimum: return g.current == 0 ? -1 : -3;
@@ -120,6 +140,7 @@ public:
             c.timeoutMs = 3; c.phaseTimeoutMs = 10000;
             c.settleMs = c.powerOffMs = c.dischargeMs = 0; c.trialsPerLevel = 1;
             c.singleProcessingMs = 0; // Fast matrix; verify Service's real default before this override.
+            c.shortExitDelays = {0, 0, 0};
             const auto kind = g.base == "Turn on" ? TransientKind::TurnOn : g.base == "Turn off" ? TransientKind::TurnOff
                 : g.base == "Short then turn on" ? TransientKind::ShortThenTurnOn : TransientKind::TurnOnThenShort;
             c.captureRecord = m_captureObserver;
@@ -224,15 +245,18 @@ QVector<TestSequenceResultRecord> executeGroup(TestSequenceTaskKind::Kind kind, 
     d.strategy = makeMeasurementStrategyFactory([&](const QString &name, const TransientContext *c) {
         require(name == g.base && c, "group used different strategy or missing context");
         require(c->singleProcessingMs == 3000, "Service lost fixed Single processing time");
+        require(c->shortExitDelays.shortToDischargeMs == 1000 && c->shortExitDelays.dischargeToReleaseMs == 1000 &&
+                c->shortExitDelays.afterReleaseMs == 2000, "Service/Group lost short exit delays");
         if (TestSequenceTaskKind::isTransient(kind))
             require(!g.inputOn && !g.dcOn && !g.loadOn && g.relayMask == QVector<QString>({"OFF", "OFF"}), "previous member left output active");
         return std::make_unique<GroupStrategy>(g, *c);
     });
-    d.autoPeriod = [&](IScopeAutoPeriod*, QAtomicInt&, QString&, const OscCaptureObserver&, const VerticalScaleOptions&) { ++g.periods; return true; };
+    d.autoPeriod = [&](IScopeAutoPeriod*, QAtomicInt&, QString&, const OscCaptureObserver&, const VerticalScaleOptions&,const std::function<void(const QString&)>&) { ++g.periods; return true; };
     TestRunService service(d);
     cancel = [&] { service.stop(); };
     // Scope startup is after the settle log; this also checks per-member ordering.
     QObject::connect(&service, &TestRunService::logMessage, [&](const QString &line) {
+        g.diagnosticLogs << line;
         if (line.contains("settling for")) g.trace << "settled";
         if (line.contains("Check scope before short")) g.checkingShort = true;
     });
@@ -259,6 +283,13 @@ QVector<TestSequenceResultRecord> executeGroup(TestSequenceTaskKind::Kind kind, 
     } else tasks.append(task);
     service.startTasks(tasks, ctx);
     require(!results.isEmpty(), "no results published");
+    if (g.base == "Turn off" && mode == "success" && !singles) {
+        require(g.diagnosticLogs.filter("Turn off: Diagnostic: Settings:").size()==2,
+                "Turn off Group lost per-member settings diagnostics");
+        require(g.diagnosticLogs.filter("stage=Initial Settle; begin").size()==4 &&
+                g.diagnosticLogs.filter("phase complete;").size()==4,
+                "Turn off Group lost per-member/per-direction diagnostics");
+    }
     if (!singles) {
         for (const auto &record : results + progress)
             require(record.channels.isEmpty() && record.loadCondition.index == -1, "Group emitted a mixed summary/source");
@@ -445,17 +476,20 @@ int main(int argc, char **argv)
                             require(group.trace.value(i+1) == (group.trace[i] == "input on" ? "dc on" : "dc off"), "AC/DC order changed");
                 }
                 if ((group.base == "Turn off" || group.base == "Turn on then short") && mode == "success")
+                  for (const QString &referenceMode : group.base=="Turn off"
+                       ? QStringList{"no_event","worst_reference"} : QStringList{"no_event"})
                     for (bool single : {false, true}) {
                         GroupState noEvent;
-                        const auto fallbackResults = executeGroup(kind, "no_event", single, noEvent, directory.path());
+                        const auto fallbackResults = executeGroup(kind, referenceMode, single, noEvent, directory.path());
                         for (const auto &fallback : fallbackResults) {
                             require(fallback.status == "Pass" && fallback.trials.isEmpty(), "no-event service result failed");
-                            const auto verify = [](const QVector<TestSequenceChannelResult> &channels, int load) {
+                            const auto verify = [&](const QVector<TestSequenceChannelResult> &channels, int load) {
+                                const double extra=referenceMode=="worst_reference"?20:0;
                                 require(channels.size() == 2, "service lost a fallback direction");
                                 for (const auto &ch : channels)
                                     require(ch.source == MeasurementSource::SteadyReference && ch.sourceSequence == 0 &&
-                                            ch.maximum == (load == 0 ? 4 : 3) && ch.minimum == (load == 0 ? -1 : -3) &&
-                                            ch.rms == 1 + load && ch.mean == .5 + load,
+                                            ch.maximum == (load == 0 ? 4 : 3)+extra && ch.minimum == (load == 0 ? -1 : -3)-extra &&
+                                            ch.rms == 1 + load+extra && ch.mean == .5 + load+extra,
                                             "service lost/mixed reference quartet");
                             };
                             if (single) verify(fallback.channels, fallback.loadCondition.index);
@@ -479,10 +513,8 @@ int main(int argc, char **argv)
                     require(noisyGroup.earlyByLoad.value(0) == recordsPerLoad && noisyGroup.earlyByLoad.value(2) == recordsPerLoad &&
                             noisyGroup.earlyByLoad == noisySingles.earlyByLoad, "Group shared a pre-short floor across loads/directions");
                     if (noise == "pre_short_rescale") {
-                        // Scale restoration belongs to each row attempt. Group shares scale
-                        // across members; equivalent Singles restore after each row.
-                        require(noisyGroup.scaleRestores == 1 && noisySingles.scaleRestores == 2 &&
-                                noisyGroup.triggerScale == 1 && noisySingles.triggerScale == 1 &&
+                        // Group members and separate rows retain all four clipping expansions.
+                        require(noisyGroup.triggerScale == 16 && noisySingles.triggerScale == 16 &&
                                 noisyGroup.scaleExpansions.value(0) == 2 && noisyGroup.scaleExpansions.value(2) == 2 &&
                                 noisyGroup.scaleExpansions == noisySingles.scaleExpansions, "Group scale lifecycle changed");
                     } else require(noisyGroup.trace == noisySingles.trace, "Group pre-short trace differs from Singles");

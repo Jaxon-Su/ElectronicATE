@@ -45,7 +45,7 @@ public:
 };
 ICommunication *CommunicationFactory::create(const QString &id) { if (id == fault && faultMode == "create") throw std::runtime_error("create failed"); if (id == fault && faultMode == "create_unknown") throw 42; return new ProbeComm(id); }
 RelayBase *RelayFactory::createRelay(const QString &, ICommunication *c, quint8) { return new ProbeRelay(static_cast<ProbeComm *>(c)); }
-DCLoad *DCLoadFactory::createDCLoad(const QString &model, ICommunication *c) { return model == "unsupported" ? nullptr : new ProbeLoad(static_cast<ProbeComm *>(c)); }
+DCLoad *DCLoadFactory::createDCLoad(const QString &model, ICommunication *c, const QString &) { return model == "unsupported" ? nullptr : new ProbeLoad(static_cast<ProbeComm *>(c)); }
 ACSource *ACSourceFactory::createACSource(const QString &, ICommunication *) { return nullptr; }
 
 static InstrumentSetupConfig config(QString type) {
@@ -97,7 +97,7 @@ int main(int argc, char **argv) {
                                      : InstrumentExecutor::runLoad(loads, {}, -1, {}, LoadAction::LoadOff);
             require(trace.contains(loads.instruments[0].getResourceString() + ":OFF") &&
                     trace.contains(loads.instruments[2].getResourceString() + ":OFF"), "Load cleanup skipped healthy devices");
-            require(off.success == (mode == "valid"), "Load cleanup incomplete configuration classification");
+            require(off.success == valid, "Load cleanup incomplete configuration classification");
             std::cout << "Load dynamic=" << dynamic << ' ' << mode.toStdString() << " passed\n";
         }
         return 0;

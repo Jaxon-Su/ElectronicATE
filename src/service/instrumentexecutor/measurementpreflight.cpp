@@ -1,4 +1,6 @@
 #include "measurementpreflight.h"
+#include "chroma63600frame.h"
+#include "chroma6310frame.h"
 #include "acinputvalidation.h"
 #include "dcinputvalidation.h"
 #include "conditionvalues.h"
@@ -42,7 +44,7 @@ void validateMeasurementConditions(const TestSequenceExecutionContext &context, 
     }
     if (ac) { // Even None requires a usable OFF path for an enabled source.
         require(!ac->getResourceString().trimmed().isEmpty() &&
-                    QStringList{"61505", "61509", "6530", "DE-A3000AB"}.contains(ac->modelName),
+                    acSourceFamily(ac->modelName) != ACSourceFamily::Unknown,
                 "Configure the enabled ACSource model and address");
         inputResources << ac->getResourceString().trimmed();
     }
@@ -88,13 +90,15 @@ void validateMeasurementConditions(const TestSequenceExecutionContext &context, 
     int mapped = 0;
     QSet<QString> physicalChannels;
     for (const auto &instrument : context.instrumentSetup.instruments) {
-        if (!instrument.enabled || instrument.type != "Load") continue;
+        if (!instrument.hasLoadOutputAssignment()) continue;
         const auto resource = instrument.getResourceString().trimmed();
         require(!resource.isEmpty() && !instrument.modelName.isEmpty(), instrument.name + ": configure Load model/address");
         require(!inputResources.contains(resource, Qt::CaseInsensitive), "Input and load must use distinct addresses");
         for (int slot = 0; slot < instrument.channels.size(); ++slot) {
             const auto &channel = instrument.channels[slot];
             if (channel.index == 0) continue;
+            checkError(Chroma63600Frame::mappingError(context.instrumentSetup, instrument, slot));
+            checkError(Chroma6310Frame::mappingError(context.instrumentSetup, instrument, slot));
             const QString label = instrument.name + QString(" output %1").arg(channel.index);
             const int index = channel.index - 1;
             require(index >= 0 && index < values.size(), label + ": missing load condition value");
@@ -115,8 +119,9 @@ void validateMeasurementConditions(const TestSequenceExecutionContext &context, 
             require(mode == "CC" || mode == "CV", label + ": unsupported load mode");
             require(mode != "CV" || c63200, label + ": CV programming is not implemented for this model");
             const auto range = ranges.value(index).trimmed().toUpper();
-            const auto supported = dynamic ? LoadCapabilityCatalog::supportedDynamicManualModes(model)
-                                           : LoadCapabilityCatalog::supportedManualModes(model, mode);
+            require(!dynamic || model != "63110A", label + ": dynamic load is not supported for 63110A");
+            const auto supported = dynamic ? LoadCapabilityCatalog::supportedDynamicManualModes(model, hw)
+                                           : LoadCapabilityCatalog::supportedManualModes(model, mode, hw);
             require(range.isEmpty() || range == "AUTO RANGE" || range == "NO SETTING" || supported.contains(range),
                     label + ": unsupported load range");
             double voltage = 0, current = 0, threshold = 0;
@@ -139,9 +144,11 @@ void validateMeasurementConditions(const TestSequenceExecutionContext &context, 
             }
             // Existing catalog data, full model limits (range selection remains the driver's responsibility).
             const auto max = std::numeric_limits<double>::max();
-            if (c6310) validate6310Rating(model, current, voltage, label);
-            if (c6310a) checkRating(findPowerRange6310A(model, max), current, voltage, label);
-            if (c63600) checkRating(findPowerRange63600(model, max), current, voltage, label);
+            if (Chroma63107Range::applies(model))
+                Chroma63107Range::select(hw, current, voltage, range);
+            else if (c6310) validate6310Rating(model, current, voltage, label);
+            else if (c6310a) validateCurrent6310A(model, hw, current, voltage, range, dynamic);
+            if (c63600) validateCurrent63600(model, current, voltage, range, dynamic);
             if (c63200) checkRating(findPowerRange63200A(model, max), current, voltage, label);
         }
     }

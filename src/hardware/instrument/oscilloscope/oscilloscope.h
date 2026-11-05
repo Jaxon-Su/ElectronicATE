@@ -126,7 +126,7 @@ class Oscilloscope : public InstrumentWithCommBase, public IScopeAutoPeriod, pub
         error = "Auto Period is unsupported for this oscilloscope";
         return {};
     }
-    virtual bool prepareSteadyAcquisition(QAtomicInt &, QString &error, bool startContinuous = true)
+    virtual bool prepareSteadyAcquisition(QAtomicInt &, QString &error, bool startContinuous = true, bool preserveEdge = false)
     {
         error = "Steady acquisition startup is unsupported for this oscilloscope";
         return false;

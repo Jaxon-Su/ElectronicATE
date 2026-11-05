@@ -1,6 +1,7 @@
 #pragma once
 #include "ioscilloscopemeasurestrategy.h"
 #include "verticalscaleoptions.h"
+#include "../../data/shortcircuitprotection.h"
 #include <functional>
 
 enum class TransientKind { TurnOn, TurnOff, TurnOnThenShort, ShortThenTurnOn };
@@ -17,6 +18,7 @@ struct TransientContext {
     int settleMs = 5000;
     int dischargeMs = 10000;
     int powerOffMs = 300;
+    ShortCircuitExitDelays shortExitDelays;
     // Runtime uses 3000 ms; internal time fixtures may shorten this like settle/discharge.
     // This is not a Dialog/XML setting.
     int singleProcessingMs = 3000;

@@ -335,9 +335,11 @@ static void pretriggerCase(const QString &mode, bool shortTest = false)
     require(result.success == success, "wrong pre-input result status");
     if (!success) {
         if (mode == "floor_rounding") {
-            require(result.trials.size() == 1 && scope.levels.size() == 3 &&
-                    result.errorMessage.contains("threshold cannot advance"),
-                    "inward rounding returned to an excluded pre-input floor");
+            // The grid now rejects this unsafe index before a second ARM can
+            // revisit a rounded floor; the first valid event must survive.
+            require(result.trials.size() == 1 && scope.levels.size() == 1 && scope.arms == 1 &&
+                    result.errorMessage.contains("grid cannot advance safely"),
+                    "unsafe grid rearmed or discarded the completed event");
             return;
         }
         require(result.trials.isEmpty(), "failed pre-input run fabricated event data");
@@ -530,6 +532,7 @@ static void measurements(bool legalNa)
             for (const QString metric : {"MAXimum", "MINimum"}) {
                 CheckedTransient scope; scope.metric = metric; scope.capture = capture; scope.forbidRmsMean = true;
                 scope.allowReferenceQuartet = kind == TransientKind::TurnOff || kind == TransientKind::TurnOnThenShort;
+                scope.allowBaselineQuartet = kind == TransientKind::TurnOff;
                 scope.single = kind == TransientKind::TurnOn || kind == TransientKind::ShortThenTurnOn;
                 auto ctx = context(scope);
                 if (capture) ctx.captureRecord = [&](const auto &) { scope.archived = true; };
@@ -665,7 +668,7 @@ static void onShortPretriggerCase(const QString &mode, bool capture)
         if (mode != "after_event") require(mode == "fall" ? trial.triggerLevel < -2 : trial.triggerLevel > 2,
                                            "search revisited excluded baseline");
     }
-    if (mode == "after_event") require(result.trials.first().triggerLevel == 1.4, "previous real event lost");
+    if (mode == "after_event") require(std::abs(result.trials.first().triggerLevel - 1.2)<1e-10, "previous real event lost");
 }
 
 static void onShortPretrigger()
@@ -690,33 +693,47 @@ public:
     bool margin = false, changedRecord = false;
     double scales[3]{0, 1, 1};
     QVector<double> earlyLevels;
+    double firstValidEventLevel = NAN;
+    int firstRetryIndex = -1;
+    double scaleAfterEarlyRecord = 0;
     bool beginSingleAcquisition() override {
         changedRecord = false;
         return OnShortNoiseScope::beginSingleAcquisition();
     }
     ScopeTriggerState triggerState() override {
         if (earlyRecords >= repeats) return ScopeTriggerState::Ready;
+        if (mode=="after_event" && !std::isfinite(firstValidEventLevel)) return ScopeTriggerState::Ready;
         const int before = earlyRecords;
         const auto state = OnShortNoiseScope::triggerState();
-        if (earlyRecords != before) earlyLevels << level;
+        if (earlyRecords != before) {
+            earlyLevels << level;
+            if (firstRetryIndex<0) firstRetryIndex=int(levels.size());
+        }
         return state;
     }
     bool isClipping(int ch) override { return early && !margin && ch == adjustedChannel; }
     double getChannelScale(int ch) override { return scales[ch]; }
     bool setVerticalScale(int ch, double value, QString &e) override {
-        require(early && ch == adjustedChannel, "unexpected scale change outside pre-short record");
+        require(margin || (early && ch==adjustedChannel), "unexpected scale change outside pre-short record");
         if (fault == "scale_error") { e = "injected scale error"; return false; }
         scales[ch] = fault == "roundup" ? value * 1.25 : value;
-        changedRecord = true; ++changes;
+        changedRecord = true;
+        if (early && ch==adjustedChannel) ++changes;
+        if (early && earlyRecords==1) scaleAfterEarlyRecord=scales[1];
         if (fault == "stop_scale") stopFlag->storeRelease(1);
         return true;
     }
     bool readVerticalRange(int ch, ScopeVerticalRange &range, QString&) override {
-        // Normal event values fit; only the selected pre-short record requests margin.
-        range = {scales[ch], 0, early ? 10.0 : 1000.0}; return true;
+        range = {scales[ch],0,10,positions.value(QString("CH%1").arg(ch)),-8,8}; return true;
     }
     double measureSignalPeak(int ch, const QString &metric) override {
-        if (!early) return Scope::measureSignalPeak(ch, metric);
+        if (!early) {
+            const double value=Scope::measureSignalPeak(ch,metric);
+            // A record sent back for fitting is not the prior valid event.
+            if (event && !autoMode && metric=="MEAN" && !std::isfinite(firstValidEventLevel))
+                firstValidEventLevel=level;
+            return value;
+        }
         require(!changedRecord, "baseline extremum read after changing its scale");
         require(metric != "RMS" && metric != "MEAN", "rescale baseline became an event quartet");
         if (ch == 1) {
@@ -787,11 +804,14 @@ static void onShortRescaleCase(bool falling, bool capture, int adjustedChannel, 
     const double sign = falling ? -1.0 : 1.0;
     const double oldLevel = sign * scope.earlyLevels.first();
     const double floor = std::max(oldLevel, adjustedChannel == 1 && !margin ? oldLevel : margin && adjustedChannel == 1 ? 4.8 : 2.0);
-    const int firstRetry = priorEvent ? 3 : 2; // AUTO, optional real event, pre-short, retry.
+    const int firstRetry = scope.firstRetryIndex;
     require(scope.levels.size() > firstRetry, "rescale did not acquire again");
     require(sign * scope.levels[firstRetry] > floor, "rescale revisited excluded pre-short level/extremum");
-    const double expectedStep = adjustedChannel == 1 ? (margin ? .048 : .08) * (fault == "roundup" ? 1.25 : 1) : .04;
-    require(std::abs(sign * scope.levels[firstRetry] - floor - expectedStep) < 1e-9,
+    const double expectedStep = scope.scaleAfterEarlyRecord/25;
+    const double retryLevel=sign * scope.levels[firstRetry];
+    // The next grid point can be less than one Step from a non-grid floor.
+    require(retryLevel-floor <= expectedStep+1e-9 &&
+            std::abs(retryLevel/expectedStep-std::round(retryLevel/expectedStep))<1e-9,
             "rescale did not use updated trigger scale step");
     for (int i = firstRetry; i < scope.levels.size(); ++i)
         require(sign * scope.levels[i] > floor, "bracket searched inward across excluded floor");
@@ -804,8 +824,13 @@ static void onShortRescaleCase(bool falling, bool capture, int adjustedChannel, 
         require(trial.channels[0].maximum == 7 && trial.channels[0].minimum == -3 &&
                 trial.channels[0].rms == 2 && trial.channels[0].mean == 1, "rescale contaminated event quartet");
     }
-    if (priorEvent) require(!result.trials.isEmpty() && result.trials.first().triggerLevel == scope.levels[1],
-                            "rescale discarded previous real event");
+    if (priorEvent) {
+        const double recorded=result.trials.isEmpty()?NAN:result.trials.first().triggerLevel;
+        require(std::abs(recorded-scope.firstValidEventLevel)<1e-9,
+                qPrintable(QString("rescale lost prior event: Fall=%1 Capture=%2 CH%3 margin=%4 first=%5 reported=%6")
+                    .arg(falling).arg(capture).arg(adjustedChannel).arg(margin)
+                    .arg(scope.firstValidEventLevel,0,'g',16).arg(recorded,0,'g',16)));
+    }
 }
 
 static void onShortRescale()
@@ -844,6 +869,7 @@ static void ready()
             // pre-input records still fail at the existing acquisition limit.
             ctx.maxIterations = 3;
             int captures = 0, exitOff = 0, exitRelays = 0;
+            QStringList exitRelayStates;
             auto power = ctx.power; auto relays = ctx.relays;
             ctx.power = [&](bool on, QString &e) {
                 if (scope.completed && !on) {
@@ -855,6 +881,7 @@ static void ready()
             ctx.relays = [&](bool sh, bool dis, QString &e) {
                 if (scope.completed) {
                     ++exitRelays;
+                    exitRelayStates << QString("%1%2").arg(sh).arg(dis);
                     if (fault == "off") throw std::runtime_error("relay after failed Input OFF");
                     if (fault == "discharge" && dis) { e = "discharge rejected"; return false; }
                 }
@@ -865,14 +892,21 @@ static void ready()
                 require(record.phase == "Before READY" && record.channels.size() == 2, "diagnostic identity lost");
                 for (const auto &ch : record.channels)
                     require(std::isnan(ch.maxVal) && std::isnan(ch.rms), "diagnostic reused previous values");
-                require(!shortTest || (exitOff == captures && exitRelays == 4 * captures - 1),
+                // Each protected exit confirms Short ON, discharges, stops discharge,
+                // then releases Short. Each subsequent trial also arms Short once.
+                require(!shortTest || (exitOff == captures && exitRelays == 5 * captures - 1 &&
+                            exitRelayStates.mid(exitRelayStates.size() - 4) ==
+                                QStringList({"10", "11", "10", "00"})),
                         "Capture preceded short protection exit");
                 if (fault == "save") throw std::runtime_error("SAVE failed");
             };
             const auto result = runTransientStrategy(kind, ctx, &scope, stop);
             const bool shouldCapture = fault == "none" || fault == "save";
             const int expectedCaptures = fault == "none" ? 3 : int(shouldCapture);
-            require(!result.success && captures == expectedCaptures, "READY failure capture count/status");
+            require(!result.success && captures == expectedCaptures,
+                    QString("READY failure capture count/status: short=%1 fault=%2 captures=%3 expected=%4 error=%5")
+                        .arg(shortTest).arg(fault).arg(captures).arg(expectedCaptures)
+                        .arg(result.errorMessage).toUtf8().constData());
             require(!scope.trace.contains("POWER ON") && scope.trace.contains("LOAD OFF"), "READY failure enabled input/skipped cleanup");
             if (fault == "save") require(result.errorMessage.contains("Scope not ready") && result.errorMessage.contains("SAVE failed"), "dual error lost");
             if (fault == "off" || fault == "discharge") require(result.cleanupFailed && captures == 0, "short protection bypassed");

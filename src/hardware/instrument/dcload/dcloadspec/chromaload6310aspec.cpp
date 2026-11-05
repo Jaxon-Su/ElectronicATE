@@ -1,4 +1,6 @@
 #include "chromaload6310aspec.h"
+#include "chromacurrentrating.h"
+#include "chroma63107range.h"
 #include <QMap>
 #include <QString>
 #include <functional>
@@ -18,14 +20,34 @@ static QMap<QString, std::function<ChromaLoadSpec()>> createSpecMap6310A = {
 
 // findPowerRange6310A
 
-std::optional<PowerRangeSpec> findPowerRange6310A(const QString& subModel, double currval)
+static ChromaLoadSpec modelSpec(const QString &subModel)
 {
-    if (!createSpecMap6310A.contains(subModel)) {
+    const auto specName = subModel == "63123A-120" ? QStringLiteral("63123A") : subModel;
+    if (!createSpecMap6310A.contains(specName)) {
         qWarning() << "[Chroma6310ASpec] Unknown subModel:" << subModel;
-        return std::nullopt;
+        return {};
     }
 
-    ChromaLoadSpec spec = createSpecMap6310A[subModel]();
+    ChromaLoadSpec spec = createSpecMap6310A[specName]();
+    if (subModel == "63123A") {
+        for (auto &range : spec.ranges) range.voltageSpec.maxVoltage = 80.0;
+    }
+    return spec;
+}
+
+void validateCurrent6310A(const QString &model, int channel, double amps, double volts, const QString &range, bool dynamic)
+{
+    const auto mode = checkedChromaCurrentRange(model, channel, range, dynamic);
+    if (Chroma63107Range::applies(model)) {
+        Chroma63107Range::select(channel, amps, volts, mode);
+        return;
+    }
+    requireChromaCurrentRating(modelSpec(model).ranges, model, amps, volts, mode);
+}
+
+std::optional<PowerRangeSpec> findPowerRange6310A(const QString& subModel, double currval)
+{
+    const auto spec = modelSpec(subModel);
 
     for (const auto& range : spec.ranges) {
         if (currval <= range.currentSpec.maxCurrent) {

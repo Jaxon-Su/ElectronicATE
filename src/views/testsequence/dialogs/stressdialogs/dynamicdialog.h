@@ -1,5 +1,6 @@
 #pragma once
 #include "../verticalmargincheckbox.h"
+#include "../triggersourceselector.h"
 #include <QDialog>
 #include "../inputselectors.h"
 #include "../loadconditionselector.h"
@@ -33,6 +34,7 @@ class DynamicDialog : public QDialog {
     StrategyCaptureWidget* m_capture = nullptr;
     QCheckBox* m_autoPeriod = nullptr;
     VerticalMarginCheckBox* m_verticalMargin = nullptr;
+    TriggerSourceSelector* m_triggerSource = nullptr;
     QComboBox* m_targetCombo = nullptr;
     QSpinBox* m_powerOffMs = nullptr;
     QSpinBox* m_startupMs = nullptr;

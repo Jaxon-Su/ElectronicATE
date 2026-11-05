@@ -22,4 +22,5 @@ inline constexpr Integer discharge{"discharge_ms", 10000, 1, 3600000};
 inline constexpr Integer trials{"trials_per_level", 3, 1, 10};
 inline constexpr Integer retry{"retry", 0, 0, 100};
 inline constexpr Integer captureChannel{"channel", 0, 0, 8};
+inline constexpr Integer triggerChannel{"trigger_channel", 1, 1, 8};
 } // namespace TaskSettingRules

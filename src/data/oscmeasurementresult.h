@@ -20,4 +20,5 @@ struct OscMeasureResult {
     QString errorMessage;
     QVector<MeasurementTrial> trials;
     QVector<MeasurementReference> steadyReferences;
+    QVector<MeasurementTrialIssue> trialIssues;
 };

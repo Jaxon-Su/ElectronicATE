@@ -1,5 +1,8 @@
 #include "brownoutio.h"
+#include "chroma63600frame.h"
+#include "chroma6310frame.h"
 #include "acinputconfiguration.h"
+#include "acinputvalidation.h"
 #include "acsourcefactory.h"
 #include "dcsourcefactory.h"
 #include "dcloadfactory.h"
@@ -16,6 +19,7 @@ struct Plan {
     TestSequenceExecutionContext context;
     BrownOut::Settings settings;
     InstrumentConfig ac, monitor;
+    QString monitorModule;
     int channel = 0;
     std::array<InstrumentConfig, 3> dc;
     std::array<bool, 3> useDc{};
@@ -64,7 +68,7 @@ class BrownOutIo final : public IBrownOutIo
         require(loaded.success, loaded.errorMessage);
         check();
         m_monitorComm = connectTransport(m_plan.monitor);
-        m_monitor.reset(DCLoadFactory::createDCLoad(m_plan.monitor.modelName, m_monitorComm.get()));
+        m_monitor.reset(DCLoadFactory::createDCLoad(m_plan.monitorModule, m_monitorComm.get(), m_plan.monitor.modelName));
         connectDriver(m_monitor.get());
         m_monitor->setChannel(m_plan.channel);
         // Check the independent monitor before enabling the DUT input.
@@ -201,17 +205,12 @@ BrownOutIoFactory prepareBrownOutIo(const TestSequenceExecutionContext &context,
     QStringList resources;
     if (plan.useAc) {
         plan.ac = instrument({}, "InputSource");
-        require(QStringList{"61505", "61509", "6530"}.contains(plan.ac.modelName),
-                "Brown Out requires Chroma 61505 / 61509 / 6530 programmed-voltage readback");
+        const auto family = acSourceFamily(plan.ac.modelName);
+        require(family != ACSourceFamily::Unknown && family != ACSourceFamily::DeltaA3000,
+                "Brown Out requires an AC source with programmed-voltage readback");
         plan.input = ParameterParser::parseInputRow(context.inputs[cfg.inputs.ac]);
-        require(plan.input.valid && std::isfinite(plan.input.voltage) && std::isfinite(plan.input.frequency) &&
-                    std::isfinite(plan.input.phase) && plan.input.frequency > 0 &&
-                    plan.input.phase >= 0 && plan.input.phase <= 360, "Invalid Brown Out AC condition");
-        require(!plan.input.isThreePhase() || plan.ac.modelName == "61509", "3phase requires Chroma 61509");
-        const double phaseVoltage = plan.input.isThreePhase() ? plan.input.voltage / std::sqrt(3.0) : plan.input.voltage;
-        require(phaseVoltage <= (plan.ac.modelName == "61509" ? 350 : 300) &&
-                    plan.input.frequency >= 15 && plan.input.frequency <= (plan.ac.modelName == "61505" ? 1000 : 2000),
-                "Brown Out AC voltage/frequency exceeds the supported model range");
+        const QString acError = validateAcParameters(plan.ac.modelName, plan.input);
+        require(acError.isEmpty(), acError);
         if (plan.rampAc) {
             plan.initial = plan.input.voltage;
             const double phaseStep = plan.input.isThreePhase() ? cfg.voltageStep / std::sqrt(3.0) : cfg.voltageStep;
@@ -252,20 +251,24 @@ BrownOutIoFactory prepareBrownOutIo(const TestSequenceExecutionContext &context,
             "Initial Vin must exceed minimum Vin");
     int matches = 0;
     for (const auto &load : context.instrumentSetup.instruments) {
-        if (!load.enabled || load.type != "Load") continue;
+        if (!load.hasLoadOutputAssignment()) continue;
         for (int slot = 0; slot < load.channels.size(); ++slot) {
             if (load.channels[slot].index != cfg.monitorOutput) continue;
-            ++matches; plan.monitor = load; plan.monitor.modelName = load.channels[slot].subModel;
+            const auto frameError = Chroma6310Frame::isFrame(load.modelName)
+                ? Chroma6310Frame::mappingError(context.instrumentSetup, load, slot)
+                : Chroma63600Frame::mappingError(context.instrumentSetup, load, slot);
+            require(frameError.isEmpty(), frameError);
+            ++matches; plan.monitor = load; plan.monitorModule = load.channels[slot].subModel;
             plan.channel = load.channelNumbers.value(slot, -1);
         }
     }
     require(matches == 1 && plan.channel > 0 && !plan.monitor.getResourceString().isEmpty(),
             "Map the monitor Load output Index to exactly one enabled channel in InstrumentSetup");
     require(!resources.contains(plan.monitor.getResourceString(), Qt::CaseInsensitive), "Input and monitor must use distinct addresses");
-    const bool is6310 = LoadCapabilityCatalog::Chroma6310Models.contains(plan.monitor.modelName) ||
-                        LoadCapabilityCatalog::Chroma6310AModels.contains(plan.monitor.modelName);
-    require(is6310 || LoadCapabilityCatalog::Chroma63600Models.contains(plan.monitor.modelName) ||
-            LoadCapabilityCatalog::Chroma63200AModels.contains(plan.monitor.modelName),
+    const bool is6310 = LoadCapabilityCatalog::Chroma6310Models.contains(plan.monitorModule) ||
+                        LoadCapabilityCatalog::Chroma6310AModels.contains(plan.monitorModule);
+    require(is6310 || LoadCapabilityCatalog::Chroma63600Models.contains(plan.monitorModule) ||
+            LoadCapabilityCatalog::Chroma63200AModels.contains(plan.monitorModule),
             "Brown Out live Vout monitoring supports Chroma 6310 / 6310A / 63600 / 63200A");
     require(!is6310 || plan.channel <= 8, "Brown Out 6310 / 6310A monitor channel must be 1-8");
     require(!context.loads[cfg.load].values.value(cfg.monitorOutput - 1).trimmed().isEmpty(),

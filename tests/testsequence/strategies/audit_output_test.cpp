@@ -56,7 +56,7 @@ ICommunication *CommunicationFactory::create(const QString &id) {
     if (id == badCreate) throw 42;
     return new Comm(id);
 }
-DCLoad *DCLoadFactory::createDCLoad(const QString &, ICommunication *comm) { return new Load(static_cast<Comm *>(comm)); }
+DCLoad *DCLoadFactory::createDCLoad(const QString &, ICommunication *comm, const QString &) { return new Load(static_cast<Comm *>(comm)); }
 ACSource *ACSourceFactory::createACSource(const QString &, ICommunication *comm) { return new Chroma61505(comm); }
 RelayBase *RelayFactory::createRelay(const QString &, ICommunication *, quint8) { return nullptr; }
 
@@ -106,12 +106,17 @@ TaskPayload task(const QString &name, bool ac = true, bool dc = true)
 }
 class Scope : public Oscilloscope {
 public:
+    int source = 1;
     QString model() const override { return "MSOSeries456"; }
     QString vendor() const override { return "fake"; }
     int getTotalChannel() override { return 4; }
     QByteArray captureScreenshot(const QString &, const QString &) override { return {}; }
-    bool prepareSteadyAcquisition(QAtomicInt &, QString &, bool) override { return true; }
+    bool prepareSteadyAcquisition(QAtomicInt &, QString &, bool, bool) override { return true; }
     bool stopAcquisition(QString &) override { return true; }
+    bool selectEdgeTrigger(QString &) override { return true; }
+    bool setEdgeTriggerChannel(int channel, QString &) override { source = channel; return true; }
+    int triggerChannel() override { return source; }
+    bool isChannelEnabled(int channel) override { return channel >= 1 && channel <= 4; }
 };
 class Strategy : public IMeasurementStrategy {
 public:

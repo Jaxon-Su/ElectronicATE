@@ -57,8 +57,12 @@ int main(int argc, char** argv)
                 "dynamic load capability not exposed");
         config.instruments[0].enabled = false;
         vm.onInstrumentSetupConfigChanged(config);
+        require(vm.loadRangeOptions(1, "CC").contains("CCH") && vm.dynamicRangeOptions(1).contains("CCDH"),
+                "hidden assigned load lost capabilities");
+        config.instruments[0].channels[0].index = 0;
+        vm.onInstrumentSetupConfigChanged(config);
         require(vm.loadRangeOptions(1, "CC") == QStringList{"Auto Range", "No Setting"},
-                "disabled load supplied capabilities");
+                "unassigned load supplied capabilities");
         TestConditionsModel nestedModel;
         TestConditionsViewModel nested(&nestedModel);
         int rowSignals = 0;

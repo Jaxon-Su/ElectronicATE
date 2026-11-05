@@ -102,9 +102,11 @@ class InstrumentSetupPage : public QWidget {
 
     // 事件處理
     void connectModelChangeHandler(int row, const TableRowInfo& rowInfo, QComboBox* modelCb);
-    void updateSubModelComboBox(int row, int col, bool enable, const QStringList& subList);
-    void updateIndexComboBox(int row, int col, bool enable, const QString& type);
-    void updateSyncRoleComboBox(int row, int col, bool enable, const QString& type);
+    void refreshModuleChoices(int row, const QString &type);
+    bool refreshSharedLoadSlots(const QList<InstrumentConfig> &loads);
+    void updateSubModelComboBox(QComboBox *cb, bool enable, const QStringList& subList);
+    void updateIndexComboBox(QComboBox *cb, bool enable, const QString& type);
+    void updateSyncRoleComboBox(QComboBox *cb, bool enable, const QString& type);
 
     void openCommConfigDialog(const QString& instName);
     CommunicationConfig communicationForAddress(const QString& instName, const QString& address) const;

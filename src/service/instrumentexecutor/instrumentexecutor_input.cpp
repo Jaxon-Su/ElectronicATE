@@ -1,7 +1,7 @@
 #include "instrumentexecutor.h"
 
 #include "acsource.h"
-#include "chroma61509.h"
+#include "chroma61507_61508_61509.h"
 #include "parameterparser.h"
 #include "acinputconfiguration.h"
 #include "acinputvalidation.h"
@@ -70,7 +70,7 @@ runInputWithParams(const InstrumentSetupConfig &cfg, const ParameterParser::Inpu
             observedEnabled = createResult.source()->outputEnabled();
         }
         if (!executeACSourceAction(createResult.source(), action, params, result))
-            return {false, "3phase input is supported only for Chroma 61509", true};
+            return {false, "The selected AC source does not support this phase mode", true};
     } catch (const std::exception &ex) {
         result.success = false;
         result.errorMessage = QString("[runInput] Exception: %1").arg(ex.what());

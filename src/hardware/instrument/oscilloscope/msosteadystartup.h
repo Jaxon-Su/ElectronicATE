@@ -6,7 +6,7 @@
 #include <cmath>
 
 // Tektronix MSO protocol sequence. Kept with the driver, not the test-run workflow.
-inline bool prepareMsoSteadyAcquisition(Oscilloscope &scope, QAtomicInt &stop, QString &error, bool startContinuous = true)
+inline bool prepareMsoSteadyAcquisition(Oscilloscope &scope, QAtomicInt &stop, QString &error, bool startContinuous = true, bool preserveEdge = false)
 {
     error.clear();
     auto write = [&](const QString &command, const QString &phase)
@@ -59,10 +59,12 @@ inline bool prepareMsoSteadyAcquisition(Oscilloscope &scope, QAtomicInt &stop, Q
         error = "Invalid channel scale for positive startup trigger level";
         return false;
     }
-    for (const auto &command :
-         QStringList{"TRIGger:A:TYPe EDGE", "TRIGger:A:EDGE:SLOpe RISE",
-                     QString("TRIGger:A:LEVel:CH%1 %2").arg(channel).arg(level, 0, 'g', 16),
-                     "ACQuire:STOPAfter RUNSTop"})
+    QStringList commands{"TRIGger:A:TYPe EDGE"};
+    if (!preserveEdge)
+        commands << "TRIGger:A:EDGE:SLOpe RISE"
+                 << QString("TRIGger:A:LEVel:CH%1 %2").arg(channel).arg(level, 0, 'g', 16);
+    commands << "ACQuire:STOPAfter RUNSTop";
+    for (const auto &command : commands)
         if (!write(command, "Steady startup failed"))
             return false;
     return !startContinuous || write("ACQuire:STATE RUN", "Steady startup failed");

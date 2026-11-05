@@ -214,6 +214,10 @@ int main(int argc, char** argv)
         for (const QString& type : QStringList{"InputSource", "Relay", "Load"}) {
             InstrumentConfig instrument;
             instrument.type = type;
+            if (instrument.type == "Load") {
+                instrument.channels = {{"63101A", 1, -1}};
+                instrument.channelNumbers = {1};
+            }
             config.instruments.append(instrument);
         }
         vm.onInstrumentSetupConfigChanged(config);

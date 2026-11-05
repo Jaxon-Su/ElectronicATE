@@ -14,7 +14,7 @@
 namespace OscilloscopeAcquisition
 {
 enum class AcquisitionResult {
-    Completed,     // 已啟動的 Single 擷取在期限內完成。
+    Completed,     // 已啟動的擷取在期限內完成，記錄已凍結。
     CompletedAfterTimeout, // 完成回覆晚到：先保存診斷，再回報超時；不得納入成功結果。
     NoTrigger,     // 期限內未完成擷取；不保證完全沒有發生觸發。
     CommError,     // 無示波器、查詢失敗或回應無法辨識。
@@ -31,6 +31,11 @@ struct VerticalScaleState {
     OscCaptureObserver captureRecord;
     bool includeRmsMean = true;
     VerticalScaleOptions options;
+    // Sparse diagnostics need the frozen waveform/channel list, without waiting
+    // for measurements on a clipped record that will be reacquired.
+    bool readCaptureMeasurements = true;
+    // Recalibration pilots read extrema at the NORMAL record's new scale.
+    bool fitDisplay = true;
 };
 
 // Optional output from the frozen record, before any vertical scale changes.
@@ -44,21 +49,25 @@ struct RecordExtremum {
 
 // Preserve legal NA, but capture transport/setup errors before another query clears them.
 double readMeasurementChecked(IScopeMeasurement *scope, int channel, ScopeMeasurement type);
-// Distinguish a disabled channel from a failed query before any later IO clears it.
-bool channelEnabledChecked(IScopeMeasurement *scope, int channel);
 
-// 呼叫前須成功啟動 Single，並確保儀器由呼叫端獨占且存活。
-// 僅等待狀態，不負責啟動、停止或釋放儀器；呼叫端處理結果與清理。
-// timeoutMs 是擷取輪詢期限；晚到的完成記錄仍交給呼叫端保存並判失敗。
-// 通訊仍受底層 I/O timeout 約束；不額外加入固定資料更新等待。
-// AUTO trigger captures one reference record; always returns to STOP/NORMAL. Does not AutoSet.
+// Start RUNSTOP and freeze a new acquisition at the requested trigger mode.
+// Polling is bounded by the device's record budget and the caller's remaining phase;
+// synchronous I/O retains its transport timeout. Late records remain diagnostic only.
 enum class ReferenceMetrics { CaptureDefault, Quartet };
+using ReferenceLog = std::function<void(const QString &)>;
+AcquisitionResult acquireReferenceRecord(IScopeMeasurement *scope, QAtomicInt &stop, int phaseRemainingMs,
+                                     QString &error, const ReferenceLog &log = {},
+                                     ScopeTriggerMode triggerMode = ScopeTriggerMode::Auto);
+double readReadyMeasurement(IScopeMeasurement *scope, QAtomicInt &stop, int channel, ScopeMeasurement type,
+                            int timeoutMs);
+// Reads the frozen reference and restores STOP/NORMAL. Does not AutoSet.
 OscMeasureResult captureAutoReference(IScopeMeasurement *scope, QAtomicInt &stop, int timeoutMs,
                                       VerticalScaleState *vertical = nullptr,
-                                      ReferenceMetrics metrics = ReferenceMetrics::CaptureDefault);
+                                      ReferenceMetrics metrics = ReferenceMetrics::CaptureDefault,
+                                      const ReferenceLog &log = {}, bool detailedLog = false);
 
-// Recover clipping with 2x expansion; preserve Position and Offset.
-// Optional 10% top/bottom margin only expands; never centers or shrinks.
+// Recover clipping with 2x expansion. With 10% margin, align each unclipped
+// waveform by polarity and fit its span to the central 80%, preserving Offset.
 // Callers pass their remaining phase deadline. Expiry bounds measurement readiness,
 // but a completed record can still be archived before reporting failure.
 // Returns true when the caller must acquire a NEW record before measuring.
@@ -72,6 +81,7 @@ bool expandVerticalRange(IScopeMeasurement *scope, QAtomicInt &stop, int &adjust
 // it stays Invalid for cancellation, timeout and communication errors.
 bool waitForReady(IScopeMeasurement *scope, QAtomicInt &stop, int timeoutMs, QString &error,
                   ScopeTriggerState *rejectedState = nullptr);
+// Requires an already-started Single; only waits and does not stop/rearm it.
 AcquisitionResult waitForCapture(IScopeMeasurement *scope, QAtomicInt &stop, int timeoutMs,
                                  int completionTimeoutMs = -1,
                                  const std::function<void()>& onRecordStopped = {});

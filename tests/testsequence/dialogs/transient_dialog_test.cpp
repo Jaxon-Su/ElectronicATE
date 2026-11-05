@@ -14,12 +14,79 @@
 #include <QDoubleSpinBox>
 #include <QPushButton>
 #include <QKeyEvent>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <stdexcept>
+#include <memory>
+#include "testsequencetaskdefaults.h"
+
+template<class Factory>
+void verifyTriggerSource(Factory factory, const QString& name)
+{
+    const auto group = TestSequenceTaskKind::settingsGroup(name);
+    auto check = [](bool value, const char* error) { if (!value) throw std::runtime_error(error); };
+    const auto defaults = testSequenceDefaultSettings(name).value(group).toMap();
+    auto fresh = factory(defaults);
+    auto* source = fresh->template findChild<QComboBox*>("triggerSource");
+    check(source && source->currentData().toInt() == 1, "new task Trigger source must default to CH1");
+    check(source->findData(8) >= 0, "CH8 source unavailable");
+    source->setCurrentIndex(source->findData(2));
+    fresh->template findChild<QPushButton*>("applyBtn")->click();
+    check(fresh->config().value("trigger_channel").toInt() == 2, "Apply lost Trigger source");
+    TestSequenceModel model; DutRowData row; row.item = name; row.settings = {{group, fresh->config()}}; model.appendTask(row);
+    QString xml; QXmlStreamWriter writer(&xml); model.writeXml(writer);
+    check(!writer.hasError(), "Trigger source XML save rejected");
+    QXmlStreamReader reader(xml); reader.readNextStartElement(); model.loadXml(reader);
+    check(!reader.hasError(), "Trigger source XML load rejected");
+    const auto saved = model.tasks()[0].settings.value(group).toMap();
+    auto reopened = factory(saved);
+    check(reopened->template findChild<QComboBox*>("triggerSource")->currentData().toInt() == 2,
+          "reopen lost Trigger source");
+    for (bool escape : {false, true}) {
+        auto cancelled = factory(saved);
+        auto* combo = cancelled->template findChild<QComboBox*>("triggerSource");
+        combo->setCurrentIndex(combo->findData(4));
+        if (escape) { QKeyEvent key(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier); QApplication::sendEvent(cancelled.get(), &key); }
+        else cancelled->template findChild<QPushButton*>("closeBtn")->click();
+        check(cancelled->config() == saved, "Close/Escape committed source edit");
+    }
+    auto legacy = factory(QVariantMap{});
+    auto* current = legacy->template findChild<QComboBox*>("triggerSource");
+    check(current && !current->currentData().isValid(), "legacy dialog guessed a source");
+    legacy->template findChild<QPushButton*>("applyBtn")->click();
+    check(!legacy->config().contains("trigger_channel"), "legacy Apply changed source without selection");
+    current->setCurrentIndex(current->findData(4));
+    legacy->template findChild<QPushButton*>("applyBtn")->click();
+    check(legacy->config().value("trigger_channel").toInt() == 4, "legacy explicit selection lost");
+    for (const QVariant invalid : {QVariant(true), QVariant("2"), QVariant(9), QVariant(1.5), QVariant{}}) {
+        auto bad = factory(QVariantMap{{"trigger_channel", invalid}});
+        bad->template findChild<QPushButton*>("applyBtn")->click();
+        check(bad->config().contains("trigger_channel") && bad->config().value("trigger_channel").metaType() == invalid.metaType() &&
+              bad->config().value("trigger_channel") == invalid, "invalid source silently coerced");
+        auto* repaired = bad->template findChild<QComboBox*>("triggerSource");
+        repaired->setCurrentIndex(repaired->findData(3));
+        bad->template findChild<QPushButton*>("applyBtn")->click();
+        check(bad->config().value("trigger_channel").toInt()==3,"invalid source could not be corrected");
+    }
+}
 int main(int argc,char** argv) {
     qputenv("QT_QPA_PLATFORM","offscreen"); QApplication app(argc,argv);
     QFontDatabase::addApplicationFont("C:/Windows/Fonts/arial.ttf");
     QFontDatabase::addApplicationFont("C:/Windows/Fonts/msjh.ttc");
     app.setFont(QFont("Arial",10));
+    for (bool grouped : {false, true}) {
+        const auto selection = grouped ? StaticDialog::Selection::Group : StaticDialog::Selection::Single;
+        verifyTriggerSource([&](const QVariantMap& cfg) { return std::make_unique<StaticDialog>(InputConditionOptions{},QStringList{},cfg,1,nullptr,selection); }, grouped ? "Static Group Test" : "Static Test");
+        verifyTriggerSource([&](const QVariantMap& cfg) { return std::make_unique<DynamicDialog>(InputConditionOptions{},QStringList{},cfg,1,nullptr,selection); }, grouped ? "Dynamic Group Test" : "Dynamic Test");
+        for (auto mode : {TurnOnOffDialog::TurnOn, TurnOnOffDialog::TurnOff}) {
+            const QString name = mode == TurnOnOffDialog::TurnOn ? "Turn on" : "Turn off";
+            verifyTriggerSource([&](const QVariantMap& cfg) { return std::make_unique<TurnOnOffDialog>(mode,InputConditionOptions{},QStringList{},QVector<RelayOption>{},cfg,1,nullptr,selection); }, name + (grouped ? " Group Test" : ""));
+        }
+        for (auto mode : {ShortTestDialog::TurnOnThenShort, ShortTestDialog::ShortThenTurnOn}) {
+            const QString name = mode == ShortTestDialog::TurnOnThenShort ? "Turn on then short" : "Short then turn on";
+            verifyTriggerSource([&](const QVariantMap& cfg) { return std::make_unique<ShortTestDialog>(mode,InputConditionOptions{},QStringList{},QVector<RelayOption>{},cfg,1,nullptr,selection); }, name + (grouped ? " Group Test" : ""));
+        }
+    }
     DelayDialog cancelled({{"delay_ms",5000}},1);
     cancelled.findChild<QSpinBox*>()->setValue(8000);
     cancelled.findChild<QPushButton*>("closeBtn")->click();
@@ -163,6 +230,18 @@ int main(int argc,char** argv) {
     staticInput.findChild<QCheckBox*>("autoPeriod")->setChecked(true);
     staticInput.show();app.processEvents();
     staticInput.grab().save(TestEvidence::path("ac-dc-input.png"));
+    for(QDialog* dialog : {static_cast<QDialog*>(&staticInput),static_cast<QDialog*>(&dynamicInput)}) {
+        dialog->resize(540,490); dialog->show(); app.processEvents();
+        auto* scroll=dialog->findChild<QScrollArea*>();
+        if(!scroll || scroll->verticalScrollBar()->maximum()<=0) throw std::runtime_error("compact steady settings cannot scroll");
+        scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum()); app.processEvents();
+        auto* hint=dialog->findChild<QLabel*>("hintLbl");
+        const QRect visibleHint(hint->mapTo(scroll->viewport(),QPoint{}),hint->size());
+        if(!scroll->viewport()->rect().contains(visibleHint) || !dialog->findChild<QPushButton*>("applyBtn")->isVisible())
+            throw std::runtime_error("lower steady settings/footer not accessible");
+        dialog->grab().save(TestEvidence::path(dialog==&staticInput?"static-settings-bottom.png":"dynamic-settings-bottom.png"));
+        scroll->verticalScrollBar()->setValue(0);
+    }
     auto *margin=staticInput.findChild<QCheckBox*>("verticalMargin");
     for (int state=0;state<3;++state) {
         margin->setChecked(state!=0); margin->setEnabled(state!=2); app.processEvents();

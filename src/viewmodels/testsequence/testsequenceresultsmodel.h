@@ -16,14 +16,18 @@ public:
     void updateRecord(const TestSequenceResultRecord &record);
     void selectTask(int uid);
     void setSummary(bool summary);
+    bool summary() const;
     void setFilter(int column, const QString &value);
     QStringList options(int column) const;
     QString filterValue(int column) const { return m_filters.value(column); }
+signals:
+    void summaryChanged(bool summary);
 private:
     void rebuild();
     QVector<TestSequenceResultRecord> m_records;
     QVector<QVariantList> m_allRows, m_rows;
     QMap<int, QString> m_filters;
     int m_uid = -1;
-    bool m_summary = true;
+    bool m_generalSummary = true;
+    QMap<int, bool> m_taskModes;
 };

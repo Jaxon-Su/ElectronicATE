@@ -150,9 +150,12 @@ bool TestRunService::executeSteadyTest(const TaskSettings::Steady &cfg, bool dyn
     };
     try {
         checkStop();
+        if (!prepareMeasurementTrigger(cfg, name)) return false;
         TransientContext search;
+        search.log = [this, name](const QString &text) { emit logMessage(name + ": " + text); };
         search.target = TaskSettings::serialized(cfg.searchDirection);
         search.verticalScale = verticalScaleOptions(cfg.verticalMargin);
+        prepareVerticalMargin(search.verticalScale);
         ScopeMeasurementRequest request{strategyName, *scope, search, {}};
         if (capture)
             request.capture =
@@ -211,6 +214,47 @@ bool TestRunService::executeSteadyTest(const TaskSettings::Steady &cfg, bool dyn
     if (outputsAttempted)
         cleanupSteadyOutputs(input, loadIndex, dynamic);
     return false;
+}
+
+// Explicit task source wins over instrument state or earlier Write Oscilloscope tasks.
+// Legacy settings without a source retain the original startup behavior.
+bool TestRunService::prepareMeasurementTrigger(const TaskSettings::Measurement &cfg, const QString &name)
+{
+    if (!cfg.triggerChannel) return true;
+    const int channel = *cfg.triggerChannel;
+    const QString prefix = QString("%1: Trigger source CH%2").arg(name).arg(channel);
+    auto checkStop = [&] {
+        if (m_stopRequested.loadAcquire()) throw std::runtime_error("Stopped by user");
+    };
+    try {
+        checkStop();
+        auto* scope = m_context.scope;
+        QString error;
+        if (!scope->stopAcquisition(error)) throw std::runtime_error(("STOP failed: " + error).toStdString());
+        checkStop();
+        if (!scope->selectEdgeTrigger(error)) throw std::runtime_error(("Edge selection failed: " + error).toStdString());
+        checkStop();
+        if (!scope->setEdgeTriggerChannel(channel, error)) throw std::runtime_error(("write failed: " + error).toStdString());
+        checkStop();
+        const int actual = scope->triggerChannel();
+        error = scope->lastError();
+        checkStop();
+        if (!error.isEmpty()) throw std::runtime_error(("readback failed: " + error).toStdString());
+        if (actual != channel)
+            throw std::runtime_error(QString("readback mismatch (received CH%1)").arg(actual).toStdString());
+        const bool enabled = scope->isChannelEnabled(channel);
+        error = scope->lastError();
+        checkStop();
+        if (!error.isEmpty()) throw std::runtime_error(("channel state query failed: " + error).toStdString());
+        if (!enabled) throw std::runtime_error("channel is disabled; enable it before running this test");
+        emit logMessage(prefix + " applied and confirmed");
+        checkStop();
+        return true;
+    } catch (const std::exception& e) {
+        return failTask(prefix + ": " + QString::fromUtf8(e.what()));
+    } catch (...) {
+        return failTask(prefix + ": unexpected preparation error");
+    }
 }
 
 // Supply/load preparation is shared by Single, Group members and retries.
@@ -277,13 +321,13 @@ void TestRunService::prepareSteadyScope(const TaskSettings::Steady &cfg, const Q
             throw std::runtime_error("Stopped by user");
     };
     QString startupError;
-    if (!scope->prepareSteadyAcquisition(m_stopRequested, startupError, allowInitialAuto))
+    if (!scope->prepareSteadyAcquisition(m_stopRequested, startupError, allowInitialAuto, cfg.autoPeriod))
         throw std::runtime_error(startupError.toStdString());
     checkStop();
     if (cfg.autoPeriod) {
         emit logMessage(name + ": Auto Period after settling (target 5 cycles, accept 3-8)");
         QString error;
-        if (!m_dependencies.autoPeriod(scope, m_stopRequested, error, request.capture, request.context.verticalScale))
+        if (!m_dependencies.autoPeriod(scope, m_stopRequested, error, request.capture, request.context.verticalScale, request.context.log))
             throw std::runtime_error(error.toStdString());
         checkStop();
     }
@@ -407,10 +451,12 @@ bool TestRunService::executeTransient(const QString &name, const TaskSettings::T
     const auto &shortMask = masks.shortMask;
     const auto &dischargeMask = masks.dischargeMask;
     const bool needsShort = masks.needsShort, needsDischarge = masks.needsDischarge;
+    if (!cfg.descent && !prepareMeasurementTrigger(cfg, name)) return false;
     TransientContext context;
     context.target = TaskSettings::serialized(cfg.searchDirection);
     context.edge = QStringLiteral("AUTO");
-    context.verticalScale = verticalScaleOptions(cfg.verticalMargin);
+    context.verticalScale = verticalScaleOptions(!cfg.descent && cfg.verticalMargin);
+    prepareVerticalMargin(context.verticalScale);
     context.timeoutMs = cfg.triggerTimeoutMs;
     context.phaseTimeoutMs = cfg.phaseTimeoutMs;
     context.settleMs = cfg.settleMs;
@@ -421,7 +467,7 @@ bool TestRunService::executeTransient(const QString &name, const TaskSettings::T
         context.descentChannelEnabled = cfg.descent->channelEnabled;
         context.descentLevels = cfg.descent->levels;
     }
-    const ShortCircuitProtection protection{shortMask, dischargeMask, context.powerOffMs, context.dischargeMs, true};
+    const ShortCircuitProtection protection{shortMask, dischargeMask, context.powerOffMs, context.dischargeMs, true, context.shortExitDelays};
     auto protect = [this, needsShort, protection] {
         if (needsShort && !m_shortCircuit.active()) m_shortCircuit = protection;
         if (needsShort) m_unreleasedOutputs.insert(TableKind::Relay);
@@ -496,12 +542,14 @@ bool TestRunService::executeTransient(const QString &name, const TaskSettings::T
         condition->error = result.error;
         condition->trials = result.trials;
         condition->channels = representativeChannels(result.trials, result.steadyReferences);
+        condition->trialIssues = result.trialIssues;
         if (!result.success || result.cleanupFailed)
             failTask(name + ": " + result.error);
     } else {
         m_attemptResult.error = result.error;
         m_attemptResult.trials = result.trials;
         m_attemptResult.channels = representativeChannels(result.trials, result.steadyReferences);
+        m_attemptResult.trialIssues = result.trialIssues;
         m_attemptResult.summary = m_actionResults.join("\n");
         emit measurementReady(m_currentTaskIndex, m_attemptResult, result.success && !result.cleanupFailed);
     }

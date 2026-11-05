@@ -23,9 +23,12 @@ class MSOSeries456 : public Oscilloscope
     bool setTriggerMode(ScopeTriggerMode mode, QString &error) override;
     bool setChannelTriggerLevel(int channel, double level, QString &error) override;
     bool setVerticalScale(int channel, double scale, QString &error) override;
+    bool setVerticalPosition(int channel, double position, QString &error) override;
     bool readVerticalRange(int channel, ScopeVerticalRange &range, QString &error) override;
     bool beginSingleAcquisition() override;
-    bool prepareSteadyAcquisition(QAtomicInt &stop, QString &error, bool startContinuous = true) override;
+    bool beginReferenceRecord(ScopeTriggerMode triggerMode, int &timeoutMs, QString &error) override;
+    ScopeReferenceStatus pollReferenceRecord(QString &state, QString &error) override;
+    bool prepareSteadyAcquisition(QAtomicInt &stop, QString &error, bool startContinuous = true, bool preserveEdge = false) override;
     std::unique_ptr<IScopePeriodSession> beginPeriodSession(IScopePeriodSession::Continue ready,
                                                            QString &error) override;
     bool queryConfiguration(const QString &command, QString &response, QString &error) override;
@@ -122,6 +125,11 @@ class MSOSeries456 : public Oscilloscope
 
   private:
     friend class MsoBrownOutSession;
+    bool m_referenceActive = false;
+    QString m_referenceMode;
+    bool m_referenceStopping = false;
+    quint64 m_referenceRequired = 1;
+    quint64 m_referenceFrozenAfter = 0;
     // 共用查詢輔助：查詢 DISplay:GLObal:<source>:STATE，回傳是否為 ON
     bool queryGlobalDisplayState(const QString &source, const QString &logTag);
 

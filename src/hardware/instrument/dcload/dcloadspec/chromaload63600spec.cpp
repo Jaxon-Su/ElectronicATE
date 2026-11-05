@@ -1,4 +1,5 @@
 #include "chromaload63600spec.h"
+#include "chromacurrentrating.h"
 #include <QMap>
 #include <QString>
 #include <functional>
@@ -14,6 +15,13 @@ static QMap<QString, std::function<ChromaLoad63600Spec()>> createSpecMap63600 = 
 };
 
 // findPowerRange63600
+
+void validateCurrent63600(const QString &model, double amps, double volts, const QString &range, bool dynamic)
+{
+    const auto entry = createSpecMap63600.constFind(model);
+    if (entry == createSpecMap63600.cend()) throw std::invalid_argument(("Unknown 63600 module: " + model).toStdString());
+    requireChromaCurrentRating(entry.value()().ranges, model, amps, volts, checkedChromaCurrentRange(model, 0, range, dynamic));
+}
 
 std::optional<PowerRangeSpec63600> findPowerRange63600(const QString& subModel, double currval)
 {
@@ -138,12 +146,12 @@ ChromaLoad63600Spec createChroma636308060Spec()
     // CCM 中檔 (0~6A)
     PowerRangeSpec63600 rangeMid;
     rangeMid.mode = "CCM";
-    rangeMid.power = 30.0;
+    rangeMid.power = 60.0;
     rangeMid.currentSpec = {0.0, 6.0, 0.0001, {0.1, 0.1, 0.0, "%F.S.", "0.1%+0.1%F.S."}, "CCM"};
     rangeMid.voltageSpec = {0.5, 80.0, 0.001, {0.05, 0.1, 0.0, "%F.S.", "0.05%+0.1%F.S."}, "16V range"};
     rangeMid.dynamicSpec = {0.00001,  0.01, 0.000001, 0.0001, 0.6,   0.0001,
                             0.000001, 0.0,  6.0,      0.0001, 0.004, "CCM Dynamic"};
-    rangeMid.remark = "30W/CCM";
+    rangeMid.remark = "60W/CCM";
 
     // CCH 高檔 (0~60A)
     PowerRangeSpec63600 rangeHigh;
@@ -213,13 +221,13 @@ ChromaLoad63600Spec createChroma6364015060Spec()
     // CCL 低檔 (0~1A)
     PowerRangeSpec63600 rangeLow;
     rangeLow.mode = "CCL";
-    rangeLow.power = 400.0;
+    rangeLow.power = 90.0;
     rangeLow.currentSpec = {0.0, 1.0, 0.00002, {0.1, 0.1, 0.0, "%F.S.", "0.1%+0.1%F.S."}, "CCL"};
     rangeLow.voltageSpec = {
         1.8, 150.0, 0.001, {0.025, 0.025, 0.0, "%F.S.", "0.025%+0.025%F.S."}, "16V range"};
     rangeLow.dynamicSpec = {0.00001,  0.01, 0.000001, 0.0002,  0.1,   0.00002,
                             0.000001, 0.0,  1.0,      0.00002, 0.004, "Slew: 0.2A/ms~0.1A/us"};
-    rangeLow.remark = "400W/CCL";
+    rangeLow.remark = "90W/CCL";
 
     // CCM 中檔 (0~6A)
     PowerRangeSpec63600 rangeMid;
@@ -247,7 +255,7 @@ ChromaLoad63600Spec createChroma6364015060Spec()
     return spec;
 }
 
-// 63630-600-15 規格 (600W, 0~600V, 0~15A)
+// 63630-600-15 規格 (300W, 0~600V, 0~15A)
 
 ChromaLoad63600Spec createChroma6363060015Spec()
 {
@@ -267,22 +275,22 @@ ChromaLoad63600Spec createChroma6363060015Spec()
     // CCM 中檔 (0~1.5A)
     PowerRangeSpec63600 rangeMid;
     rangeMid.mode = "CCM";
-    rangeMid.power = 90.0;
+    rangeMid.power = 300.0;
     rangeMid.currentSpec = {0.0, 1.5, 0.00005, {0.1, 0.1, 0.0, "%F.S.", "0.1%+0.1%F.S."}, "CCM"};
     rangeMid.voltageSpec = {2.0, 600.0, 0.01, {0.05, 0.1, 0.0, "%F.S.", "0.05%+0.1%F.S."}, "200V range"};
     rangeMid.dynamicSpec = {0.00001,  0.01, 0.000001, 0.00015, 0.15,  0.00005,
                             0.000001, 0.0,  1.5,      0.00005, 0.004, "CCM Dynamic"};
-    rangeMid.remark = "90W/CCM";
+    rangeMid.remark = "300W/CCM";
 
     // CCH 高檔 (0~15A)
     PowerRangeSpec63600 rangeHigh;
     rangeHigh.mode = "CCH";
-    rangeHigh.power = 600.0;
+    rangeHigh.power = 300.0;
     rangeHigh.currentSpec = {0.0, 15.0, 0.0005, {0.1, 0.1, 0.0, "%F.S.", "0.1%+0.1%F.S."}, "CCH"};
     rangeHigh.voltageSpec = {2.0, 600.0, 0.1, {0.05, 0.1, 0.0, "%F.S.", "0.05%+0.1%F.S."}, "600V range"};
     rangeHigh.dynamicSpec = {0.00001,  0.01, 0.000001, 0.0015, 1.5,   0.0005,
                              0.000001, 0.0,  15.0,     0.0005, 0.004, "CCH Dynamic"};
-    rangeHigh.remark = "600W/CCH";
+    rangeHigh.remark = "300W/CCH";
 
     spec.ranges = {rangeLow, rangeMid, rangeHigh};
     return spec;

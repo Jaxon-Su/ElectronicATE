@@ -1,4 +1,6 @@
 #include "chroma6310a.h"
+#include "chroma63107range.h"
+#include "chromacurrentrating.h"
 #include <QDebug>
 #include <QSet>
 #include <algorithm>
@@ -11,6 +13,10 @@
 //    LEDL / LEDH  - LED 模擬低壓 / 高壓
 void Chroma6310A::setLoadMode(const QString& mode)
 {
+    if (m_legacyFrame) {
+        Chroma6310::setLoadMode(mode);
+        return;
+    }
     static const QSet<QString> validModes = {
         // 繼承自 6310
         "CCL", "CCH", "CCDL", "CCDH", "CRL", "CRH", "CV",
@@ -27,6 +33,16 @@ void Chroma6310A::setLoadMode(const QString& mode)
     write(QString("MODE %1").arg(mode));
 }
 
+QString Chroma6310A::currentMode(double current, double voltage, const QString &requestedMode, bool dynamic) const
+{
+    if (Chroma63107Range::applies(m_model)) {
+        const auto mode = checkedChromaCurrentRange(m_model, realChannel(), requestedMode, dynamic);
+        return Chroma63107Range::select(realChannel(), current, voltage, mode);
+    }
+    validateCurrent6310A(m_model, realChannel(), current, voltage, requestedMode, dynamic);
+    return selectOptimalLoadMode6310A(m_model, current, voltage);
+}
+
 //  setStaticCurrent
 //
 //  邏輯與 Chroma6310::setStaticCurrent 相同，
@@ -36,11 +52,11 @@ void Chroma6310A::setStaticCurrent(const StaticCurrentParam& param)
     if (param.levels.isEmpty())
         return;
 
-    double maxCurrent = *std::max_element(param.levels.begin(), param.levels.end());
+    double maxCurrent = peakLoadCurrent(param.levels, param.enabledMask, getNumSegments());
     double voltage = param.expectedVoltage;
 
-    QString modeStr = selectOptimalLoadMode6310A(m_model, maxCurrent, voltage);
     const QString requestedMode = param.loadMode.trimmed().toUpper();
+    QString modeStr = currentMode(maxCurrent, voltage, requestedMode, false);
     if (requestedMode == "NO SETTING") {
         modeStr.clear();
     } else if (!requestedMode.isEmpty() && requestedMode != "AUTO RANGE") {
@@ -75,16 +91,17 @@ void Chroma6310A::setStaticCurrent(const StaticCurrentParam& param)
 //  僅將 selectOptimalLoadMode() → selectOptimalLoadMode6310A()
 void Chroma6310A::setDynamicCurrent(const DynamicCurrentParam& param)
 {
+    if (m_model == "63110A") throw std::invalid_argument("63110A does not support dynamic load programming");
     if (param.levels.isEmpty())
         return;
 
-    double maxCurrent = *std::max_element(param.levels.begin(), param.levels.end());
+    double maxCurrent = peakLoadCurrent(param.levels, param.enabledMask, getNumSegments());
     double voltage = param.expectedVoltage;
 
     // 先查靜態 mode，再轉換為動態 mode
-    QString baseMode = selectOptimalLoadMode6310A(m_model, maxCurrent, voltage);
-    QString modeStr = (baseMode == "CCH") ? "CCDH" : "CCDL";
     const QString requestedMode = param.loadMode.trimmed().toUpper();
+    QString baseMode = currentMode(maxCurrent, voltage, requestedMode, true);
+    QString modeStr = (baseMode == "CCH") ? "CCDH" : "CCDL";
     if (requestedMode == "NO SETTING") {
         modeStr.clear();
     } else if (!requestedMode.isEmpty() && requestedMode != "AUTO RANGE") {

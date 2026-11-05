@@ -57,6 +57,7 @@ public:
     }
     double measureSignalPeak(int ch,const QString& type)override{
         require(!forbidRmsMean || (event && !autoMode) || (autoMode && allowReferenceQuartet) ||
+                    (!autoMode && allowBaselineQuartet) ||
                     (type != "RMS" && type != "MEAN"), "reference/Baseline queried RMS/Mean");
         ++reads;
         if(event && isClipping(ch))++clippedEventReads;
@@ -71,6 +72,7 @@ public:
     bool waitForOperationComplete(int)override{throw std::runtime_error("OPC used");}
     bool forbidRmsMean = false;
     bool allowReferenceQuartet = false;
+    bool allowBaselineQuartet = false;
     int clippedEventReads=0;
     int totalChannels=2;
     double scale=0,capturedScale=0,requiredScale=4;
@@ -89,6 +91,7 @@ public:
 TransientContext context(Scope& s){
     TransientContext c;c.target="BOTH";c.timeoutMs=1;c.settleMs=0;c.dischargeMs=0;c.powerOffMs=0;
     c.phaseTimeoutMs=15000;c.maxIterations=100;c.trialsPerLevel=3;c.singleProcessingMs=0;
+    c.shortExitDelays = {0, 0, 0}; // Dedicated real-time exit coverage keeps production defaults.
     c.power=[&](bool on,QString&){s.trace<<(on?"POWER ON":"POWER OFF");
         if(s.armed&&!s.event&&((s.single&&on)||(!s.single&&!on))){s.event=true;++s.events;}return true;};
     c.load=[&](bool on,QString&){s.trace<<(on?"LOAD ON":"LOAD OFF");return true;};

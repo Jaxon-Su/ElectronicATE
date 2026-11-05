@@ -1,4 +1,5 @@
 #include "instrumentexecutor.h"
+#include "manualcurrentpreflight.h"
 
 #include "dcload.h"
 
@@ -170,6 +171,8 @@ InstrumentExecutor::Result InstrumentExecutor::runDynamicLoad(const InstrumentSe
                                                                : createResult.errorMessage, true};
 
 
+        auto dataInfo = ConditionLookup::findDynamicLoadData(rows, conditionIndex, meta.t1t2);
+        validateManualLoadCurrents(cfg, dataInfo.values, meta.ranges, meta.vo, true);
         MasterSlaveSyncPlan syncPlan;
         QString syncError;
         for (auto *load : createResult.dcLoads())
@@ -180,8 +183,6 @@ InstrumentExecutor::Result InstrumentExecutor::runDynamicLoad(const InstrumentSe
         }
 
         prepareDynamicLoadProgrammingIfNeeded(syncPlan, action);
-
-        auto dataInfo = ConditionLookup::findDynamicLoadData(rows, conditionIndex, meta.t1t2);
 
         const QStringList failedChannels =
             action == DynamicLoadAction::LoadOff

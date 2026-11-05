@@ -21,6 +21,53 @@
 #include <QLockFile>
 #include <QFontDatabase>
 #include <QThread>
+#include <QXmlStreamReader>
+
+// Completed AUTO, two pre-event records, then optional real events and a MISS.
+// Values are deliberately distinct across acquisitions and channels.
+class WorstReferenceScope : public Scope {
+public:
+    int acquisition = 0;
+    bool realEvents = false;
+    QString fault, readError;
+    QAtomicInt *stopFlag = nullptr;
+    bool beginSingleAcquisition() override {
+        if (autoMode) acquisition=0; else ++acquisition;
+        return Scope::beginSingleAcquisition();
+    }
+    QString getAcquisitionState() override {
+        return autoMode || (!event && acquisition<=2) || (event && realEvents && acquisition<=4) ? "0" : "1";
+    }
+    bool isClipping(int ch) override {
+        return fault=="clipped" && !autoMode && !event && acquisition==1 && ch==2;
+    }
+    QString lastError() const override { return readError; }
+    double measureSignalPeak(int ch,const QString &type) override {
+        readError.clear();
+        const int index=autoMode ? 0 : qMin(acquisition,4);
+        const bool baseline=!autoMode && !event;
+        if (baseline && ch==2) {
+            if ((fault=="query" || (fault=="second-query" && negative)) && type=="RMS") {
+                readError="Baseline RMS query failed";return NAN;
+            }
+            if (fault=="stop" && type=="RMS") stopFlag->storeRelease(1);
+            if (fault=="timeout" && type=="RMS") QThread::msleep(50);
+            if (fault=="rank-na" && (type=="MAXimum" || type=="MINimum")) return NAN;
+        }
+        if (baseline && fault=="rms-na" && type=="RMS") return NAN;
+        if (baseline && fault=="other-na" && type==(negative?"MAXimum":"MINimum")) return NAN;
+        const double extrema[2][5]={{20,24,26,30,35},{30,40,35,25,24}};
+        const double lows[2][5]={{20,24,26,30,35},{30,32,45,23,22}};
+        double peak=extrema[ch-1][index];
+        double low=lows[ch-1][index];
+        if (baseline && fault=="tie" && index==2 && ch==1) peak=low=24;
+        if (baseline && fault=="clipped" && index==1) peak=low=1000;
+        if (type=="MAXimum") return peak;
+        if (type=="MINimum") return -low;
+        if (type=="RMS") return 10+index+ch;
+        return 5+index+ch;
+    }
+};
 
 class ValuesScope : public Scope {
 public:
@@ -104,6 +151,190 @@ class TrialResultsTest : public QObject {
         return r;
     }
 private slots:
+    void descentDetailDefault()
+    {
+        auto r=record(); r.taskName="Turn off (descent)"; r.trials.clear();
+        for (int i=0;i<5;++i)
+            r.trials.append({i+1,MeasurementDirection::Fall,i+1,1,10.0-i,
+                             {{1,"V",20.0+i,-1.0-i,10.0+i,5.0+i}}});
+        r.channels=representativeChannels(r.trials);
+        TestSequenceResultsModel model; TestSequenceResultDetails view(&model);
+        model.selectTask(r.dutUid); model.updateRecord(r);
+        auto *mode=view.findChild<QComboBox *>("resultDetailMode");
+        QCOMPARE(mode->currentText(),"Trials");
+        QCOMPARE(model.rowCount(),5);
+        for(int i=0;i<5;++i) {
+            QCOMPARE(model.data(model.index(i,TestSequenceResultRows::Level)).toDouble(),10.0-i);
+            QCOMPARE(model.data(model.index(i,TestSequenceResultRows::Max)).toDouble(),20.0+i);
+            QCOMPARE(model.data(model.index(i,TestSequenceResultRows::Min)).toDouble(),-1.0-i);
+            QCOMPARE(model.data(model.index(i,TestSequenceResultRows::Rms)).toDouble(),10.0+i);
+            QCOMPARE(model.data(model.index(i,TestSequenceResultRows::Mean)).toDouble(),5.0+i);
+        }
+        mode->setCurrentIndex(0); QCOMPARE(model.rowCount(),2);
+        model.updateRecord(r); QCOMPARE(mode->currentText(),"Summary");
+        auto other=record(); other.dutUid=51;other.taskIndex=1;model.updateRecord(other);
+        model.selectTask(other.dutUid);QCOMPARE(mode->currentText(),"Summary");
+        model.selectTask(r.dutUid);QCOMPARE(mode->currentText(),"Summary");
+        mode->setCurrentIndex(1);QCOMPARE(model.rowCount(),5);
+    }
+    void descentTrialIssues()
+    {
+        auto r=record();r.taskName="Turn off (descent)";r.status="Fail";r.error="one pre-power-off trigger";
+        r.trials={{1,MeasurementDirection::Fall,1,1,10,{{1,"V",20,-1,10,5}}},
+                  {2,MeasurementDirection::Fall,3,1,8,{{1,"V",22,-3,12,7}}}};
+        r.trialIssues={{MeasurementDirection::Fall,2,1,9,false,"Pre-power-off trigger"},
+                       {MeasurementDirection::Fall,2,2,9,true,"Skipped after early trigger"}};
+        r.channels=representativeChannels(r.trials);
+        TestSequenceResultsModel model;model.updateRecord(r);model.selectTask(r.dutUid);
+        TestSequenceResultDetails view(&model);
+        QCOMPARE(view.findChild<QComboBox *>("resultDetailMode")->currentText(),"Trials");
+        QCOMPARE(model.rowCount(),4);
+        const QStringList expected{"Pass","Fail","Skipped","Pass"};
+        for(int i=0;i<4;++i)QCOMPARE(model.data(model.index(i,TestSequenceResultRows::Status)).toString(),expected[i]);
+        QCOMPARE(model.data(model.index(1,TestSequenceResultRows::Record)).toString(),"—");
+        QCOMPARE(model.data(model.index(1,TestSequenceResultRows::Max)).toString(),"NA");
+        QCOMPARE(model.data(model.index(1,TestSequenceResultRows::Level)).toDouble(),9.0);
+        auto *mode=view.findChild<QComboBox *>("resultDetailMode");mode->setCurrentIndex(0);
+        QCOMPARE(model.rowCount(),4); // Fall representative, Rise not run, Fail and Skipped.
+        const auto rows=TestSequenceResultRows::rows(r,true);
+        QCOMPARE(rows[0][TestSequenceResultRows::Step].toInt(),3);
+        QCOMPARE(rows[0][TestSequenceResultRows::Min].toDouble(),-3.0);
+        mode->setCurrentIndex(1);
+        model.setFilter(TestSequenceResultsModel::ChannelFilter,"CH1");QCOMPARE(model.rowCount(),2);
+        model.setFilter(TestSequenceResultsModel::ChannelFilter,{});QCOMPARE(model.rowCount(),4);
+        auto retry=r;retry.attempt=2;model.updateRecord(retry);QCOMPARE(model.rowCount(),8);
+        model.setFilter(TestSequenceResultsModel::AttemptFilter,"2");QCOMPARE(model.rowCount(),4);
+        auto empty=r;empty.dutUid=50;empty.taskIndex=1;empty.trials[0].channels.clear();empty.trials[1].channels.clear();empty.channels.clear();
+        model.updateRecord(empty);model.selectTask(empty.dutUid);QCOMPARE(model.rowCount(),4);
+        QCOMPARE(model.data(model.index(0,TestSequenceResultRows::Level)).toDouble(),10.0);
+        QCOMPARE(model.data(model.index(0,TestSequenceResultRows::Max)).toString(),"NA");
+    }
+    void turnoffWorstReference_data()
+    {
+        QTest::addColumn<QString>("target");
+        QTest::addColumn<QString>("fault");
+        for (const QString &target:{"MAX","MIN","BOTH"})
+            for (const QString &fault:{"none","tie","rank-na","rms-na","other-na","clipped","events"})
+                QTest::newRow(qPrintable(target+"-"+fault))<<target<<fault;
+    }
+    void turnoffWorstReference()
+    {
+        QFETCH(QString,target); QFETCH(QString,fault);
+        WorstReferenceScope scope; scope.scale=25; scope.fault=fault; scope.realEvents=fault=="events";
+        QAtomicInt stop(0); auto ctx=context(scope);
+        ctx.target=target; ctx.trialsPerLevel=1; ctx.timeoutMs=20;
+        QStringList logs; ctx.log=[&](const QString &message){logs<<message;};
+        ctx.captureRecord=[](const ScopeCaptureRecord &record) {
+            for (const auto &value:record.channels)
+                require(std::isnan(value.rms) && std::isnan(value.mean),"Capture quartet contract changed");
+        };
+        // Capture itself requires finite extrema; exercise legal ranking NA on
+        // the result-only path, without changing that separate capture contract.
+        if(fault=="rank-na" || fault=="other-na")ctx.captureRecord={};
+        std::unique_ptr<IOscilloscopeMeasureStrategy> algorithm(OscilloscopeStrategyFactory::create("Turn off",&ctx));
+        algorithm->setCaptureObserver(ctx.captureRecord);
+        ScopeMeasurementStrategy strategy(std::move(algorithm),scope);
+        const auto result=strategy.execute(stop);
+        QVERIFY2(result.success,qPrintable(result.error));
+        QCOMPARE(result.trials.isEmpty(),!scope.realEvents);
+        const auto selected=representativeChannels(result.trials,result.steadyReferences);
+        QCOMPARE(selected.size(),target=="BOTH"?4:2);
+        for (const auto &value:selected) {
+            const bool first=value.channel==1;
+            const bool rise=value.direction==MeasurementDirection::Rise;
+            const double peak=scope.realEvents ? (first?35:25) : first ? (fault=="tie"?24:26)
+                : fault=="rank-na"?30 : fault=="clipped" || !rise?35 : 40;
+            const double low=first ? -peak : scope.realEvents?-23 : fault=="rank-na"?-30
+                : fault=="clipped" || !rise?-45:-32;
+            const int index=scope.realEvents ? (first?4:3) : first ? (fault=="tie"?1:2)
+                : fault=="rank-na"?0 : fault=="clipped" || !rise?2 : 1;
+            if(fault=="other-na" && !rise)QVERIFY(std::isnan(value.maximum));else QCOMPARE(value.maximum,peak);
+            if(fault=="other-na" && rise)QVERIFY(std::isnan(value.minimum));else QCOMPARE(value.minimum,low);
+            if (fault=="rms-na") QVERIFY(std::isnan(value.rms));
+            else QCOMPARE(value.rms,double(10+index+value.channel));
+            QCOMPARE(value.mean,double(5+index+value.channel));
+            QCOMPARE(value.source,scope.realEvents?MeasurementSource::Event:MeasurementSource::SteadyReference);
+            QCOMPARE(value.sourceSequence>0,scope.realEvents);
+        }
+        QVERIFY(logs.join('\n').contains("Baseline reference updated"));
+        if (scope.realEvents) QVERIFY(result.steadyReferences.isEmpty());
+        // The actual adapter output feeds both Detail modes and XLSX, with each
+        // Group/load carrying independent values; an unrelated attempt stays separate.
+        if (fault=="none" && target=="BOTH") {
+            auto single=record(); single.taskName="Turn off"; single.channels=selected; single.trials.clear();
+            auto group=single; group.taskName="Turn off Group Test"; group.dutUid=43;group.taskIndex=1;
+            group.conditions={{{0,"Light",LoadConditionKind::Static},"Pass",{},selected,{}},
+                              {{1,"Full",LoadConditionKind::Static},"Pass",{},selected,{}}};
+            group.channels.clear();
+            TestSequenceResultsModel model;model.updateRecord(single);model.updateRecord(group);
+            for (int uid:{42,43}) for (bool summary:{true,false}) {
+                model.selectTask(uid);model.setSummary(summary);
+                QCOMPARE(model.rowCount(),uid==42?4:8);
+                for(int i=0;i<model.rowCount();++i) {
+                    const bool ch1=model.data(model.index(i,TestSequenceResultRows::Channel)).toString()=="CH1";
+                    const bool rise=model.data(model.index(i,TestSequenceResultRows::Direction)).toString()=="Rise";
+                    QCOMPARE(model.data(model.index(i,TestSequenceResultRows::Max)).toDouble(),ch1?26.:rise?40.:35.);
+                    QCOMPARE(model.data(model.index(i,TestSequenceResultRows::Min)).toDouble(),ch1?-26.:rise?-32.:-45.);
+                    QCOMPARE(model.data(model.index(i,TestSequenceResultRows::Rms)).toDouble(),ch1||rise?13.:14.);
+                    QCOMPARE(model.data(model.index(i,TestSequenceResultRows::Mean)).toDouble(),ch1||rise?8.:9.);
+                }
+            }
+            QTemporaryDir dir;QString path,error;
+            QVERIFY2(TestSequenceExcelReport::save(dir.path(),"worst-reference",{single,group},path,error),qPrintable(error));
+            QFile file(path);QVERIFY(file.open(QIODevice::ReadOnly));auto bytes=file.readAll();
+            QList<QPair<QByteArray,QByteArray>> parts;QVERIFY(ZipArchive::readStored(bytes,parts));
+            int sheets=0;
+            for(const auto &part:parts) if(part.first.startsWith("xl/worksheets/sheet")) {
+                ++sheets;QXmlStreamReader xml(part.second);
+                QVector<QMap<QChar,QString>> rows;QChar column;
+                while(!xml.atEnd()) {
+                    xml.readNext();if(!xml.isStartElement())continue;
+                    if(xml.name()==u"row")rows.append(QMap<QChar,QString>{});
+                    else if(xml.name()==u"c")column=xml.attributes().value("r").front();
+                    else if(xml.name()==u"v" || xml.name()==u"t")rows.last()[column]=xml.readElementText();
+                }
+                QVERIFY(!xml.hasError());QCOMPARE(rows.size(),13);
+                for(int i=1;i<rows.size();++i) {
+                    const auto cells=rows[i];
+                    const bool ch1=cells['D']=="CH1";
+                    const bool rise=cells['N']=="Rise";
+                    QCOMPARE(cells['E'].toDouble(),ch1?26.:rise?40.:35.);QCOMPARE(cells['F'].toDouble(),ch1?-26.:rise?-32.:-45.);
+                    QCOMPARE(cells['G'].toDouble(),ch1||rise?13.:14.);QCOMPARE(cells['H'].toDouble(),ch1||rise?8.:9.);
+                    QVERIFY(cells['O'].isEmpty());QVERIFY(cells['J'].contains("Steady reference"));
+                }
+            }
+            QCOMPARE(sheets,2);
+            if(!qEnvironmentVariable("TRIAL_REVIEW_DIR").isEmpty()) {
+                QFile output(QDir(qEnvironmentVariable("TRIAL_REVIEW_DIR")).filePath("worst-reference.xlsx"));
+                QVERIFY(output.open(QIODevice::WriteOnly));output.write(bytes);
+            }
+        }
+    }
+    void turnoffBaselineFailures_data()
+    {
+        QTest::addColumn<QString>("fault");
+        for (const QString &fault:{"query","second-query","stop","timeout","capture"}) QTest::newRow(qPrintable(fault))<<fault;
+    }
+    void turnoffBaselineFailures()
+    {
+        QFETCH(QString,fault);
+        WorstReferenceScope scope;scope.scale=25;scope.fault=fault;
+        QAtomicInt stop(0);scope.stopFlag=&stop;auto ctx=context(scope);
+        ctx.target="MAX";ctx.timeoutMs=20;
+        if(fault=="second-query")ctx.target="BOTH";
+        if(fault=="timeout")ctx.phaseTimeoutMs=40;
+        ctx.captureRecord=[&](const ScopeCaptureRecord &record) {
+            if(fault=="capture" && record.phase=="Baseline")throw std::runtime_error("Baseline capture failed");
+        };
+        const auto result=runTransientStrategy(TransientKind::TurnOff,ctx,&scope,stop);
+        QVERIFY(!result.success);QVERIFY(result.trials.isEmpty());
+        QCOMPARE(result.steadyReferences.size(),fault=="second-query"?1:0);
+        if(fault=="second-query")QCOMPARE(result.steadyReferences[0].direction,MeasurementDirection::Rise);
+        QVERIFY2(result.errorMessage.contains(fault.endsWith("query")?"RMS query failed":fault=="stop"?"Stopped":
+                                              fault=="timeout"?"time limit":"capture failed"),qPrintable(result.errorMessage));
+        QVERIFY(scope.trace.contains("ACQuire:STATE STOP"));QVERIFY(scope.trace.contains("POWER OFF"));
+        QVERIFY(scope.trace.contains("RELAY 0 0"));QVERIFY(scope.trace.contains("LOAD OFF"));
+    }
     void singleLoadDetails()
     {
         auto single = record();
@@ -275,9 +506,14 @@ private slots:
         QFETCH(QString, task); QFETCH(QString, target); QFETCH(QString, events);
         ReferenceScope scope; scope.missMax = events == "none" || events == "fall";
         scope.missMin = events == "none" || events == "rise";
+        // Keep the final-MISS retention fixture within one grid interval of the
+        // first HIT; integer bisection may otherwise converge on a final HIT.
+        if(events.startsWith("both")){scope.scale=5;scope.peak=1.3;scope.negativePeak=target=="MIN"?.5:.7;}
         scope.requireSafeExit = task == "Turn on then short";
         if (events == "both-na") scope.fault = "event-rms-na";
         QAtomicInt stop(0); auto ctx = context(scope); ctx.target = target;
+        // This matrix verifies result provenance, not a 1 ms scheduler deadline.
+        ctx.timeoutMs=50;
         QString lastOutcome;
         ctx.log = [&](const QString &message) {
             if (message.startsWith("Level:")) lastOutcome = message;

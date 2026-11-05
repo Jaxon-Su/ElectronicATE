@@ -1,4 +1,5 @@
 #include "dcloadfactory.h"
+#include "chroma6310frame.h"
 #include "chroma6310.h"
 #include "chroma6310a.h"
 #include "chroma63600.h"
@@ -10,16 +11,16 @@ DCLoadFactory::DCLoadFactory()
 {
 }
 
-DCLoad* DCLoadFactory::createDCLoad(const QString& modelName, ICommunication* comm)
+DCLoad* DCLoadFactory::createDCLoad(const QString& modelName, ICommunication* comm, const QString& frame)
 {
-    if (!comm)
+    if (!comm || !Chroma6310Frame::allows(frame, 1, modelName))
         return nullptr;
 
     if (LoadCapabilityCatalog::Chroma6310Models.contains(modelName))
         return new Chroma6310(modelName, comm);
 
     if (LoadCapabilityCatalog::Chroma6310AModels.contains(modelName))
-        return new Chroma6310A(modelName, comm);
+        return new Chroma6310A(modelName, comm, frame == "6314");
 
     if (LoadCapabilityCatalog::Chroma63600Models.contains(modelName))
         return new Chroma63600(modelName, comm);

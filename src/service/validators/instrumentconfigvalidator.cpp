@@ -30,7 +30,7 @@ InstrumentConfigValidator::ValidationResult InstrumentConfigValidator::validate(
     // 檢查 3: 是否有啟用的指定類型儀器
     bool hasEnabledInstrument = false;
     for (const auto& inst : config.instruments) {
-        if (inst.type == instrumentType && inst.enabled) {
+        if (inst.type == instrumentType && (instrumentType == "Load" ? inst.hasLoadOutputAssignment() : inst.enabled)) {
             hasEnabledInstrument = true;
             break;
         }
@@ -38,6 +38,10 @@ InstrumentConfigValidator::ValidationResult InstrumentConfigValidator::validate(
 
     if (!hasEnabledInstrument) {
         result.errorTitle = "Error Message";
+        if (instrumentType == "Load") {
+            result.errorMessage = "Assign an output index to at least one Load channel in Instruments.";
+            return result;
+        }
         result.errorMessage = QString("No %1 instruments enabled in configuration.\n"
                                       "Please enable at least one %1 instrument!")
                                   .arg(instrumentType); // 動態插入儀器類型

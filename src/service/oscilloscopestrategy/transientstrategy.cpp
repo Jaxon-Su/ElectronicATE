@@ -28,7 +28,7 @@ OscMeasureResult runTransientStrategy(TransientKind kind, const TransientContext
         return result;
     }
     if (!ctx.power || !ctx.load || !ctx.relays || ctx.timeoutMs <= 0 || ctx.phaseTimeoutMs <= 0 ||
-        ctx.maxIterations <= 0 || ctx.settleMs < 0 || ctx.dischargeMs < 0 || ctx.powerOffMs < 0 || ctx.singleProcessingMs < 0 ||
+        ctx.maxIterations <= 0 || ctx.settleMs < 0 || ctx.dischargeMs < 0 || ctx.powerOffMs < 0 || ctx.singleProcessingMs < 0 || !ctx.shortExitDelays.valid() ||
         ctx.trialsPerLevel < 1 || ctx.trialsPerLevel > 10 ||
         !QStringList{"MAX", "MIN", "BOTH"}.contains(ctx.target) ||
         !QStringList{"AUTO", "RISING", "FALLING", "BOTH"}.contains(ctx.edge)) {
@@ -37,14 +37,18 @@ OscMeasureResult runTransientStrategy(TransientKind kind, const TransientContext
     }
 
     auto event = selectEvent(kind);
-    TransientDetail::Execution run(ctx, scope, stop, event->needsShortProtection);
+    TransientDetail::Execution run(ctx, scope, stop, event->needsShortProtection, kind == TransientKind::TurnOff);
     try {
-        TransientDetail::runSearch(run, *event,
-                                  kind == TransientKind::TurnOff || kind == TransientKind::TurnOnThenShort);
+        using TransientDetail::ReferenceResults;
+        const auto references = kind == TransientKind::TurnOff ? ReferenceResults::WorstSteady
+            : kind == TransientKind::TurnOnThenShort ? ReferenceResults::AutoOnly : ReferenceResults::None;
+        TransientDetail::runSearch(run, *event, references);
     } catch (const std::exception &ex) {
         run.result.errorMessage = QString::fromUtf8(ex.what());
+        run.diagnostic("failed: " + run.result.errorMessage);
     } catch (...) {
         run.result.errorMessage = "Unexpected transient strategy error";
+        run.diagnostic("failed: " + run.result.errorMessage);
     }
     // Explicit cleanup covers normal completion, Stop and every exception.
     return run.finish();

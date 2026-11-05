@@ -1,6 +1,7 @@
 #pragma once
 #include "../strategycapturewidget.h"
 #include "../verticalmargincheckbox.h"
+#include "../triggersourceselector.h"
 #include "tasksettingrules.h"
 #include <QCheckBox>
 #include <QWidget>
@@ -25,6 +26,8 @@ class TransientSettingsWidget : public QWidget {
             help->setStyleSheet("color: #526580;");
             form->addRow("", help);
         };
+        source = new TriggerSourceSelector(cfg, this);
+        form->addRow("Trigger source:", source);
         target = new QComboBox;
         target->addItem("BOTH", "BOTH");
         target->addItem("Rise", "MAX");
@@ -82,6 +85,7 @@ class TransientSettingsWidget : public QWidget {
     }
     void save(QVariantMap& cfg) const
     {
+        source->save(cfg);
         capture->save(cfg);
         margin->save(cfg);
         cfg["measure_target"] = target->currentData().toString();
@@ -96,6 +100,7 @@ class TransientSettingsWidget : public QWidget {
   private:
     StrategyCaptureWidget* capture = nullptr;
     VerticalMarginCheckBox* margin = nullptr;
+    TriggerSourceSelector* source = nullptr;
     QComboBox *target, *edge;
     QSpinBox *timeout, *phase, *trials, *dischargeTime = nullptr;
 };

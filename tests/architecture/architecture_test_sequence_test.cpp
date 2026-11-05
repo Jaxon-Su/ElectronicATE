@@ -45,7 +45,7 @@ InstrumentExecutor::Result InstrumentExecutor::runRelay(const InstrumentSetupCon
 InstrumentOperationResult runDcGroup(const InstrumentSetupConfig&,const DcGroup&,InputAction,const std::function<ICommunication*(const QString&)>&) { throw std::runtime_error("unexpected dc"); }
 IOscilloscopeMeasureStrategy* OscilloscopeStrategyFactory::create(const QString&,const TransientContext*) { return nullptr; }
 bool prepareOscilloscopeSettings(const QVariantMap&,const QString&,int,OscilloscopeSettings&,QString&) { return false; }
-bool adjustOscilloscopeAutoPeriod(IScopeAutoPeriod*,QAtomicInt&,QString&,const OscCaptureObserver&, const VerticalScaleOptions&) { return false; }
+bool adjustOscilloscopeAutoPeriod(IScopeAutoPeriod*,QAtomicInt&,QString&,const OscCaptureObserver&, const VerticalScaleOptions&, const std::function<void(const QString&)>&) { return false; }
 void require(bool condition,const char* error) { if (!condition) throw std::runtime_error(error); }
 QPushButton *dialogButton(QDialog *dialog, const QString &text) {
     for (auto *button : dialog->findChildren<QPushButton*>())

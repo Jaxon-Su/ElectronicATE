@@ -1,7 +1,7 @@
 set(REVIEW_ROOT ${CMAKE_CURRENT_LIST_DIR}/../../src)
 add_executable(review_fixes_test integration/review_fixes_test.cpp
     ${REVIEW_ROOT}/hardware/instrument/acsource/chroma61505.cpp
-    ${REVIEW_ROOT}/hardware/instrument/acsource/chroma61509.cpp
+    ${REVIEW_ROOT}/hardware/instrument/acsource/chroma61507_61508_61509.cpp
     ${REVIEW_ROOT}/service/instrumentexecutor/instrumentexecutor_load.cpp
     ${REVIEW_ROOT}/service/instrumentexecutor/instrumentexecutor_input.cpp
     ${REVIEW_ROOT}/service/inputparameters/parameterparser.cpp

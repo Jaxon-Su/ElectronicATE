@@ -293,8 +293,11 @@ void TestRunService::startTasks(const QVector<TaskPayload> &payloads, const Test
             if (const auto *brownOut = std::get_if<BrownOut::Settings>(&prepared[i].settings))
                 channel = brownOut->triggerChannel;
             else if (const auto *transient = std::get_if<TaskSettings::Transient>(&prepared[i].settings)) {
-                if (transient->descent) channel = transient->descent->channel;
-            }
+                channel = transient->descent ? transient->descent->channel : transient->triggerChannel.value_or(0);
+            } else if (const auto *steady = std::get_if<TaskSettings::Steady>(&prepared[i].settings))
+                channel = steady->triggerChannel.value_or(0);
+            else if (const auto *group = std::get_if<TaskSettings::Group>(&prepared[i].settings))
+                channel = group->measurement().triggerChannel.value_or(0);
             if (channel > channelCount) {
                 rejectRun(i, QString("Trigger CH%1 is unavailable on this %2-channel oscilloscope")
                                  .arg(channel).arg(channelCount));
@@ -333,7 +336,9 @@ void TestRunService::startTasks(const QVector<TaskPayload> &payloads, const Test
             m_actionResults.clear();
             m_attemptResult = makeRecord(i, attempt + 1);
             m_attemptActive = true;
-            m_originalScales.clear();
+            m_verticalSettingsTouched = false;
+            m_verticalMarginPrepared = false;
+            m_verticalFitHistory.reset();
             try {
                 m_attemptResult.loadCondition = singleLoadSource(prepared[i], m_context);
                 pass = executeTask(prepared[i]);
@@ -346,7 +351,7 @@ void TestRunService::startTasks(const QVector<TaskPayload> &payloads, const Test
                 failTask("Unknown task exception");
                 pass = false;
             }
-            if (!restoreVerticalScales()) pass = false;
+            if (!stopAfterVerticalChanges()) pass = false;
             m_attemptActive = false;
             if (!measures) {
                 if (m_stopRequested.loadAcquire()) {
@@ -437,41 +442,63 @@ bool TestRunService::failTask(const QString &error)
 
 VerticalScaleOptions TestRunService::verticalScaleOptions(bool margin)
 {
+    if (margin && !m_verticalFitHistory) m_verticalFitHistory = std::make_shared<VerticalFitHistory>();
     return {margin, [this](int channel, double previous, double requested) {
-        if (!m_originalScales.contains(channel)) m_originalScales.insert(channel, previous);
+        m_verticalSettingsTouched = true;
         emit logMessage(QString("  CH%1 automatic Scale: %2 -> %3 units/div")
                             .arg(channel).arg(previous, 0, 'g', 12).arg(requested, 0, 'g', 12));
-    }};
+    }, [this](int channel, double previous, double requested) {
+        m_verticalSettingsTouched = true;
+        emit logMessage(QString("  CH%1 automatic Position: %2 -> %3 div")
+                            .arg(channel).arg(previous,0,'g',12).arg(requested,0,'g',12));
+    }, [this](const QString &message) { emit logMessage(message); }, m_verticalFitHistory};
 }
 
-bool TestRunService::restoreVerticalScales()
+void TestRunService::prepareVerticalMargin(const VerticalScaleOptions &options)
 {
-    if (m_originalScales.isEmpty()) return true;
-    QStringList errors;
+    if (!options.margin || m_verticalMarginPrepared) return;
     auto *scope = m_context.scope;
-    try {
+    const auto checkStop = [this] {
+        if (m_stopRequested.loadAcquire()) throw std::runtime_error("Stopped by user");
+    };
+    checkStop();
+    const int channels = scope->getTotalChannel();
+    if (channels <= 0)
+        throw std::runtime_error("Vertical margin preparation: no scope channels");
+    for (int ch = 1; ch <= channels; ++ch) {
+        checkStop();
+        if (!OscilloscopeAcquisition::channelEnabledChecked(scope, ch)) continue;
+        checkStop();
+        ScopeVerticalRange range;
         QString error;
-        if (!scope || !scope->stopAcquisition(error))
-            errors << "STOP: " + (error.isEmpty() ? QString("scope unavailable") : error);
-    } catch (const std::exception &ex) { errors << "STOP: " + QString::fromUtf8(ex.what()); }
-    catch (...) { errors << "STOP: unexpected error"; }
-    // Cleanup is not cancelled by Stop. Attempt every changed channel even after
-    // an earlier failure; no destructor I/O and no repeated hardware event.
-    QAtomicInt cleanupStop{0};
-    for (auto it=m_originalScales.cbegin(); it!=m_originalScales.cend(); ++it) {
-        try {
-            OscilloscopeAcquisition::setScaleChecked(scope, cleanupStop, it.key(), it.value());
-            emit logMessage(QString("  CH%1 Scale restored: %2 units/div")
-                                .arg(it.key()).arg(it.value(), 0, 'g', 12));
-        } catch (const std::exception &ex) {
-            errors << QString("Channel %1: %2").arg(it.key()).arg(QString::fromUtf8(ex.what()));
-        } catch (...) { errors << QString("Channel %1: unexpected error").arg(it.key()); }
+        if (!scope->readVerticalRange(ch, range, error))
+            throw std::runtime_error(QString("CH%1 initial vertical range: %2").arg(ch).arg(error).toStdString());
+        if (!std::isfinite(range.position) || !std::isfinite(range.minimumPosition) ||
+            !std::isfinite(range.maximumPosition) || range.minimumPosition >= 0 || range.maximumPosition <= 0 ||
+            range.position < range.minimumPosition || range.position > range.maximumPosition)
+            throw std::runtime_error(QString("CH%1 invalid initial Position range").arg(ch).toStdString());
+        checkStop();
+        if (range.position != 0) {
+            options.beforePositionChange(ch, range.position, 0);
+            OscilloscopeAcquisition::setPositionChecked(scope, m_stopRequested, ch, 0);
+        }
+        emit logMessage(QString("  CH%1 vertical margin: initial Position=0 div").arg(ch));
     }
-    m_originalScales.clear();
-    if (errors.isEmpty()) return true;
+    checkStop();
+    m_verticalMarginPrepared = true;
+}
+
+bool TestRunService::stopAfterVerticalChanges()
+{
+    if (!m_verticalSettingsTouched) return true;
+    QString error;
+    try {
+        if (m_context.scope && m_context.scope->stopAcquisition(error)) return true;
+    } catch (const std::exception &ex) { error = QString::fromUtf8(ex.what()); }
+    catch (...) { error = "unexpected scope error"; }
     m_cleanupFailed = true;
-    return failTask("Vertical scale restore failed: " + errors.join("; ") +
-                    ". Reapply user oscilloscope settings before the next Run.");
+    return failTask("Scope STOP after vertical adjustment failed: " +
+                    (error.isEmpty() ? QString("no confirmation") : error));
 }
 
 bool TestRunService::executeTask(const TaskSettings::PreparedTask &task)

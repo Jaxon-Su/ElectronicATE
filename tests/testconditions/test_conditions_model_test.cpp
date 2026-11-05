@@ -13,10 +13,13 @@ int main(int argc, char** argv)
     QCoreApplication app(argc, argv);
     try {
         TestConditionsModel model;
-        model.setLoadMeta({{"CC"}, {"Low"}, {"first"}, {"12"}, {"1"}});
-        model.setDynamicMeta({{"Low"}, {"12"}, {"1"}, {"10", "20"}});
+        model.setLoadMeta({{"CC"}, {"Auto Range"}, {"first"}, {"12"}, {"1"}});
+        model.setDynamicMeta({{"CCDL"}, {"12"}, {"1"}, {"10", "20"}});
         model.setRelayRows({{"relay", {"ON"}}});
         model.resizeLoadOutputs(3);
+        require(model.getLoadMeta().ranges == QVector<QString>{"Auto Range", "No Setting", "No Setting"}
+                    && model.getDynamicMeta().ranges == QVector<QString>{"CCDL", "No Setting", "No Setting"},
+                "new output range defaults or existing selections changed");
         require(model.getLoadMeta().names == QVector<QString>{"first", "", ""}, "load expansion lost data");
         require(model.getDynamicMeta().vo.size() == 3 && model.getDynamicMeta().t1t2 == QVector<QString>{"10", "20"}, "dynamic resize changed timing");
         model.resizeRelayOutputs(3);

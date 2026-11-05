@@ -6,4 +6,5 @@
 #include "ibrownoutio.h"
 #include <QAtomicInt>
 MeasurementResult runBrownOut(const BrownOut::Settings &settings, IScopeBrownOut &scope,
-                          const BrownOutIoFactory &createIo, QAtomicInt &stop, const OscCaptureObserver &capture = {});
+                          const BrownOutIoFactory &createIo, QAtomicInt &stop, const OscCaptureObserver &capture = {},
+                          const std::function<void(const QString &)> &log = {});

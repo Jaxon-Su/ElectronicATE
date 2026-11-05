@@ -1,4 +1,5 @@
 #include "connectiontestservice.h"
+#include "acsourcefactory.h"
 #include "../../src/views/instrumentsetup/dialogs/communicationconfigdialog.h"
 #include "scopesessioncoordinator.h"
 #include "oscilloscope.h"
@@ -443,6 +444,170 @@ void slaveIdXmlTest() {
         }
     }
 }
+void acCatalogTest() {
+    InstrumentSetupModel model;
+    require(model.loadBaseXml(INSTRUMENT_CATALOG), "failure loading shipped AC catalog");
+    InstrumentSetupViewModel vm(&model);
+    InstrumentSetupPage page(&vm);
+    const auto combo = [&]() -> QComboBox* {
+        auto *table = page.findChild<QTableWidget*>();
+        require(table, "missing Instrument Setup table");
+        for (int row = 0; row < table->rowCount(); ++row)
+            if (table->item(row, 0) && table->item(row, 0)->text() == "ACSource")
+                return qobject_cast<QComboBox*>(table->cellWidget(row, 1));
+        return nullptr;
+    };
+    const auto names = model.getXmlModelMap().value("ACSource");
+    require(!names.isEmpty() && combo() && combo()->count() == names.size()+1, "AC model dropdown/catalog mismatch");
+    auto state = std::make_shared<ProbeState>();
+    Connection transport(state);
+    for (const QString &name : names) {
+        require(!name.isEmpty() && names.count(name)==1 && combo()->findText(name)>=0, "missing/duplicate AC model");
+        combo()->setCurrentText(name);
+        page.syncUIToViewModel();
+        QString saved; QXmlStreamWriter out(&saved); model.writeXml(out);
+        QXmlStreamReader in(saved); in.readNextStartElement(); model.loadXml(in);
+        require(!in.hasError() && combo() && combo()->currentText()==name, "saved catalog choice not restored in dropdown");
+        QString selected;
+        for (const auto &ic : vm.currentConfig().instruments)
+            if (ic.name=="ACSource") selected=ic.modelName;
+        std::unique_ptr<ACSource> driver(ACSourceFactory::createACSource(selected,&transport));
+        require(driver && driver->model()==name, "selectable AC model lost its identity at the driver factory");
+    }
+    require(state->writes==0, "selecting or restoring an AC model wrote to hardware");
+}
+
+void loadFrameChoicesTest() {
+    InstrumentSetupModel model;
+    require(model.loadBaseXml(INSTRUMENT_CATALOG), "shipped Load catalog failed to load");
+    InstrumentSetupViewModel vm(&model);
+    InstrumentSetupPage page(&vm);
+    auto *table = page.findChild<QTableWidget*>();
+    require(table, "no instrument table");
+    int row = 0;
+    while (row < table->rowCount() && (!table->item(row,0) || table->item(row,0)->text() != "Load1")) ++row;
+    require(row < table->rowCount(), "no Load1 row");
+    const auto frame = [&]{return qobject_cast<QComboBox*>(table->cellWidget(row,1));};
+    const auto box = [&](int ch,int offset=0) {
+        int pos = vm.channels().indexOf(ch);
+        require(pos>=0, "missing physical CH column");
+        return qobject_cast<QComboBox*>(table->cellWidget(row+offset,4+pos));
+    };
+    const auto mapped = [&](int ch) {
+        for (const auto &inst : vm.currentConfig().instruments)
+            if (inst.name=="Load1") return inst.channels.value(inst.channelNumbers.indexOf(ch));
+        throw std::runtime_error("no Load1 in configuration");
+    };
+    const auto roundTrip = [&](bool oldLayout = false) {
+        QString xml; QXmlStreamWriter w(&xml); model.writeXml(w);
+        if (oldLayout) {
+            // Before CH10 was added, the last saved column was CH9. Do not shift those positions.
+            QDomDocument legacy;
+            require(bool(legacy.setContent(xml)), "cannot construct legacy layout fixture");
+            legacy.documentElement().setAttribute("schemaVersion", "2");
+            const auto channelLists = legacy.elementsByTagName("Channels");
+            for (int i = 0; i < channelLists.count(); ++i) {
+                auto channels = channelLists.at(i).toElement();
+                for (auto ch = channels.firstChildElement("Channel"); !ch.isNull(); ) {
+                    auto next = ch.nextSiblingElement("Channel");
+                    const int number = ch.attribute("number").toInt();
+                    if (number == 6 || number == 8 || number == 10) channels.removeChild(ch);
+                    else ch.removeAttribute("number");
+                    ch = next;
+                }
+            }
+            xml = legacy.toString();
+        }
+        QXmlStreamReader in(xml); in.readNextStartElement(); model.loadXml(in);
+        require(!in.hasError(), "Load frame XML rejected");
+    };
+    const QMap<QString,QSet<int>> frames{{"63600-1",{1,2}},{"63600-2",{1,2,3,4}},
+                                         {"63600-5",{1,2,3,4,5,6,7,8,9,10}},{"63601-5",{1,3,5,7,9,10}}};
+    for (auto it=frames.cbegin(); it!=frames.cend(); ++it) {
+        require(frame() && frame()->findText(it.key())>=0, "frame missing in Load model menu");
+        frame()->setCurrentText(it.key());
+        for (const auto *module : {"63610-80-20","63630-80-60","63630-600-15","63640-80-80","63640-150-60"})
+            require(box(1)->findText(module)>=0, "catalog omitted a supported module");
+        for (int ch : vm.channels()) {
+            for (int offset : {0,1,2})
+                require(box(ch,offset) && box(ch,offset)->isEnabled()==it.value().contains(ch),
+                        "module, output index or sync role enabled on wrong channel");
+        }
+    }
+    frame()->setCurrentText("63600-2");
+    box(4)->setCurrentText("63610-80-20"); box(4,1)->setCurrentText("1");
+    roundTrip();
+    require(mapped(4).index==1 && mapped(4).subModel=="63610-80-20" && mapped(3).index==0,
+            "even channel or its independent index was lost");
+    box(3)->setCurrentText("63630-80-60");
+    require(!box(4)->isEnabled() && mapped(4).index==0 && mapped(4).subModel.isEmpty(),
+            "single-channel module retained a second output");
+    frame()->setCurrentText("63601-5");
+    require(box(10)->count()==2 && box(10)->findText("63610-80-20")>=0 &&
+            box(10)->findText("63640-80-80")<0,"CH10 offered a single-channel module");
+    box(10)->setCurrentText("63610-80-20");
+    box(10,1)->setCurrentText("1");
+    box(10,2)->setCurrentText("SLAVE");
+    roundTrip();
+    require(frame()->currentText()=="63601-5" && mapped(10).subModel=="63610-80-20" &&
+            mapped(10).index==1 && mapped(10).syncType==2,"CH10 was lost or renumbered in XML");
+    box(9)->setCurrentText("63640-80-80");
+    require(!box(10)->isEnabled() && !box(10,1)->isEnabled() && !box(10,2)->isEnabled() &&
+            mapped(10).index==0 && mapped(10).subModel.isEmpty() && mapped(10).syncType==-1,
+            "CH9 single-channel module retained an active CH10 mapping");
+    box(9)->setCurrentText("63610-80-20");
+    require(box(10)->isEnabled() && box(10)->currentText().isEmpty(), "CH10 was not re-enabled cleanly");
+    frame()->setCurrentText("63600-5");box(9)->setCurrentText("63640-80-80");box(9,1)->setCurrentText("1");
+    roundTrip(true);
+    require(frame()->currentText()=="63600-5" && mapped(9).index==1 && !box(10)->isEnabled(),
+            "existing five-slot configuration changed on round trip");
+    frame()->setCurrentText("63600-1");
+    require(!box(9)->isEnabled() && mapped(9).index==0 && mapped(9).subModel.isEmpty(),"smaller frame kept CH9");
+    frame()->setCurrentText("6314A");
+    require(box(1)->findText("63103") < 0 && box(2)->findText("63103A") < 0, "incompatible 6314A choice");
+    box(7)->setCurrentText("63107A");
+    require(box(8)->findText("63102A") < 0, "same physical slot offered a different module");
+    box(8)->setCurrentText("63107A"); box(8,1)->setCurrentText("1");
+    roundTrip();
+    require(mapped(8).subModel == "63107A" && mapped(8).index == 1 && mapped(7).index == 0,
+            "right output could not be independently mapped");
+    box(1)->setCurrentText("63106A");
+    require(!box(2)->isEnabled() && !box(3)->isEnabled() && !box(4)->isEnabled() && box(5)->isEnabled(),
+            "wide module did not reserve its two slots");
+
+    int peerRow = 0;
+    while (peerRow < table->rowCount() && (!table->item(peerRow,0) || table->item(peerRow,0)->text() != "Load2")) ++peerRow;
+    require(peerRow < table->rowCount(), "no Load2 row");
+    const int ch1col = 4 + vm.channels().indexOf(1);
+    const auto peerBox = [&](int offset,int col){return qobject_cast<QComboBox*>(table->cellWidget(peerRow+offset,col));};
+    frame()->setCurrentText("63600-2");
+    peerBox(0,1)->setCurrentText("63600-2");
+    qobject_cast<QComboBox*>(table->cellWidget(row,2))->setCurrentText("GPIB0::8::INSTR");
+    peerBox(0,2)->setCurrentText("GPIB0::8::INSTR");
+    box(1)->setCurrentText("63610-80-20"); box(1,1)->setCurrentText("1");
+    peerBox(0,ch1col)->setCurrentText("63610-80-20");
+    require(peerBox(1,ch1col)->toolTip().contains("duplicate") && box(1,1)->toolTip().isEmpty(),
+            "second row could claim an occupied physical channel or original owner was blocked");
+    peerBox(0,2)->setCurrentText("GPIB0::9::INSTR");
+    require(peerBox(1,ch1col)->toolTip().isEmpty(), "distinct instrument did not release physical channel lock");
+    const int ch2col = 4 + vm.channels().indexOf(2);
+    peerBox(0,ch1col)->setCurrentText("");
+    peerBox(0,2)->setCurrentText("GPIB0::8::INSTR");
+    page.findChild<QSpinBox*>("spinBox_Load_Outputs")->setValue(2);
+    peerBox(0,ch2col)->setCurrentText("63610-80-20");
+    peerBox(1,ch2col)->setCurrentText("2");
+    peerBox(2,ch2col)->setCurrentText("SLAVE");
+    require(peerBox(0,ch2col)->currentText()=="63610-80-20" && peerBox(1,ch2col)->currentText()=="2" &&
+            peerBox(2,ch2col)->currentText()=="SLAVE", "cross-row second output was never configured");
+    box(1)->setCurrentText("63630-80-60");
+    require(!peerBox(0,ch2col)->isEnabled() && peerBox(0,ch2col)->currentText().isEmpty() &&
+            peerBox(1,ch2col)->currentText().isEmpty() && peerBox(2,ch2col)->currentText().isEmpty(),
+            "switching odd module retained another Load row's invalid even output");
+    roundTrip();
+    peerBox(0,2)->setCurrentText("GPIB0::9::INSTR");
+    require(peerBox(0,ch2col)->isEnabled(), "separate chassis still inherited its peer's slot restriction");
+}
+
 void instrumentSetupSerialTest() {
     InstrumentSetupModel model;
     InstrumentSetupConfig config;
@@ -593,6 +758,8 @@ int main(int argc,char **argv) {
         else if(mode=="outputs") outputTest();
         else if(mode=="serial") { serialSettingsTest(); slaveIdXmlTest(); }
         else if(mode=="tcp") tcpSettingsTest();
+        else if(mode=="ac_catalog") acCatalogTest();
+        else if(mode=="load_frames") loadFrameChoicesTest();
         else if(mode=="instrument_setup_serial") { instrumentSetupSerialTest(); invalidRtuDraftTest(); }
         else throw std::runtime_error("unknown scenario");
         require(QThreadPool::globalInstance()->waitForDone(5000),"worker leaked");

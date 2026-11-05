@@ -15,6 +15,8 @@ class IScopeBrownOutSession {
     virtual bool advanceLevel(double level, QString &error) = 0;
     virtual double levelStep() const = 0;
     virtual int recordDurationMs() const = 0;
+    virtual int referenceTimeoutMs() const { return 60000; }
+    virtual QString referenceState() const { return {}; }
     virtual bool finish(QString &error) = 0;
 };
 class IScopeBrownOut {

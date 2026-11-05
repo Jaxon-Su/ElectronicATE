@@ -41,6 +41,17 @@ class MsoPeriodSession final : public IScopePeriodSession
             return false;
         }
         m_source = m_source.toUpper();
+        QString type;
+        if (!query("TRIGger:A:TYPe?", type, error) ||
+            !query("TRIGger:A:EDGE:SLOpe?", m_slope, error) ||
+            !numeric("TRIGger:A:LEVel:" + m_source + "?", m_originalLevel, error))
+            return false;
+        m_slope = m_slope.toUpper();
+        if (type.toUpper() != "EDGE" || !QStringList{"RISE","FALL","EITHER"}.contains(m_slope) ||
+            !std::isfinite(m_originalLevel) || std::abs(m_originalLevel) >= 1e20) {
+            error = "Auto Period: invalid Edge trigger settings";
+            return false;
+        }
         if (!query("DISplay:GLObal:" + m_source + ":STATE?", enabled, error))
             return false;
         if (enabled != "1" && enabled.compare("ON", Qt::CaseInsensitive) != 0)
@@ -56,12 +67,13 @@ class MsoPeriodSession final : public IScopePeriodSession
             return false;
         }
         if (!query("ACQuire:STATE?", state, error) || !query("ACQuire:STOPAfter?", m_stopAfter, error) ||
-            !query("MEASUrement:LIST?", list, error))
+            !query("TRIGger:A:MODe?", m_triggerMode, error) || !query("MEASUrement:LIST?", list, error))
             return false;
         state = state.toUpper();
         m_stopAfter = m_stopAfter.toUpper();
         if (!QStringList{"0", "1", "STOP", "RUN", "OFF", "ON"}.contains(state) ||
-            !QStringList{"RUNSTOP", "SEQUENCE"}.contains(m_stopAfter))
+            !QStringList{"RUNSTOP", "SEQUENCE"}.contains(m_stopAfter) ||
+            !QStringList{"AUTO", "NORMAL"}.contains(m_triggerMode.toUpper()))
         {
             error = "Auto Period: invalid acquisition settings";
             return false;
@@ -89,6 +101,55 @@ class MsoPeriodSession final : public IScopePeriodSession
         return true;
     }
     double horizontalDivisions() const override { return m_divisions; }
+    int triggerChannel() const override { return m_source.mid(2).toInt(); }
+    ScopeTriggerSlope periodSlope() const override {
+        return m_slope == "FALL" ? ScopeTriggerSlope::Fall : ScopeTriggerSlope::Rise;
+    }
+    bool applyTriggerLevel(double requested, double &actual, QString &error) override
+    {
+        if (m_slope == "EITHER" && !m_slopeTouched) {
+            m_slopeTouched = true;
+            if (!write("TRIGger:A:EDGE:SLOpe RISE", error)) return false;
+            QString slope;
+            if (!query("TRIGger:A:EDGE:SLOpe?", slope, error)) return false;
+            if (slope.toUpper() != "RISE") {
+                error = "Auto Period: rising slope readback mismatch";
+                return false;
+            }
+        }
+        m_levelTouched = true; // A rejected/timed-out write can have reached the scope.
+        const QString command = "TRIGger:A:LEVel:" + m_source;
+        return write(command + " " + QString::number(requested, 'g', 16), error) &&
+               numeric(command + "?", actual, error);
+    }
+    bool readHorizontalContext(HorizontalContext &context, QString &error) override
+    {
+        HorizontalContext current;
+        if (!query("HORizontal:MODe?", current.mode, error)) return false;
+        current.mode = current.mode.toUpper();
+        if (current.mode != "AUTO" && current.mode != "MANUAL") {
+            error = "Auto Period: invalid Horizontal Mode";
+            return false;
+        }
+        if (current.mode == "MANUAL") {
+            if (!query("HORizontal:MODe:MANual:CONFigure?", current.manualInputs, error)) return false;
+            current.manualInputs = current.manualInputs.toUpper();
+            if (current.manualInputs != "RECORDLENGTH" && current.manualInputs != "HORIZONTALSCALE") {
+                error = "Auto Period: invalid Manual Inputs";
+                return false;
+            }
+        }
+        if (!numeric("HORizontal:MODe:SAMPLERate?", current.sampleRate, error) ||
+            !numeric("HORizontal:MODe:RECOrdlength?", current.recordLength, error)) return false;
+        if (!std::isfinite(current.sampleRate) || current.sampleRate <= 0 || current.sampleRate >= 1e30 ||
+            !std::isfinite(current.recordLength) || current.recordLength < 1 || current.recordLength >= 1e30 ||
+            std::floor(current.recordLength) != current.recordLength) {
+            error = "Auto Period: invalid sample rate or record length";
+            return false;
+        }
+        context = current;
+        return true;
+    }
     bool readTimeScale(double &value, QString &error) override
     {
         return numeric("HORizontal:SCAle?", value, error);
@@ -118,13 +179,13 @@ class MsoPeriodSession final : public IScopePeriodSession
             return true;
         m_restoreNeeded = false;
         bool ok = true;
-        auto restoreCommand = [&](const QString &command)
+        auto attempt = [&](auto operation)
         {
             QString failure;
             bool restored = false;
             try
             {
-                restored = m_scope.writeConfigurationCommand(command, failure);
+                restored = operation(failure);
             }
             catch (const std::exception &ex)
             {
@@ -142,10 +203,32 @@ class MsoPeriodSession final : public IScopePeriodSession
                 ok = false;
             }
         };
+        auto restoreCommand = [&](const QString &command) {
+            attempt([&](QString &failure) { return m_scope.writeConfigurationCommand(command, failure); });
+        };
+        auto restoreTrigger = [&](const QString &setting, const QString &expected, bool numericLevel) {
+            attempt([&](QString &failure) {
+                QString response;
+                if (!m_scope.writeConfigurationCommand(setting + " " + expected, failure) ||
+                    !m_scope.queryConfiguration(setting + "?", response, failure)) return false;
+                const QString actual = valueToken(response);
+                bool valid = false;
+                const double value = actual.toDouble(&valid);
+                if (numericLevel ? (valid && std::isfinite(value) && qFuzzyCompare(value,m_originalLevel))
+                                 : actual.compare(expected, Qt::CaseInsensitive)==0) return true;
+                failure = setting + " restore mismatch: expected=" + expected + " actual=" + actual;
+                return false;
+            });
+        };
         restoreCommand("ACQuire:STATE STOP");
         if (m_created)
             restoreCommand("MEASUrement:DELete \"" + m_id + "\"");
+        if (m_levelTouched)
+            restoreTrigger("TRIGger:A:LEVel:" + m_source, QString::number(m_originalLevel, 'g', 16), true);
+        if (m_slopeTouched)
+            restoreTrigger("TRIGger:A:EDGE:SLOpe", m_slope, false);
         restoreCommand("ACQuire:STOPAfter " + m_stopAfter);
+        restoreCommand("TRIGger:A:MODe " + m_triggerMode);
         if (resume && ok && m_wasRunning && m_ready())
             restoreCommand("ACQuire:STATE RUN");
         return ok;
@@ -188,8 +271,11 @@ class MsoPeriodSession final : public IScopePeriodSession
     }
     Oscilloscope &m_scope;
     Continue m_ready;
-    QString m_source, m_stopAfter, m_id;
+    QString m_source, m_stopAfter, m_triggerMode, m_id;
     double m_divisions = 0;
+    QString m_slope;
+    double m_originalLevel = 0;
+    bool m_levelTouched = false, m_slopeTouched = false;
     bool m_wasRunning = false, m_created = false, m_restoreNeeded = false;
 };
 } // namespace

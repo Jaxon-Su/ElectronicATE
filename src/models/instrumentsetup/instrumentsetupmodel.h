@@ -32,7 +32,8 @@ class InstrumentSetupModel : public QObject {
     // XML operations
     bool loadBaseXml(const QString& fileName);
     void writeXml(QXmlStreamWriter& writer) const;
-    void loadXml(QXmlStreamReader& reader);
+    void loadXml(QXmlStreamReader& reader, const InstrumentSetupModel* catalog = nullptr);
+    QList<int> catalogChannels(bool legacy = false) const;
 
   signals:
     void configLoaded(const InstrumentSetupConfig& cfg);
@@ -53,9 +54,9 @@ class InstrumentSetupModel : public QObject {
     QStringList extractChannels(const QDomElement& modelElement);
 
     // Helper methods for loadXml
-    void loadInstrumentsFromXml(QXmlStreamReader& reader, InstrumentSetupConfig& config);
-    InstrumentConfig loadInstrumentFromXml(QXmlStreamReader& reader);
-    void loadChannelsFromXml(QXmlStreamReader& reader, InstrumentConfig& ic);
+    void loadInstrumentsFromXml(QXmlStreamReader& reader, InstrumentSetupConfig& config, bool numbered);
+    InstrumentConfig loadInstrumentFromXml(QXmlStreamReader& reader, bool numbered);
+    void loadChannelsFromXml(QXmlStreamReader& reader, InstrumentConfig& ic, bool numbered);
 
     // Helper methods for writeXml
     void writeInstruments(QXmlStreamWriter& writer) const;

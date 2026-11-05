@@ -1,7 +1,9 @@
 #pragma once
+#include <QCheckBox>
 #include <QComboBox>
 #include <QLabel>
 #include <QListWidget>
+#include <QSignalBlocker>
 #include <QVariantMap>
 #include <QVBoxLayout>
 
@@ -21,6 +23,10 @@ class LoadConditionSelector : public QWidget
         preview->setObjectName("previewLbl");
         preview->setWordWrap(true);
         if (selection == Selection::Group) {
+            auto *selectAll = new QCheckBox(tr("Select all"), this);
+            selectAll->setObjectName("selectAllLoads");
+            selectAll->setStyleSheet("QCheckBox::indicator:indeterminate { image: url(:/images/checkbox-partial.svg); }");
+            layout->addWidget(selectAll);
             m_list = new QListWidget(this);
             m_list->setObjectName(m_key == "dyload" ? "dynamicConditions" : "loadConditions");
             m_list->setSelectionMode(QAbstractItemView::NoSelection);
@@ -40,13 +46,23 @@ class LoadConditionSelector : public QWidget
                 item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
                 item->setCheckState(Qt::Unchecked);
             }
-            auto updateCount = [this, preview] {
+            auto updateCount = [this, preview, selectAll] {
                 int count = 0;
                 for (int i = 0; i < m_list->count(); ++i)
                     count += m_list->item(i)->checkState() == Qt::Checked;
                 preview->setText(QString("%1 selected · TestConditions order").arg(count));
+                const bool partial = count > 0 && count < m_list->count();
+                selectAll->setTristate(partial);
+                selectAll->setCheckState(partial ? Qt::PartiallyChecked : count ? Qt::Checked : Qt::Unchecked);
             };
             connect(m_list, &QListWidget::itemChanged, this, updateCount);
+            selectAll->setEnabled(m_list->count() > 0);
+            connect(selectAll, &QCheckBox::clicked, this, [this, updateCount](bool checked) {
+                const QSignalBlocker blocker(m_list);
+                for (int i = 0; i < m_list->count(); ++i)
+                    m_list->item(i)->setCheckState(checked ? Qt::Checked : Qt::Unchecked);
+                updateCount();
+            });
             updateCount();
             layout->addWidget(m_list);
         } else {

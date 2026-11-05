@@ -35,15 +35,43 @@
 	    </subModel>
           </model>-->
 
-         <model>
-	    <modelName>6314</modelName>
-	    <channels>1,3,5,7</channels>
+          <model>
+            <modelName>6314</modelName>
+            <channels>1,2,3,4,5,6,7,8</channels>
+            <subModel name="63101"/>
+            <subModel name="63101A"/>
+            <subModel name="63102"/>
+            <subModel name="63102A"/>
+            <subModel name="63103"/>
+            <subModel name="63103A"/>
+            <subModel name="63105"/>
+            <subModel name="63105A"/>
+            <subModel name="63106"/>
+            <subModel name="63106A"/>
+            <subModel name="63107"/>
+            <subModel name="63107A"/>
+            <subModel name="63108"/>
+            <subModel name="63108A"/>
+            <subModel name="63112"/>
+            <subModel name="63112A"/>
+          </model>
 
-            <subModel name="63103">
-	    </subModel>
-
-            <subModel name="63103A">
-            </subModel>
+          <model>
+            <modelName>6314A</modelName>
+            <channels>1,2,3,4,5,6,7,8</channels>
+            <subModel name="63101A"/>
+            <subModel name="63102A"/>
+            <subModel name="63103A"/>
+            <subModel name="63105A"/>
+            <subModel name="63106A"/>
+            <subModel name="63107A"/>
+            <subModel name="63108A"/>
+            <subModel name="63110A"/>
+            <subModel name="63112A"/>
+            <subModel name="63113A"/>
+            <subModel name="63115A"/>
+            <subModel name="63123A"/>
+            <subModel name="63123A-120"/>
           </model>
 
 <!--          <model>
@@ -60,10 +88,42 @@
 	    </subModel>
           </model>-->
 
+          <!-- 63600 機框：Model 選機框，subModel 選各通道安裝的負載模組。 -->
+          <model>
+            <modelName>63600-1</modelName>
+            <channels>1,2</channels>
+            <subModel name="63610-80-20"/>
+            <subModel name="63630-80-60"/>
+            <subModel name="63630-600-15"/>
+            <subModel name="63640-80-80"/>
+            <subModel name="63640-150-60"/>
+          </model>
+          <model>
+            <modelName>63600-2</modelName>
+            <channels>1,2,3,4</channels>
+            <subModel name="63610-80-20"/>
+            <subModel name="63630-80-60"/>
+            <subModel name="63630-600-15"/>
+            <subModel name="63640-80-80"/>
+            <subModel name="63640-150-60"/>
+          </model>
           <model>
             <modelName>63600-5</modelName>
-            <channels>1,3,5,7,9</channels>
-            <subModel name="63640-80-80"></subModel>
+            <channels>1,2,3,4,5,6,7,8,9,10</channels>
+            <subModel name="63610-80-20"/>
+            <subModel name="63630-80-60"/>
+            <subModel name="63630-600-15"/>
+            <subModel name="63640-80-80"/>
+            <subModel name="63640-150-60"/>
+          </model>
+          <model>
+            <modelName>63601-5</modelName>
+            <channels>1,3,5,7,9,10</channels>
+            <subModel name="63630-80-60"/>
+            <subModel name="63630-600-15"/>
+            <subModel name="63640-80-80"/>
+            <subModel name="63640-150-60"/>
+            <subModel name="63610-80-20"/>
           </model>
 
           <model>
@@ -93,20 +153,22 @@
       </model>
     </instrument>
 
-    <!-- 電源模板 -->
+    <!-- AC 電源型號：每個 model 是獨立選項；modelName 保留設備銘牌上的型號。 -->
     <instrument name="ACSource_Template" type="Template">
-      <model>
-        <modelName>DE-A3000AB</modelName>
-      </model>
-      <model>
-        <modelName>61505</modelName>
-      </model>
-      <model>
-        <modelName>61509</modelName>
-      </model>
-      <model>
-        <modelName>6530</modelName>
-      </model>
+      <model><modelName>DE-A3000AB</modelName></model>
+      <model><modelName>61505</modelName></model>
+      <model><modelName>61507</modelName></model>
+      <model><modelName>61508</modelName></model>
+      <model><modelName>61509</modelName></model>
+      <model><modelName>6415</modelName></model>
+      <model><modelName>6420</modelName></model>
+      <model><modelName>6430</modelName></model>
+      <model><modelName>6512</modelName></model>
+      <model><modelName>6520</modelName></model>
+      <model><modelName>6530</modelName></model>
+      <!-- 6560：本程式使用並聯單相；6590：單相或三相，三相 Vin 為線間有效值。 -->
+      <model><modelName>6560</modelName></model>
+      <model><modelName>6590</modelName></model>
     </instrument>
 
     <!-- 電源模板 -->

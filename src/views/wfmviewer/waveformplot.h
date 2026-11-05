@@ -15,6 +15,7 @@ public:
     // Min/max envelope in time/value coordinates; keeps spikes when many samples occupy a pixel.
     static QPolygonF envelope(const Waveform::Trace &trace, double from, double to, int pixels);
 protected:
+    bool event(QEvent *event) override;
     void paintEvent(QPaintEvent *) override;
     void wheelEvent(QWheelEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
@@ -26,10 +27,12 @@ private:
     int cursorNear(QPointF position, CursorAxis axis) const;
     QPointF boundedPoint(QPointF point) const;
     QPointF valuesAt(QPointF point) const;
+    InteractionMode dragMode() const;
+    void cancelGesture();
     void moveGesture(QPointF position);
     WfmViewerViewModel *m_viewModel;
     InteractionMode m_mode = InteractionMode::ZoomRegion;
-    bool m_dragging = false;
+    Qt::MouseButton m_dragButton = Qt::NoButton;
     bool m_connectBounds = false;
     int m_activeTimeCursor = 0, m_activeAmplitudeCursor = 0;
     QPointF m_start, m_current;

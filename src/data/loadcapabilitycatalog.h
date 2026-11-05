@@ -1,11 +1,12 @@
 #pragma once
 #include <QSet>
 #include <QStringList>
+#include "chroma63107range.h"
 namespace LoadCapabilityCatalog {
-inline const QSet<QString> Chroma6310Models = {"63101", "63102", "63103", "63105", "63106", "63108", "63112"};
+inline const QSet<QString> Chroma6310Models = {"63101", "63102", "63103", "63105", "63106", "63107", "63108", "63112"};
 
 inline const QSet<QString> Chroma6310AModels = {"63101A", "63102A", "63103A", "63105A", "63106A", "63107A",
-                                                "63108A", "63110A", "63112A", "63113A", "63115A", "63123A"};
+                                                "63108A", "63110A", "63112A", "63113A", "63115A", "63123A", "63123A-120"};
 
 inline const QSet<QString> Chroma63600Models = {"63610-80-20", "63630-80-60", "63640-80-80", "63640-150-60",
                                                 "63630-600-15"};
@@ -33,9 +34,11 @@ inline const QSet<QString> Chroma63200AModels = {
 
 inline const QSet<QString> Chroma63800Models = {"63802", "63803", "63804"};
 
-inline QStringList supportedManualModes(const QString& modelName, const QString& baseMode)
+inline QStringList supportedManualModes(const QString& modelName, const QString& baseMode, int channel = 0)
 {
     const QString mode = baseMode.trimmed().toUpper();
+    if (mode == "CC" && Chroma63107Range::applies(modelName) && Chroma63107Range::left(channel))
+        return {"CCL"};
 
     if (Chroma6310Models.contains(modelName)) {
         if (mode == "CC")
@@ -80,8 +83,10 @@ inline QStringList supportedManualModes(const QString& modelName, const QString&
     return {};
 }
 
-inline QStringList supportedDynamicManualModes(const QString& modelName)
+inline QStringList supportedDynamicManualModes(const QString& modelName, int channel = 0)
 {
+    if (modelName == "63110A") return {};
+    if (Chroma63107Range::applies(modelName) && Chroma63107Range::left(channel)) return {"CCDL"};
     if (Chroma6310Models.contains(modelName) || Chroma6310AModels.contains(modelName))
         return {"CCDL", "CCDH"};
 

@@ -1,4 +1,5 @@
 #include "chroma6310.h"
+#include "chroma63107range.h"
 #include <QDebug>
 #include <QSet>
 #include "chromaload6310spec.h"
@@ -87,8 +88,10 @@ void Chroma6310::setStaticCurrent(const StaticCurrentParam& param)
     double maxCurrent = *std::max_element(param.levels.begin(), param.levels.end());
     double voltage = param.expectedVoltage;
 
-    QString modeStr = selectOptimalLoadMode(m_model, maxCurrent, voltage);
     const QString requestedMode = param.loadMode.trimmed().toUpper();
+    QString modeStr = Chroma63107Range::applies(m_model)
+        ? Chroma63107Range::select(realChannel(), maxCurrent, voltage, requestedMode)
+        : selectOptimalLoadMode(m_model, maxCurrent, voltage);
     if (requestedMode == "NO SETTING") {
         modeStr.clear();
     } else if (!requestedMode.isEmpty() && requestedMode != "AUTO RANGE") {
@@ -128,11 +131,13 @@ void Chroma6310::setDynamicCurrent(const DynamicCurrentParam& param)
     double voltage = param.expectedVoltage;
 
     // 先選靜態模式，再轉換為對應動態模式
-    QString baseMode = selectOptimalLoadMode(m_model, maxCurrent, voltage);
+    const QString requestedMode = param.loadMode.trimmed().toUpper();
+    QString baseMode = Chroma63107Range::applies(m_model)
+        ? Chroma63107Range::select(realChannel(), maxCurrent, voltage, requestedMode)
+        : selectOptimalLoadMode(m_model, maxCurrent, voltage);
 
     // 6310 動態模式對應：CCL → CCDL，CCH → CCDH
     QString modeStr = (baseMode == "CCH") ? "CCDH" : "CCDL";
-    const QString requestedMode = param.loadMode.trimmed().toUpper();
     if (requestedMode == "NO SETTING") {
         modeStr.clear();
     } else if (!requestedMode.isEmpty() && requestedMode != "AUTO RANGE") {

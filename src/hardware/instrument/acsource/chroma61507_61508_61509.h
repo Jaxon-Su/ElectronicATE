@@ -2,7 +2,7 @@
 #include "acsource.h"
 #include "icommunication.h"
 
-//  Chroma 61509 Programmable AC Source Driver
+//  Chroma 61507/61508/61509 Programmable AC Source Driver
 //  Protocol : GPIB / RS-232C / USB / Ethernet (SCPI)
 //  Manual   : 61507/61508/61509 User's Manual v1.3 (2025-04)
 //
@@ -14,11 +14,11 @@
 //    Voltage Range   : 0~175 V (LOW) / 0~350 V (HIGH)
 //    Frequency Range : 15~2000 Hz (Standard)
 //    DC Voltage      : ±247.5 V (LOW) / ±494.9 V (HIGH)
-class Chroma61509 : public ACSource {
+class Chroma61507_61508_61509 : public ACSource {
   public:
     bool readVoltageSetting(double &, QString &) override;
-    explicit Chroma61509(ICommunication* comm = nullptr);
-    ~Chroma61509() override;
+    explicit Chroma61507_61508_61509(const QString &modelName, ICommunication* comm = nullptr);
+    ~Chroma61507_61508_61509() override;
 
     // InstrumentBase
     QString model() const override;
@@ -43,7 +43,7 @@ class Chroma61509 : public ACSource {
 
     double freQuency() override; // MEASure:FREQuency?
 
-    // Chroma 61509 專屬功能
+    // Chroma 61507/61508/61509 專屬功能
 
     // 輸出電壓範圍 (LOW=175V / HIGH=350V / AUTO)
     enum class VoltageRange { Low, High, Auto };
@@ -121,6 +121,9 @@ class Chroma61509 : public ACSource {
     double measureTotalApparentPower(); // MEASure:POWer:AC:TOTal:APParent?
 
   private:
+    bool usesScpiLineFraming() const override { return true; }
+    const QString m_model;
+    const QString m_logTag;
     static constexpr double kFreqMin = 15.0;
     static constexpr double kFreqMax = 2000.0;
 };
