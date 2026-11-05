@@ -105,6 +105,10 @@ int main(int argc, char** argv)
         for (const auto& type : {"InputSource", "Load", "Relay", "InputDCSource", "Oscilloscope"}) {
             InstrumentConfig instrument;
             instrument.type = type;
+            if (instrument.type == "Load") {
+                instrument.channels = {{"63101A", 1, -1}};
+                instrument.channelNumbers = {1};
+            }
             instrument.name = instrument.type == "InputDCSource" ? "DC Source1" : "Original";
             if (instrument.type == "Oscilloscope") instrument.modelName = "MSO44B";
             config.instruments.append(instrument);
